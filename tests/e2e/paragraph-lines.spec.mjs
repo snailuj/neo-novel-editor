@@ -236,6 +236,28 @@ test('a capture with nothing typed is not an edit', async () => {
   } finally { await fixture.close(); }
 });
 
+// Nor is it a change to a snapshot (SNAPSHOTS in app.js): ⌘S after it finds
+// nothing new, and the book as the snapshot had it is the same as now. The
+// snapshot's page, like the book's, holds no line break between paragraphs.
+test('a capture with nothing typed is no change to a snapshot', async () => {
+  const fixture = await launchProfile();
+  try {
+    await seedBook(fixture.page, F);
+    const seen = await fixture.page.evaluate(async (chId) => {
+      const first = await takeSnapshot('k');
+      chapterHTML[chId] = captureBody(document.querySelector(`.chapter[data-id="${chId}"] .chapter-body`));
+      const compact = chapterHTML[chId] !== savedHTML[chId];
+      const again = await takeSnapshot('k');
+      switchTab('darlings');
+      await showSnapshot(first.snap.name);
+      return { compact, same: again.same, differ: snapShown.diff.length };
+    }, CHAPTER);
+    expect(seen).toEqual({ compact: true, same: true, differ: 0 });
+    await expect(fixture.page.locator('#snap-view .snap-body p')).toHaveCount(3);
+    expect(await blankChildren(fixture.page, '#snap-view .chapter-body')).toEqual([]);
+  } finally { await fixture.close(); }
+});
+
 // A ghost is an outline section note shown in gray on the page, and typing
 // on it replaces it. ghostAtCaret finds it from a caret on the body itself,
 // between paragraphs (a click in the margin, the arrow keys), by the child
