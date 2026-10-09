@@ -3,7 +3,7 @@
 // Runs the real main.js in a vm against a library folder of the caller's choosing, with a
 // stub of electron, and hands back its IPC handlers. This is the loader of
 // scripts/power-loss.test.js, exported; upstream owns that file, so the two are kept in
-// step by hand.
+// step by hand, and tests/unit/main-loader-drift.test.ts fails when they differ.
 //
 // loadMain() returns
 //   call(name, ...args)  runs the ipcMain.handle handler `name` as the window would
