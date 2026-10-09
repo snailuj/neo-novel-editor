@@ -57,9 +57,11 @@ export async function launchProfile(existingProfile, options = {}) {
   }
 }
 
-export async function seedBook(page, html = '<p>Synthetic Māia &amp; A😀é.</p>') {
-  return page.evaluate(async (content) => {
+// `extra` goes into book.json, for example { format: 'screenplay' } for a script
+export async function seedBook(page, html = '<p>Synthetic Māia &amp; A😀é.</p>', extra = {}) {
+  return page.evaluate(async ({ content, extra }) => {
     const meta = await neo.createBook({ title: 'Synthetic book', author: 'Test author' });
+    Object.assign(meta, extra);
     meta.chapterOrder = ['chapter-synthetic'];
     await neo.writeBookMeta(meta.id, meta);
     await neo.writeChapter(meta.id, 'chapter-synthetic', content);
@@ -69,5 +71,5 @@ export async function seedBook(page, html = '<p>Synthetic Māia &amp; A😀é.<
     await neo.writeLibrary(lib);
     await openBook(meta.id);
     return meta.id;
-  }, html);
+  }, { content: html, extra });
 }

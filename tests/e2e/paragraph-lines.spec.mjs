@@ -31,6 +31,13 @@ async function typeAtEndOf(page, index, text) {
 
 const everyParagraphStartsALine = (text) => expect(text).not.toMatch(/[^\n]<p[\s>]/);
 
+// The line breaks a chapter file keeps between paragraphs never reach the
+// page: these are the whitespace-only text nodes standing directly in the
+// elements `selector` finds (every chapter body by default).
+const blankChildren = (page, selector = '.chapter-body') => page.evaluate((sel) =>
+  [...document.querySelectorAll(sel)].flatMap((el) => [...el.childNodes])
+    .filter((n) => n.nodeType === Node.TEXT_NODE && !n.data.trim()).map((n) => n.data), selector);
+
 test('untouched book writes nothing', async () => {
   const fixture = await launchProfile();
   try {
@@ -89,7 +96,18 @@ test('reopen round trip', async () => {
     await flush(fixture.page);
     await flush(fixture.page);
     expect(await onDisk(file)).toEqual(saved);
-    expect(await fixture.page.evaluate(() => captureBody(document.querySelector('.chapter-body')))).toBe(saved.text);
+    // the page holds the file's text, without the line breaks between paragraphs
+    expect(await fixture.page.evaluate(() => paragraphLines(captureBody(document.querySelector('.chapter-body'))))).toBe(saved.text);
+  } finally { await fixture.close(); }
+});
+
+test('a lined chapter reopens with no line break between paragraphs on the page', async () => {
+  const fixture = await launchProfile();
+  try {
+    const bookId = await seedBook(fixture.page, F);
+    await fixture.page.evaluate(async (id) => { await backToShelf(); await openBook(id); }, bookId);
+    await expect(fixture.page.locator('.chapter-body p')).toHaveCount(3);
+    expect(await blankChildren(fixture.page)).toEqual([]);
   } finally { await fixture.close(); }
 });
 
@@ -184,11 +202,11 @@ test('undoing a break and a split sends nothing to Darlings', async () => {
   } finally { await fixture.close(); }
 });
 
-// A paragraph made by Enter has no line break node before it on the page,
-// so after its save a capture of the page with nothing typed (the one
-// moveSelectionToDarlings makes) gives chapterHTML the compact form of the
-// text the file holds lined. That is not an edit: the flush leaves the file
-// alone, and a change from another device is adopted, not twinned.
+// The page holds no line break nodes, so after a save a capture of the page
+// with nothing typed (the one moveSelectionToDarlings makes) gives
+// chapterHTML the compact form of the text the file holds lined. That is
+// not an edit: the flush leaves the file alone, and a change from another
+// device is adopted, not twinned.
 test('a capture with nothing typed is not an edit', async () => {
   const fixture = await launchProfile();
   try {
@@ -220,8 +238,9 @@ test('a capture with nothing typed is not an edit', async () => {
 
 // A ghost is an outline section note shown in gray on the page, and typing
 // on it replaces it. ghostAtCaret finds it from a caret on the body itself,
-// between paragraphs (a click in the margin, the arrow keys), and a lined
-// file puts a line break node between the *** and the ghost.
+// between paragraphs (a click in the margin, the arrow keys), by the child
+// node beside the caret. The line break a lined file keeps between the ***
+// and the ghost stays off the page, so that child is the ghost in both forms.
 for (const [form, gap] of [['compact', ''], ['lined', '\n']]) {
   test(`typing at a caret on the body before a ghost writes over it, ${form}`, async () => {
     const fixture = await launchProfile();
@@ -236,7 +255,7 @@ for (const [form, gap] of [['compact', ''], ['lined', '\n']]) {
         window.getSelection().collapse(body, at);
         return body.childNodes[at].nodeType === Node.TEXT_NODE ? 'line break' : body.childNodes[at].className;
       }, { chId: CHAPTER, note });
-      expect(beside).toBe(gap ? 'line break' : 'ghost');
+      expect(beside).toBe('ghost');
       await fixture.page.keyboard.type('Word');
       expect(await fixture.page.evaluate((chId) => {
         const body = document.querySelector(`.chapter[data-id="${chId}"] .chapter-body`);
@@ -251,3 +270,108 @@ for (const [form, gap] of [['compact', ''], ['lined', '\n']]) {
     } finally { await fixture.close(); }
   });
 }
+
+// A darling remembers its place by the text either side of the cut. Cut
+// from the start of a paragraph, the text before it ends where the
+// paragraph before ends; with a line break node there, the place fell
+// inside that node and the words went back loose on the body, outside any
+// paragraph.
+test('a darling cut from the start of a paragraph goes back inside a paragraph', async () => {
+  const fixture = await launchProfile();
+  try {
+    await seedBook(fixture.page, F);
+    const back = await fixture.page.evaluate(async (chId) => {
+      const body = document.querySelector(`.chapter[data-id="${chId}"] .chapter-body`);
+      const words = body.querySelectorAll('p')[1].firstChild;
+      body.focus();
+      const cut = document.createRange();
+      cut.setStart(words, 0);
+      cut.setEnd(words, 'Second '.length);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(cut);
+      // what darlingFromKeyboard (Ctrl+Shift+D) does, awaited
+      const holder = document.createElement('div');
+      holder.appendChild(cut.cloneContents());
+      await moveSelectionToDarlings(holder.innerHTML, sel.toString());
+      const cutAway = !body.textContent.includes('Second');
+      await restoreDarling(darlings[0].id);
+      return {
+        cutAway,
+        darlings: darlings.length,
+        loose: [...body.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE && n.data.trim()).map((n) => n.data),
+        inParagraph: [...body.querySelectorAll('p')].some((p) => p.textContent.includes('Second'))
+      };
+    }, CHAPTER);
+    expect(back).toEqual({ cutAway: true, darlings: 0, loose: [], inParagraph: true });
+  } finally { await fixture.close(); }
+});
+
+// Darlings can hold a chapter's text as its file kept it: structural undo
+// and a look at the disk keep the text they displace that way, with no
+// place to go back to, and so does a loose card's chapter. It goes back
+// onto the page without its line breaks, at the chapter's end or after the
+// paragraph it came from.
+test('a darling holding lined words goes back with no line break between paragraphs', async () => {
+  const fixture = await launchProfile();
+  try {
+    await seedBook(fixture.page, F);
+    const restore = (place) => fixture.page.evaluate(async ({ chId, place }) => {
+      darlings.unshift({ id: 'd-lined-' + darlings.length, html: '<p>Kept one.</p>\n<p>Kept two.</p>\n', text: 'Kept one.\n\nKept two.', chapterId: chId, chapterLabel: 'Chapter 1', date: new Date().toISOString(), ...place });
+      await restoreDarling(darlings[0].id);
+    }, { chId: CHAPTER, place });
+    await restore({}); // no place remembered: the end of its chapter
+    expect(await blankChildren(fixture.page)).toEqual([]);
+    await restore({ anchorPrefix: 'First line.', anchorSuffix: 'Second line.' });
+    expect(await blankChildren(fixture.page)).toEqual([]);
+    await expect(fixture.page.locator('.chapter-body p')).toHaveText(['First line.', 'Kept one.', 'Kept two.', 'Second line.', 'Third line.', 'Kept one.', 'Kept two.']);
+  } finally { await fixture.close(); }
+});
+
+// A whole script pasted (more than 60 lines) goes in through spPasteMany.
+// From a caret set on the body itself it takes the line at the caret's
+// child offset and puts the paste below it. Line break nodes on the page
+// made that offset count about twice as many children as there are lines,
+// so the paste went in further down.
+const SCRIPT = ['<p class="sp-heading">INT. ROOM - DAY</p>', '<p>One.</p>', '<p>Two.</p>', '<p>Three.</p>', '<p>Four.</p>', '<p>Five.</p>'];
+for (const [form, gap] of [['compact', ''], ['lined', '\n']]) {
+  test(`a script pasted at a caret on the body lands beside the caret, ${form}`, async () => {
+    const fixture = await launchProfile();
+    try {
+      await seedBook(fixture.page, SCRIPT.join(gap) + gap, { format: 'screenplay' });
+      const lines = await fixture.page.evaluate((chId) => {
+        const body = document.querySelector(`.chapter[data-id="${chId}"] .chapter-body`);
+        body.focus();
+        window.getSelection().collapse(body, [...body.childNodes].indexOf(body.querySelectorAll('p')[3])); // just before "Three."
+        // a script pasted as plain text, read as Fountain
+        const pasted = ['EXT. FIELD - NIGHT'];
+        for (let i = 1; i <= 60; i++) pasted.push(`Pasted ${i}.`);
+        const clip = new DataTransfer();
+        clip.setData('text/plain', pasted.join('\n\n'));
+        body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: clip, bubbles: true, cancelable: true }));
+        return [...body.querySelectorAll('p')].map((p) => p.textContent);
+      }, CHAPTER);
+      expect(lines).toHaveLength(SCRIPT.length + 61);
+      expect(lines.slice(0, 5)).toEqual(['INT. ROOM - DAY', 'One.', 'Two.', 'Three.', 'EXT. FIELD - NIGHT']);
+      expect(lines.slice(-3)).toEqual(['Pasted 60.', 'Four.', 'Five.']);
+    } finally { await fixture.close(); }
+  });
+}
+
+// A page (a dedication, an epigraph) is written in a sheet of its own,
+// filled straight from its file.
+test('a page opened in its sheet has no line break between paragraphs', async () => {
+  const fixture = await launchProfile();
+  try {
+    await fixture.page.evaluate(async () => {
+      const meta = await neo.createBook({ title: 'Dedication', author: 'Test author' });
+      meta.kind = 'dedication';
+      meta.chapterOrder = ['page-synthetic'];
+      await neo.writeBookMeta(meta.id, meta);
+      await neo.writeChapter(meta.id, 'page-synthetic', '<p>For one.</p>\n<p>For two.</p>\n');
+      await openPageSheet(null, meta, 'Dedication');
+    });
+    await expect(fixture.page.locator('.ps-body p')).toHaveText(['For one.', 'For two.']);
+    expect(await blankChildren(fixture.page, '.ps-body')).toEqual([]);
+  } finally { await fixture.close(); }
+});
