@@ -313,6 +313,37 @@ test('reads', async () => {
   await tick(300);
 });
 
+test('a shelf export tells the plugins nothing; the save flushed on the way to the shelf is heard', async () => {
+  // typed just before the shelf: the flush lands after the book has closed
+  await caretAtEnd(owls.chapters[0]);
+  await forget();
+  await type('Gnu');
+  await js('backToShelf()');
+  await tick(500);
+  const order = (await heard()).map(([name]) => name).filter((name, i, all) => name !== all[i - 1]);
+  assert.deepEqual(order, ['chapter-change', 'book-close', 'chapter-saved']);
+  assert.match(chapterFile(owls.id, owls.chapters[0]), /Gnu/);
+  // an export that draws and saves the book it borrowed, as printPaperback
+  // does with a dedication typed in its dialog
+  await forget();
+  await js(`(async () => {
+    const realExport = doExport;
+    doExport = async () => {
+      renderChapters();
+      await persistChapter(book.chapterOrder[0]);
+    };
+    try {
+      await exportFromShelf(${str(other.id)}, 'txt');
+    } finally {
+      doExport = realExport;
+    }
+  })()`);
+  await tick(300);
+  assert.deepEqual(await heard(), []);
+  await js(`openBook(${str(owls.id)})`);
+  await tick(300);
+});
+
 test('broken plugin', async () => {
   assert.equal(hintAtLaunch, '', 'nothing was shown to the writer');
   const log = await logWith('plugin broken:');

@@ -315,24 +315,35 @@ describe('the window half', () => {
   });
 
   // plugins.js in a vm, with window.neo.plugins as given and stand-ins for
-  // the page: what it would add to the page, and what it logs. reads stands
-  // in for app.js's getters; clock.now is what performance.now() reads.
-  function windowHalf(list, reads = {}) {
+  // the page: what it would add to the page (an element's remove() takes it
+  // off again), what it logs, and what it writes to the console. reads
+  // stands in for app.js's getters; logError, when given, for the log;
+  // clock.now is what performance.now() reads.
+  function windowHalf(list, reads = {}, logError = null) {
     const added = [];
     const logged = [];
+    const consoled = [];
     const clock = { now: 0 };
     const page = { appendChild: (el) => added.push(el) };
+    const element = (tag) => ({
+      tag,
+      remove() {
+        const i = added.indexOf(this);
+        if (i >= 0) added.splice(i, 1);
+      }
+    });
     const context = vm.createContext({
-      neo: { plugins: list, logError: (line) => logged.push(line) },
-      document: { head: page, body: page, addEventListener() {}, createElement: (tag) => ({ tag }) },
+      neo: { plugins: list, logError: logError || ((line) => logged.push(line)) },
+      document: { head: page, body: page, addEventListener() {}, createElement: element },
       requestAnimationFrame: () => 1,
       performance: { now: () => clock.now },
+      console: { error: (...args) => consoled.push(args.map(String).join(' ')) },
       structuredClone
     });
     context.window = context;
     vm.runInContext(fs.readFileSync(path.join(root, 'plugins.js'), 'utf8'), context, { filename: 'plugins.js' });
     const getters = { book: () => null, chapterHTML: () => undefined, currentTab: () => 'manuscript', ...reads };
-    return { NeoPlugins: context.NeoPlugins, attach: () => context.NeoPlugins.attach(getters), added, logged, clock };
+    return { NeoPlugins: context.NeoPlugins, attach: () => context.NeoPlugins.attach(getters), added, logged, consoled, clock };
   }
 
   // the host with one listed plugin, p, registered with activate; neo is
@@ -478,5 +489,142 @@ describe('the window half', () => {
     off();
     NeoPlugins.emit('book-open', { bookId: 'two' });
     assert.deepEqual(heard, ['one']);
+  });
+
+  test('the attach hook hands over app.js\'s own book, and its comment points to the rule in plugins.js', () => {
+    const lines = fs.readFileSync(path.join(root, 'app.js'), 'utf8').split(/\r?\n/);
+    const at = lines.findIndex((line) => /\bNeoPlugins\.attach\(/.test(line));
+    assert.match(lines[at], /\bbook: \(\) => book\b/);
+    const comment = [];
+    for (let i = at - 1; /^\s*\/\//.test(lines[i]); i--) comment.unshift(lines[i]);
+    assert.match(comment.join(' '), /\bopenedBook\b/, comment.join('\n'));
+    assert.match(fs.readFileSync(path.join(root, 'plugins.js'), 'utf8'), /\bfunction openedBook\(/);
+  });
+
+  const listedP = { id: 'p', apiVersion: 1, rendererUrl: 'plugins/p/renderer.js', styleUrl: null };
+
+  test('an activate that subscribes after an await still hears the open book, once it has settled', async () => {
+    const book = { id: 'owls', chapterOrder: [] };
+    const host = windowHalf([listedP], { book: () => book });
+    host.attach();
+    host.NeoPlugins.emit('book-open', { bookId: 'owls' });
+    const heard = [];
+    host.NeoPlugins.register({ id: 'p', apiVersion: 1, async activate(neo) {
+      await null;
+      neo.on('book-open', (detail) => heard.push(detail.bookId));
+    } });
+    await settled();
+    assert.deepEqual(heard, ['owls']);
+  });
+
+  test('an opening a plugin heard while its activate waited is not told again when it settles', async () => {
+    let book = null;
+    const host = windowHalf([listedP], { book: () => book });
+    host.attach();
+    const heard = [];
+    let release;
+    host.NeoPlugins.register({ id: 'p', apiVersion: 1, async activate(neo) {
+      neo.on('book-open', (detail) => heard.push(detail.bookId));
+      await new Promise((resolve) => { release = resolve; });
+    } });
+    book = { id: 'owls', chapterOrder: [] };
+    host.NeoPlugins.emit('book-open', { bookId: 'owls' });
+    release();
+    await settled();
+    assert.deepEqual(heard, ['owls']);
+  });
+
+  test('an activate that rejects after subscribing is never told of the open book', async () => {
+    const book = { id: 'owls', chapterOrder: [] };
+    const host = windowHalf([listedP], { book: () => book });
+    host.attach();
+    host.NeoPlugins.emit('book-open', { bookId: 'owls' });
+    const heard = [];
+    host.NeoPlugins.register({ id: 'p', apiVersion: 1, async activate(neo) {
+      neo.on('book-open', (detail) => heard.push(detail.bookId));
+      await null;
+      throw new Error('activate rejected on purpose');
+    } });
+    await settled();
+    assert.deepEqual(heard, []);
+    assert.match(host.logged[0], /^plugin p: Error: activate rejected on purpose\n\s+at /);
+  });
+
+  test('a refused, failed or unloaded plugin\'s stylesheet leaves the page; a stray second register keeps a working one\'s', async () => {
+    const styled = (id) => ({ id, apiVersion: 1, rendererUrl: `plugins/${id}/renderer.js`, styleUrl: `plugins/${id}/style.css` });
+    const host = windowHalf(['works', 'refused', 'throws', 'rejects', 'unloaded'].map(styled));
+    host.attach();
+    const links = () => host.added.filter((el) => el.tag === 'link').map((el) => el.href);
+    assert.equal(links().length, 5);
+    const { register } = host.NeoPlugins;
+    register({ id: 'works', apiVersion: 1, activate() {} });
+    register({ id: 'refused', apiVersion: 2, activate() {} });
+    register({ id: 'throws', apiVersion: 1, activate() { throw new Error('throws on purpose'); } });
+    register({ id: 'rejects', apiVersion: 1, async activate() { throw new Error('rejects on purpose'); } });
+    host.added.find((el) => el.src === 'plugins/unloaded/renderer.js').onerror();
+    register({ id: 'works', apiVersion: 99, activate() {} });
+    await settled();
+    assert.deepEqual(links(), ['plugins/works/style.css']);
+  });
+
+  test('attach skips a null or id-less entry in the list, as register does', () => {
+    const host = windowHalf([null, { apiVersion: 1, rendererUrl: 'plugins/x/renderer.js', styleUrl: 'plugins/x/style.css' }, listedP]);
+    host.attach();
+    assert.deepEqual(host.added.map((el) => el.src || el.href), ['plugins/p/renderer.js']);
+    let activated = false;
+    host.NeoPlugins.register({ apiVersion: 1, activate() { activated = true; } });
+    assert.equal(activated, false, 'a plugin with no id never matches an entry with none');
+  });
+
+  test('a log that throws or rejects never escapes into NEO: the line goes to the console instead', async () => {
+    const unhandled = [];
+    const onUnhandled = (err) => unhandled.push(err);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      for (const logError of [() => { throw new Error('log down'); }, () => Promise.reject(new Error('log down'))]) {
+        const host = windowHalf([listedP], {}, logError);
+        host.attach();
+        let neo = null;
+        host.NeoPlugins.register({ id: 'p', apiVersion: 1, activate(api) { neo = api; } });
+        neo.on('chapter-saved', () => { throw new Error('a listener throws on purpose'); });
+        neo.on('chapter-saved', async () => { throw new Error('a listener rejects on purpose'); });
+        assert.doesNotThrow(() => host.NeoPlugins.emit('chapter-saved', { bookId: 'b', chId: 'c' }));
+        await settled();
+        await settled();
+        assert.equal(host.consoled.length, 2, host.consoled.join('\n'));
+        assert.match(host.consoled[0], /^plugin p: Error: a listener throws on purpose\n[\s\S]*Error: log down/);
+        assert.match(host.consoled[1], /^plugin p: Error: a listener rejects on purpose\n[\s\S]*Error: log down/);
+      }
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+    assert.deepEqual(unhandled, []);
+  });
+
+  test('nothing done to a book a shelf export borrowed reaches the plugins; a save landing after its book closed does', () => {
+    // app.js's book, borrowed by a shelf export: no plugin heard it open
+    let book = { id: 'other', chapterOrder: ['c0'] };
+    const heard = [];
+    const { NeoPlugins } = withPlugin((api) => {
+      for (const name of ['rendered', 'chapter-saved', 'book-close']) api.on(name, (detail) => heard.push([name, detail.bookId]));
+    }, { book: () => book });
+    NeoPlugins.emit('rendered', { bookId: 'other' });
+    NeoPlugins.emit('chapter-saved', { bookId: 'other', chId: 'c0' });
+    NeoPlugins.emit('book-close', { bookId: 'other' });
+    assert.deepEqual(heard, [], 'the borrowed book');
+    book = { id: 'owls', chapterOrder: ['c1'] };
+    NeoPlugins.emit('book-open', { bookId: 'owls' });
+    NeoPlugins.emit('rendered', { bookId: 'owls' });
+    NeoPlugins.emit('chapter-saved', { bookId: 'owls', chId: 'c1' });
+    NeoPlugins.emit('book-close', { bookId: 'owls' });
+    book = null;
+    // the flush on the way to the shelf lands after the book has closed
+    NeoPlugins.emit('chapter-saved', { bookId: 'owls', chId: 'c1' });
+    assert.deepEqual(heard, [
+      ['rendered', 'owls'],
+      ['chapter-saved', 'owls'],
+      ['book-close', 'owls'],
+      ['chapter-saved', 'owls']
+    ]);
   });
 });
