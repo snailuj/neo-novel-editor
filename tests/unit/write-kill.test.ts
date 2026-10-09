@@ -61,27 +61,40 @@ function assertWhole(file: string): void {
   assert.ok(got === 'A' || got === 'B', `${path.basename(file)} is ${got}`);
 }
 
-// Starts the writer, waits for its `writing` line, then SIGKILLs it `delay` ms later.
-// Resolves once the child has exited, so no handle on its files is left open.
-function writeThenKill(dir: string, mode: Mode, delay: number, inPlace: boolean): Promise<void> {
-  const args = [writer, dir, mode, ...(inPlace ? ['--in-place'] : [])];
+// Runs `node ...args`, waits for its `writing` line, then SIGKILLs it `delay` ms later.
+// Resolves once the child has exited, so no handle on its files is left open. It resolves
+// only if our SIGKILL was delivered to a live child and that is how the child ended; any
+// other ending rejects, because a round whose kill never landed proves nothing.
+function killAfterWriting(args: string[], delay: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'inherit'] });
     let out = '';
-    let killed = false;
+    let scheduled = false;
+    let delivered = false;
+    let timer: NodeJS.Timeout | undefined;
     child.once('error', reject);
     child.once('close', (code, signal) => {
-      if (killed) resolve();
-      else reject(new Error(`writer ended on its own (code ${code}, signal ${signal})`));
+      clearTimeout(timer);
+      // Both checks: on POSIX kill() succeeds on a child that has exited but is not yet
+      // reaped (then signal is null), and an outside SIGKILL (the OOM killer) leaves
+      // signal SIGKILL with no kill of ours delivered.
+      if (delivered && signal === 'SIGKILL') resolve();
+      else reject(new Error(`writer exited on its own (code ${code}, signal ${signal})`));
     });
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => {
       out += chunk;
-      if (killed || !out.includes('writing')) return;
-      killed = true;
-      setTimeout(() => child.kill('SIGKILL'), delay);
+      if (scheduled || !out.includes('writing')) return;
+      scheduled = true;
+      timer = setTimeout(() => {
+        delivered = child.exitCode === null && child.kill('SIGKILL');
+      }, delay);
     });
   });
+}
+
+function writeThenKill(dir: string, mode: Mode, delay: number, inPlace: boolean): Promise<void> {
+  return killAfterWriting([writer, dir, mode, ...(inPlace ? ['--in-place'] : [])], delay);
 }
 
 // Rounds with the kill spread evenly over 0 to 50 ms after the `writing` line (40 steps,
@@ -104,6 +117,22 @@ async function rounds(
     }
   }
 }
+
+// The helper itself. A writer that dies on its own after `writing` (a handler throws, a
+// rename gives up, out of memory) must fail the round: the file is still whole, so every
+// later assertion would pass without a kill ever landing in a write.
+const SAYS_WRITING = "require('fs').writeSync(1, 'writing'); ";
+
+test('a writer that exits on its own after writing fails the round', async () => {
+  await assert.rejects(
+    killAfterWriting(['-e', SAYS_WRITING + 'setTimeout(() => process.exit(3), 5)'], 200),
+    /exited on its own \(code 3, signal null\)/,
+  );
+});
+
+test('a writer still running when the timer fires is killed and the round resolves', async () => {
+  await killAfterWriting(['-e', SAYS_WRITING + 'setInterval(() => {}, 1000)'], 10);
+});
 
 test('a killed chapter save leaves the old or the new file whole', async () => {
   await rounds('chapter', false, (lib, _before, round) => {
