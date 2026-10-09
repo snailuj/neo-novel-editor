@@ -11508,7 +11508,9 @@ async function takeSnapshotNow(kind, htmlOf, { ifNoneToday }) {
   const titles = { ...(book.chapterTitles || {}) };
   const kinds = { ...(book.chapterKinds || {}) };
   const texts = {};
-  for (const c of order) texts[c] = htmlOf(c);
+  // one paragraph per line, as the chapter files are (paragraphLines): a
+  // copy that differs from the saved one in line breaks alone is no change
+  for (const c of order) texts[c] = paragraphLines(htmlOf(c));
   const snaps = await loadSnaps(bookId);
   const now = Date.now();
   if (ifNoneToday && snaps.some((s) => new Date(s.at).toDateString() === new Date(now).toDateString())) return null;
@@ -11774,7 +11776,7 @@ async function showSnapshot(name) {
   for (const ch of chapters) {
     const now = book.chapterOrder.includes(ch.chId) ? (chapterHTML[ch.chId] || '') : null;
     ch.now = now;
-    ch.same = now !== null && textHash(now) === textHash(ch.html);
+    ch.same = now !== null && sameOnDisk(now, ch.html);
     if (!ch.same) diff.push({ chId: ch.chId, label: label(ch.chId) });
   }
   const extra = book.chapterOrder.filter((c) => !meta.chapterOrder.includes(c)).length;
@@ -11821,6 +11823,7 @@ async function showSnapshot(name) {
     body.className = 'chapter-body snap-body';
     if (isScript()) body.classList.add('sp-geom');
     body.appendChild(snapHolderEl(ch.html));
+    dropLineBreaks(body);
     sec.appendChild(body);
     v.appendChild(sec);
     if (ch.same) continue;

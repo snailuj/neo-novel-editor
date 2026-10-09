@@ -243,3 +243,49 @@ test('undo keeps the words typed since in a chapter the action left alone', asyn
   assert.equal(page.chapterHTML.x, paragraphLines(since));
   assert.equal(page.chapterHTML.y, '<p>Elsewhere.</p>\n');
 });
+
+// The book's snapshots (SNAPSHOTS) over the book in memory, each kept as
+// { file: text } under its name. A word is any run without a tag or a space.
+function withSnapshots(page) {
+  const snaps = new Map();
+  Object.assign(page.window.neo, {
+    snapshotList: async () => [...snaps].map(([name, files]) => ({ name, files: Object.keys(files) })),
+    snapshotRead: async (bookId, name, file) => (snaps.get(name) || {})[file] || '',
+    snapshotWrite: async (bookId, name, file, text) => {
+      if (!snaps.has(name)) snaps.set(name, {});
+      if (file in snaps.get(name)) return false;
+      snaps.get(name)[file] = text;
+      return true;
+    },
+    snapshotRemove: async (bookId, name) => snaps.delete(name),
+    logError: () => {}
+  });
+  const element = page.document.createElement;
+  page.document = {
+    addEventListener: () => {},
+    createElement: (tag) => (tag !== 'template' ? element(tag) : {
+      innerHTML: '',
+      get content() { return { text: this.innerHTML.replace(/<[^>]*>/g, ' '), querySelectorAll: () => [] }; }
+    })
+  };
+  Object.assign(page, { UNCOUNTED: '', plainText: (root) => root.text, countWords: (text) => text.split(/\s+/).filter(Boolean).length });
+  const at = app.indexOf('/*  SNAPSHOTS');
+  vm.runInContext(app.slice(at, app.indexOf('/*  REFRESH', at)), page);
+  return snaps;
+}
+
+// The day's first snapshot holds savedHTML, lined; a capture of the page
+// with nothing typed holds the same text compact. A snapshot of it after
+// finds no chapter changed, and another after that nothing new.
+test('a capture of the page with nothing typed is no change to a snapshot', async () => {
+  const { page } = bookInMemory({ x: F });
+  withSnapshots(page);
+  page.maybeDailySnapshot();
+  await vm.runInContext('snapChain', page);
+  page.chapterHTML.x = F.replace(/\n/g, '');
+  const kept = await page.takeSnapshot('k');
+  assert.equal(kept.snap.changed, 0);
+  assert.deepEqual([...kept.snap.files], ['snapshot.json']);
+  page.chapterHTML.x = F;
+  assert.equal((await page.takeSnapshot('k')).same, true);
+});
