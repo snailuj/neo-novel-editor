@@ -16424,4 +16424,4 @@ loadLibrary().then(() => {
 // over as it stands, a book a shelf export borrowed included: plugins.js
 // decides what a plugin reads (openedBook), only the book the plugins heard
 // open.
-if (window.NeoPlugins) NeoPlugins.attach({ book: () => book, chapterHTML: (id) => chapterHTML[id], currentTab: () => currentTab, switchTab, captureCaret, restoreCaret });
+if (window.NeoPlugins) NeoPlugins.attach({ book: () => book, chapterHTML: (id) => chapterHTML[id], currentTab: () => currentTab, switchTab, captureCaret, restoreCaret, resumePosition });

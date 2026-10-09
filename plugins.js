@@ -258,22 +258,11 @@
     return range;
   }
 
-  // the start of a range a third of the way down the page, where
-  // resumePosition (app.js) puts the caret when a book opens
-  function thirdDown(range) {
-    const sc = document.getElementById('paper-scroll');
-    let rect = range.getBoundingClientRect();
-    if (!rect.height) {
-      const node = range.startContainer.nodeType === Node.ELEMENT_NODE ? range.startContainer : range.startContainer.parentElement;
-      if (node) rect = node.getBoundingClientRect();
-    }
-    sc.scrollTop += rect.top - sc.getBoundingClientRect().top - sc.clientHeight / 3;
-  }
-
   // The writer taken to a place: the manuscript, the place selected, and
-  // the scroll given, else the place a third of the way down the page.
-  // False, with nothing moved, when the place is not in the open book or
-  // the plugin asking has been disposed.
+  // the scroll given, else the place a third of the way down the page, as
+  // resumePosition (app.js) puts the caret when a book opens. False, with
+  // nothing moved, when the place is not in the open book or the plugin
+  // asking has been disposed.
   function go(place, entry) {
     if (!validPlace(place)) throw new TypeError(`go takes a place, { chId, pIdx, off, len, scroll? } with whole numbers, not ${shown(place)}`);
     const range = entry.disposed ? null : rangeOfPlace(place);
@@ -281,12 +270,14 @@
     // switchTab leaves the chapters on the page as they are, and the range
     // with them
     if (get.currentTab() !== 'manuscript') get.switchTab('manuscript');
-    // the focus, the chapter NEO counts as current, and the scroll given
-    get.restoreCaret({ chId: place.chId, pIdx: place.pIdx, off: place.off, scroll: place.scroll });
+    // the caret at the place's start, with the focus and the chapter NEO
+    // counts as current: at the scroll given, else a third of the way down
+    if (place.scroll === undefined) get.resumePosition({ chapterId: place.chId, pIdx: place.pIdx, off: place.off });
+    else get.restoreCaret({ chId: place.chId, pIdx: place.pIdx, off: place.off, scroll: place.scroll });
+    // then the whole place selected over it, which scrolls nothing
     const sel = getSelection();
     sel.removeAllRanges();
     sel.addRange(range);
-    if (place.scroll === undefined) thirdDown(range);
     return true;
   }
 
