@@ -416,6 +416,27 @@ test('a mismatch is taken back', async () => {
   assert.equal((await lines(one))[0], 'One paragraph.');
 });
 
+// A listener that refuses the insert and changes the line itself, as
+// app.js's ghost handler does, leaves nothing of replace's to take back:
+// the engine's undo would take the writer's last typing instead
+test('a refusal undoes nothing', async () => {
+  const [one] = book.chapters;
+  const html = await js(`chapterHTML[${str(one)}]`);
+  await select(one, 1, 4); // after "Rain"
+  wc.sendInputEvent({ type: 'char', keyCode: 'y' });
+  await until(async () => (await lines(one))[1] === 'Rainy fell on the harbor.', 'the writer\'s typing');
+  await js(`document.addEventListener('beforeinput', (e) => {
+    e.preventDefault();
+    document.querySelector('.chapter[data-id="${one}"] .chapter-body p').firstChild.data += '!';
+  }, { once: true, capture: true })`);
+  assert.deepEqual(await replace(word(), 'paragraph', 'passage'), { ok: false, reason: 'blocked' });
+  assert.deepEqual((await lines(one)).slice(0, 2), ['One paragraph.!', 'Rainy fell on the harbor.'], 'the writer\'s typing stays');
+  await until(() => errorLog().includes('replace was refused'), 'the log');
+  assert.match(errorLog(), /plugin probe: replace was refused, and nothing undone: the paragraph read "One paragraph\.!" where "One paragraph\." was/);
+  await setChapter(one, html);
+  assert.equal((await lines(one))[0], 'One paragraph.');
+});
+
 test('caret kept', async () => {
   const [one, two] = book.chapters;
   // a caret in another chapter, far down the page, stays, with the scroll

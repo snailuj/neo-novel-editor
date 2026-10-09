@@ -416,15 +416,19 @@
       // one first and can refuse it as they refuse a key (vim keys' moving
       // mode refuses every insertText, app.js)
       const asked = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: newText });
-      if (body.dispatchEvent(asked)) document.execCommand('insertText', false, newText);
+      const inserted = body.dispatchEvent(asked) && document.execCommand('insertText', false, newText);
       const now = body.querySelectorAll('p')[place.pIdx];
       const got = now ? now.textContent : null;
       if (got === want) return { p, off: place.off, len: place.len, text: newText };
-      // text left as it was is an insert the editor refused; anything else
-      // is taken back
-      if (got !== was) {
+      // text left as it was is an insert the editor refused; an insert that
+      // came out otherwise is taken back. A refused insert put nothing on
+      // the engine's undo stack, so its undo would take the writer's last
+      // typing: what changed the line then is the listener's own.
+      if (got !== was && inserted) {
         document.execCommand('undo');
         log(entry.id, `replace was undone: the paragraph read ${shown(got)} where ${shown(want)} was meant`);
+      } else if (got !== was) {
+        log(entry.id, `replace was refused, and nothing undone: the paragraph read ${shown(got)} where ${shown(was)} was`);
       }
       return null;
     });
