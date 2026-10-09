@@ -1,0 +1,8 @@
+{
+  "id": "probe",
+  "apiVersion": 1,
+  "renderer": "renderer.js",
+  "commands": [
+    { "id": "hello", "title": "Say Hello" }
+  ]
+}

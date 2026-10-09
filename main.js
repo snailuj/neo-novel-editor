@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { Buffer } = require('buffer');
+const plugins = require('./plugins-main.js');
 
 // Every disk request from the page passes through here: a write the system
 // refuses (see reportBlockedWrite) is explained to the writer, then the error
@@ -1881,6 +1882,9 @@ process.on('uncaughtException', (err) => logError('main', err));
 process.on('unhandledRejection', (err) => logError('main-promise', err));
 ipcMain.handle('log:error', (_e, msg) => logError('renderer', msg));
 
+// plugins (plugins-main.js): plugins:list for the window, a Plugins menu
+plugins.wire({ app, ipcMain, logError, appRoot: __dirname });
+
 // One zip of the whole library per day, keeping the last 14. Cheap insurance.
 async function dailyBackup() {
   if (backupRunning) return; // one at a time (the hourly look can meet a slow one)
@@ -2602,6 +2606,7 @@ function buildMenu() {
         }
       ]
     },
+    ...plugins.menuItems(sendToWindow),
     {
       role: 'windowMenu',
       label: t('Window'),
