@@ -31,6 +31,18 @@ test('blank lines and spaces between paragraphs come down to one line break', ()
   assert.equal(paragraphLines('<p>a</p>\n\n  <p>b</p>'), '<p>a</p>\n<p>b</p>\n');
 });
 
+// The page keeps a chapter file's blocks, never the line breaks between
+// them: dropLineBreaks, run on a body of paragraphs and text nodes
+test('a page filled from a chapter file keeps its paragraphs and drops the line breaks between them', () => {
+  const dropLineBreaks = vm.runInContext('dropLineBreaks', context);
+  const body = { childNodes: [] };
+  const node = (nodeType, data) => ({ nodeType, data, remove() { body.childNodes.splice(body.childNodes.indexOf(this), 1); } });
+  body.childNodes.push(node(1, 'First'), node(3, '\n'), node(1, 'Second'), node(3, '\n\n  \t'), node(3, 'loose words'), node(3, '\u00a0'), node(1, 'Third'), node(3, '\n'));
+  dropLineBreaks(body);
+  // a no-break space is the writer's own, and stays
+  assert.deepEqual(body.childNodes.map((n) => n.data), ['First', 'Second', 'loose words', '\u00a0', 'Third']);
+});
+
 // A book in memory, saved through persistChapter to a disk that notes what
 // it is handed, flushed by flushAllSaves, looked at again by refreshFromDisk
 // and undone by structuralUndo; the page's drawing is left out.
@@ -40,7 +52,8 @@ const SLICES = [
   ['function flushAllSaves(', '/*  SNAPSHOTS'],
   ['function mergeSidecar(', 'function writeSidecar('],
   ['function onlyDrops(', 'window.addEventListener(\'focus\''],
-  ['function sealUndo(', '// after undoing a double-Enter break']
+  ['function sealUndo(', '// after undoing a double-Enter break'],
+  ['async function duplicateBook(', '// The cover as a picture file']
 ];
 function bookInMemory(chapters) {
   const writes = [];
@@ -51,7 +64,8 @@ function bookInMemory(chapters) {
       writeChapter: async (bookId, chId, html) => { writes.push({ chId, html }); disk[chId] = html; return true; },
       readChapter: async (bookId, chId) => disk[chId],
       readBookMeta: async () => JSON.parse(JSON.stringify(page.book)),
-      readJSON: async () => null
+      readJSON: async () => null,
+      duplicateBook: async (bookId, title) => ({ id: bookId + '-copy', title })
     } },
     book: { id: 'b', chapterOrder: Object.keys(chapters), chapterKinds: {}, chapterTitles: {}, chapterNotes: {}, sectionNotes: {}, looseCards: [], sceneNotes: {} },
     chapterHTML: { ...chapters },
@@ -70,9 +84,12 @@ function bookInMemory(chapters) {
     currentTab: 'manuscript',
     currentChapterId: null,
     shelfExport: false,
-    library: null,
+    library: { shelves: [{ id: 's', bookIds: ['b'] }] },
     lastHereActivity: 0,
-    bookMetaCache: { clear: none },
+    bookMetaCache: { clear: none, set: none },
+    isBound: () => false,
+    writeLibrary: async () => {},
+    renderShelves: none,
     console,
     setTimeout,
     document: { createElement: () => ({ children: [] }) },
@@ -127,10 +144,10 @@ test('text handed in that the page no longer holds leaves the page alone', async
   assert.equal(page.savedHTML.x, '<p>Older.</p>\n');
 });
 
-// A paragraph made by Enter has no line break before it on the page, so
-// capturing the page after its save, with nothing typed, gives back the
-// compact form of the text the file holds lined.
-const ENTERED = '<p>First line.</p>\n<p>Second line.</p><p>New.</p>\n<p>Third line.</p>\n';
+// The page holds none of a chapter file's line breaks, so capturing it
+// after a save (here of a paragraph made by Enter), with nothing typed,
+// gives back the compact form of the text the file holds lined.
+const ENTERED = '<p>First line.</p><p>Second line.</p><p>New.</p><p>Third line.</p>';
 
 test('a capture of the page with nothing typed gives the flush nothing to write', async () => {
   const { page, writes } = bookInMemory({ x: F });
@@ -168,6 +185,18 @@ test('a capture of the page with nothing typed lets another device remove the ch
   page.window.neo.readBookMeta = async () => ({ ...JSON.parse(JSON.stringify(page.book)), chapterOrder: ['x'] });
   await page.refreshFromDisk();
   assert.deepEqual([...page.book.chapterOrder], ['x']);
+});
+
+// duplicateBook writes the open book's unsaved chapters before the copy
+test('a capture of the page with nothing typed is not written again before the book is copied', async () => {
+  const { page, writes } = bookInMemory({ x: F });
+  page.chapterHTML.x = ENTERED;
+  await page.persistChapter('x');
+  writes.length = 0;
+  page.chapterHTML.x = ENTERED;
+  await page.duplicateBook({ id: 'b', title: 'Book' });
+  await settled(page);
+  assert.deepEqual(writes, []);
 });
 
 // structural undo hands back chapters whose files the action deleted, and
@@ -213,47 +242,4 @@ test('undo keeps the words typed since in a chapter the action left alone', asyn
   assert.equal(JSON.stringify(page.darlings), '[]');
   assert.equal(page.chapterHTML.x, paragraphLines(since));
   assert.equal(page.chapterHTML.y, '<p>Elsewhere.</p>\n');
-});
-
-// ghostAtCaret, run on a page that is only paragraphs (a ghost is an
-// outline note shown in gray) and the text nodes between them, with the
-// caret set on the body itself, before the child at `offset`
-function ghostBeside(parts, offset) {
-  const body = { nodeType: 1, childNodes: [], closest: () => null };
-  body.contains = (n) => body.childNodes.includes(n);
-  for (const part of parts) {
-    body.childNodes.push(typeof part === 'string'
-      ? { nodeType: 3, data: part, parentElement: body }
-      : { nodeType: 1, name: part.p, closest(sel) { return sel === 'p.ghost' && this.name === 'ghost' ? this : null; } });
-  }
-  body.childNodes.forEach((n, i) => {
-    n.previousSibling = body.childNodes[i - 1] || null;
-    n.nextSibling = body.childNodes[i + 1] || null;
-  });
-  const caret = { startContainer: body, startOffset: offset };
-  const ctx = vm.createContext({
-    body,
-    Node: { ELEMENT_NODE: 1, TEXT_NODE: 3 },
-    window: { getSelection: () => ({ rangeCount: 1, getRangeAt: () => caret }) }
-  });
-  const from = app.indexOf('  function ghostAtCaret() {');
-  vm.runInContext(app.slice(from, app.indexOf('  // Writing on a ghost replaces it whole', from)), ctx);
-  const found = ctx.ghostAtCaret();
-  return found ? found.name : null;
-}
-const P = { prose: { p: 'prose' }, brk: { p: 'brk' }, ghost: { p: 'ghost' } };
-
-test('a caret on the body finds the ghost after it past a line break between paragraphs', () => {
-  assert.equal(ghostBeside([P.prose, P.brk, P.ghost], 2), 'ghost');
-  assert.equal(ghostBeside([P.prose, '\n', P.brk, '\n', P.ghost, '\n'], 3), 'ghost');
-});
-
-test('a caret on the body finds the ghost before it past a line break between paragraphs', () => {
-  assert.equal(ghostBeside([P.ghost, P.prose], 1), 'ghost');
-  assert.equal(ghostBeside([P.ghost, '\n', P.prose, '\n'], 2), 'ghost');
-});
-
-test('line breaks between paragraphs with no ghost beside them find none', () => {
-  assert.equal(ghostBeside([P.prose, '\n', P.brk, '\n', P.prose, '\n'], 3), null);
-  assert.equal(ghostBeside(['\n'], 0), null);
 });

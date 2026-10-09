@@ -1623,6 +1623,7 @@ async function openPageSheet(shelf, meta, label) {
   const body = bd.querySelector('.ps-body');
   body.setAttribute('aria-label', label);
   body.innerHTML = html && html.trim() ? html : '<p><br></p>';
+  dropLineBreaks(body);
   if (PAGE_PLACEHOLDERS[live.kind]) body.dataset.ph = PAGE_PLACEHOLDERS[live.kind]();
   // the page shows what it will print: a line that opens with a dash is set
   // as the name of whoever said the lines above it
@@ -2663,6 +2664,7 @@ function renderChapters() {
     // a script's lines are set as they print (styles.css, SCREENPLAYS)
     if (isScript()) body.classList.add('script-body', $('#paper').classList.contains('narrow') ? 'sp-narrow' : 'sp-geom', 'no-cap');
     body.innerHTML = chapterHTML[chId] || '<p><br></p>';
+    dropLineBreaks(body);
     markDialogueOpening(body);
     if (PAGE_PROMPTS[kind]) {
       body.dataset.ph = PAGE_PROMPTS[kind]();
@@ -2996,17 +2998,7 @@ function wireChapterBody(body, chId) {
     if (!sel.rangeCount) return null;
     const r = sel.getRangeAt(0);
     const c = r.startContainer;
-    let near = [c];
-    if (c.nodeType === Node.ELEMENT_NODE) {
-      // past the line breaks a chapter file kept one paragraph per line
-      // puts between paragraphs
-      const blank = (n) => n && n.nodeType === Node.TEXT_NODE && !/[^\t\n\f\r ]/.test(n.data);
-      let after = c.childNodes[r.startOffset];
-      while (blank(after)) after = after.nextSibling;
-      let before = c.childNodes[r.startOffset - 1];
-      while (blank(before)) before = before.previousSibling;
-      near = [after, before, c];
-    }
+    const near = c.nodeType === Node.ELEMENT_NODE ? [c.childNodes[r.startOffset], c.childNodes[r.startOffset - 1], c] : [c];
     for (const n of near) {
       const el = n && (n.nodeType === Node.ELEMENT_NODE ? n : n.parentElement);
       const g = el && el.closest ? el.closest('p.ghost') : null;
@@ -10913,6 +10905,7 @@ async function restoreDarling(id) {
           // inline content: slot it right where the caret was
           at.insertNode(document.createRange().createContextualFragment(d.html || d.text));
         }
+        dropLineBreaks(body);
         syncChapter(body, d.chapterId);
         // the chapter holding it again is saved before Darlings lets it go
         if (!(await savedBeforeLettingGo(d.chapterId))) return;
@@ -10933,6 +10926,7 @@ async function restoreDarling(id) {
   const body = document.querySelector(`.chapter[data-id="${chId}"] .chapter-body`);
   const frag = d.html ? d.html : '<p>' + d.text.replace(/\n+/g, '</p><p>') + '</p>';
   body.insertAdjacentHTML('beforeend', frag);
+  dropLineBreaks(body);
   chapterHTML[chId] = captureBody(body);
   if (!(await savedBeforeLettingGo(chId))) return;
   darlings = darlings.filter((x) => x.id !== id);
@@ -11176,10 +11170,18 @@ function paragraphLines(html) {
   }
   return out + html.slice(from);
 }
+// The page never holds those line breaks: whatever fills a chapter body
+// from a file (or from Darlings, which can keep a chapter's text as its
+// file had it) drops the whitespace-only text between the blocks, so the
+// page is the one drawn from the compact text and the caret code meets
+// paragraphs alone.
+function dropLineBreaks(body) {
+  for (const n of [...body.childNodes]) if (n.nodeType === 3 && !/[^\t\n\f\r ]/.test(n.data)) n.remove();
+}
 // True when two copies of a chapter go to disk as the same file. A save
-// sets the page's copy one paragraph per line, but the page itself has no
-// line break before a paragraph made since it was drawn, so a capture of
-// the page with nothing typed differs from savedHTML in line breaks alone.
+// sets the page's copy one paragraph per line, but the page itself holds
+// no line breaks between paragraphs, so a capture of the page with nothing
+// typed differs from savedHTML in line breaks alone.
 function sameOnDisk(a, b) {
   return a === b || (typeof a === 'string' && typeof b === 'string' && paragraphLines(a) === paragraphLines(b));
 }
@@ -12399,7 +12401,6 @@ async function structuralUndo() {
   // the undo never takes away writing that came after it.
   const restored = { ...snap.chapterHTML };
   const displaced = [];
-  // (copies taken either side of a save can differ in line breaks alone)
   for (const chId of new Set([...Object.keys(chapterHTML), ...Object.keys(after.chapterHTML)])) {
     const cur = chapterHTML[chId];
     const was = after.chapterHTML[chId];
