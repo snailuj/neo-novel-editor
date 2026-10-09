@@ -11134,6 +11134,34 @@ let shelfExport = false; // see exportFromShelf
 // is never taken for another device's.
 const diskKnown = {};
 const knowDisk = (bookId, chId, html) => { diskKnown[bookId + '/' + chId] = html; };
+// A chapter file holds one paragraph per line, so a line-by-line diff or
+// blame of it follows the paragraphs: one line break after each top-level
+// block that a block or the end follows, and no other whitespace between
+// them. Nothing inside a block changes.
+function paragraphLines(html) {
+  const tag = /<(\/?)(?:p|div|h[1-6]|blockquote)\b[^>]*>/gi;
+  const gap = /[\t\n\f\r ]*/y;
+  const block = /<(?:p|div|h[1-6]|blockquote)\b/iy;
+  let out = '';
+  let from = 0;
+  let depth = 0;
+  let m;
+  while ((m = tag.exec(html))) {
+    if (!m[1]) { depth++; continue; }
+    depth = Math.max(0, depth - 1);
+    if (depth) continue;
+    const close = m.index + m[0].length;
+    gap.lastIndex = close;
+    gap.exec(html);
+    const next = gap.lastIndex;
+    block.lastIndex = next;
+    if (next !== html.length && !block.test(html)) continue;
+    out += html.slice(from, close) + '\n';
+    from = next;
+    tag.lastIndex = next;
+  }
+  return out + html.slice(from);
+}
 // One write at a time per chapter, in the order they were asked for
 const chapterChain = {};
 function persistChapter(chId, html) {
@@ -11141,6 +11169,13 @@ function persistChapter(chId, html) {
   if (html === undefined) html = chapterHTML[chId] || '';
   const bookId = book.id;
   const key = bookId + '/' + chId;
+  // The file is written one paragraph per line. The page's copy takes that
+  // form too when it holds the same text, or the flush, which compares the
+  // two, would ask for this write again every twenty seconds. A write equal
+  // to savedHTML is not skipped: structural undo hands back chapters whose
+  // files it deleted, and savedHTML still holds their last write.
+  html = paragraphLines(html);
+  if (chapterHTML[chId] !== undefined && paragraphLines(chapterHTML[chId]) === html) chapterHTML[chId] = html;
   savedHTML[chId] = html;
   writing[chId] = (writing[chId] || 0) + 1;
   // the disk is told what this device last knew of the chapter: if another
