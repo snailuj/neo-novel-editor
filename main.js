@@ -651,6 +651,7 @@ ipcMain.handle('book:readMeta', (_e, bookId) => {
 ipcMain.handle('book:writeMeta', (_e, bookId, meta) => {
   meta.modified = new Date().toISOString();
   writeJSON(path.join(bookDir(bookId), 'book.json'), meta);
+  plugins.afterWrite('meta', bookId, 'book');
   writeCatalog();
   return meta.modified;
 });
@@ -698,6 +699,7 @@ ipcMain.handle('chapter:write', (_e, bookId, chapterId, html, expected) => {
     if (cur !== null && chapterDiverged(cur, expected, html)) return { conflict: cur };
   }
   writeFileDurable(file, html);
+  plugins.afterWrite('chapter', bookId, chapterId);
   return true;
 });
 // shared with Pocket's bridge (same rule): the disk copy differs from what
@@ -734,6 +736,7 @@ ipcMain.handle('aux:read', (_e, bookId, name) => {
 
 ipcMain.handle('aux:write', (_e, bookId, name, html) => {
   writeFileDurable(path.join(bookDir(bookId), libName(name) + '.html'), html);
+  plugins.afterWrite('aux', bookId, name);
   return true;
 });
 
@@ -791,6 +794,7 @@ ipcMain.handle('json:read', (_e, bookId, name, fallback) => {
 
 ipcMain.handle('json:write', (_e, bookId, name, data) => {
   writeJSON(path.join(bookDir(bookId), libName(name) + '.json'), data);
+  plugins.afterWrite('json', bookId, name);
   return true;
 });
 
@@ -1882,8 +1886,9 @@ process.on('uncaughtException', (err) => logError('main', err));
 process.on('unhandledRejection', (err) => logError('main-promise', err));
 ipcMain.handle('log:error', (_e, msg) => logError('renderer', msg));
 
-// plugins (plugins-main.js): plugins:list for the window, a Plugins menu
-plugins.wire({ app, ipcMain, logError, appRoot: __dirname });
+// plugins (plugins-main.js): plugins:list for the window, a Plugins menu,
+// and each plugin's main half (plugin:invoke, its settings, after-write)
+plugins.wire({ app, ipcMain, logError, appRoot: __dirname, readSettings, writeSettings, libraryDir: () => LIBRARY_DIR });
 
 // One zip of the whole library per day, keeping the last 14. Cheap insurance.
 async function dailyBackup() {
@@ -3013,6 +3018,8 @@ app.whenReady().then(() => {
     try { checkLibraryWritable(); } catch (err) { logError('library check', err); }
     try { ensureLibrary(); } catch (err) { logError('library', err); }
     createWindow();
+    // after the window, and never awaited: a plugin's main half can't hold it back
+    try { plugins.activateMains(); } catch (err) { logError('plugins', err); }
     try { announceLibraryFallback(); } catch (err) { logError('library notice', err); }
     try { initSpell(); } catch (err) { logError('spell', err); }
     try { buildMenu(); } catch (err) { logError('menu', err); }

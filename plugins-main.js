@@ -3,9 +3,13 @@
 // Plugins, main-process half. A plugin is a folder holding a plugin.json; the
 // folders sit under plugins/ in the app folder and, outside a packaged app,
 // under each comma-separated folder in NEO_PLUGIN_DIRS. This file finds them,
-// lists them for the window (plugins:list) and puts their commands in a
-// Plugins menu. It takes nothing from Electron itself: main.js hands it app,
-// ipcMain and logError through wire(), and nothing runs when it is loaded.
+// lists them for the window (plugins:list), puts their commands in a Plugins
+// menu, and starts the main half of each plugin that has one (its manifest's
+// main): an activate(host) that answers the plugin's own window half
+// (plugin:invoke) and hears of each write from the window (afterWrite). It
+// takes nothing from Electron itself: main.js hands it app, ipcMain,
+// logError, the settings and the library folder through wire(), and nothing
+// runs when it is loaded.
 
 const fs = require('fs');
 const path = require('path');
@@ -35,12 +39,21 @@ function validManifest(m) {
     isObject(c) && onlyKeys(c, COMMAND_KEYS) && typeof c.id === 'string' && titleOk(c.title));
 }
 
-let host = null; // { app, ipcMain, logError, appRoot }, from wire()
+// { app, ipcMain, logError, appRoot, readSettings, writeSettings,
+// libraryDir }, from wire()
+let host = null;
 let found = null; // discover()'s answer, kept for the life of the process
+// Each started main half by plugin id: { id, ready, failed, handlers,
+// listeners }. ready settles once its activate has, and never rejects;
+// handlers maps a channel to a function, listeners an event to a Set.
+let mains = new Map();
 
 function wire(deps) {
   host = deps;
   found = null;
+  mains = new Map();
+  // a plugin's window half calls its own main half (neo.invoke in plugins.js)
+  host.ipcMain.handle('plugin:invoke', (_e, id, channel, payload) => invoke(id, channel, payload));
   // the window asks once, synchronously, before any of its code runs, and
   // waits until it has an answer, so a throw here would hang it. It gets no
   // mainPath: the window never touches the disk, so it needs no paths on it
@@ -138,4 +151,168 @@ function menuItems(send, label = 'Plugins') {
   return submenu.length ? [{ label, submenu }] : [];
 }
 
-module.exports = { wire, validManifest, discover, menuItems };
+// A plugin's main half: what its activate(host) receives, the IPC it
+// answers, and the events it hears. A plugin reaches only its own half.
+
+const CHANNEL = /^[a-z][a-z0-9.-]{0,63}$/;
+const LOG_LEVELS = ['error', 'warn', 'info', 'debug'];
+
+// What a plugin threw or passed, as one piece of text: an error's stack,
+// else JSON. A plugin can throw anything, and a Symbol or an object with no
+// prototype has no text form; the line must still be written.
+function textOf(what) {
+  try {
+    if (what && what.stack) return String(what.stack);
+    if (typeof what === 'string') return what;
+    const json = JSON.stringify(what);
+    return json === undefined ? String(what) : json;
+  } catch {
+    return `(a value of type ${typeof what} with no text form)`;
+  }
+}
+
+function report(entry, doing, what) {
+  host.logError(`plugin ${entry.id}: ${doing}`, textOf(what));
+}
+
+// The listeners plugins added for an event, as { entry, fn }, in the order
+// the plugins started
+function listenersOf(event) {
+  const out = [];
+  for (const entry of mains.values()) {
+    for (const fn of entry.listeners.get(event) || []) out.push({ entry, fn });
+  }
+  return out;
+}
+
+// Calls each listener with the detail, as plugins.js does in the window:
+// one that throws, or whose promise rejects, is logged and the rest still
+// run. The detail is frozen, as every listener is handed the same object.
+function dispatch(event, detail) {
+  Object.freeze(detail);
+  for (const { entry, fn } of listenersOf(event)) {
+    if (entry.failed) continue;
+    try {
+      const r = fn(detail);
+      if (r && typeof r.then === 'function') r.then(null, (err) => report(entry, event, err));
+    } catch (err) {
+      report(entry, event, err);
+    }
+  }
+}
+
+function on(entry, event, fn) {
+  if (typeof fn !== 'function') throw new TypeError(`a listener for ${event} must be a function`);
+  if (entry.failed) return () => {};
+  if (!entry.listeners.has(event)) entry.listeners.set(event, new Set());
+  entry.listeners.get(event).add(fn);
+  return () => {
+    const set = entry.listeners.get(event);
+    if (set) set.delete(fn);
+  };
+}
+
+// what activate(host) receives
+function apiFor(entry, folder) {
+  const { id } = entry;
+  const own = (all) => (isObject(all) && isObject(all[id]) ? all[id] : {});
+  return Object.freeze({
+    id,
+    // answers neo.invoke(channel, payload) from this plugin's window half
+    handle(channel, fn) {
+      if (typeof channel !== 'string' || !CHANNEL.test(channel)) {
+        throw new TypeError(`handle: ${textOf(channel)} is not a channel name (${CHANNEL})`);
+      }
+      if (typeof fn !== 'function') throw new TypeError(`handle('${channel}') needs a function`);
+      if (entry.handlers.has(channel)) throw new TypeError(`handle: '${channel}' has a handler already`);
+      if (!entry.failed) entry.handlers.set(channel, fn);
+    },
+    // the plugin's own object under plugins[id] in settings.json, beside
+    // NEO's settings and other plugins'
+    settings: Object.freeze({
+      get: () => own(host.readSettings().plugins),
+      set(obj) {
+        if (!isObject(obj)) throw new TypeError('settings.set needs an object');
+        const settings = host.readSettings();
+        settings.plugins = { ...(isObject(settings.plugins) ? settings.plugins : {}), [id]: obj };
+        host.writeSettings(settings);
+      }
+    }),
+    // library() follows File > Library Folder; userData is NEO's own folder
+    paths: Object.freeze({ library: () => host.libraryDir(), userData: host.app.getPath('userData'), plugin: folder }),
+    // neo-errors.log sits in the synced library, so only what went wrong
+    // goes there; info and debug go to the console
+    log(level, message, data) {
+      if (!LOG_LEVELS.includes(level)) throw new TypeError(`log: no level is called ${textOf(level)}; there are ${LOG_LEVELS.join(', ')}`);
+      const line = textOf(message) + (data === undefined ? '' : ' ' + textOf(data));
+      if (level === 'error' || level === 'warn') host.logError(`plugin ${id}: ${level}`, line);
+      else console.log(`[plugin ${id}: ${level}] ${line}`);
+    },
+    onAfterWrite: (fn) => on(entry, 'after-write', fn)
+  });
+}
+
+// A main half that fails to start loses whatever it registered, and the
+// error goes to the log; NEO and the other plugins carry on
+function fail(entry, err) {
+  entry.failed = true;
+  entry.handlers.clear();
+  entry.listeners.clear();
+  report(entry, 'activate', err);
+}
+
+function start(entry, mainPath) {
+  let result;
+  try {
+    const exported = require(mainPath);
+    if (!exported || typeof exported.activate !== 'function') throw new TypeError(`${mainPath} has no activate function`);
+    result = exported.activate(apiFor(entry, path.dirname(mainPath)));
+  } catch (err) {
+    fail(entry, err);
+    return Promise.resolve();
+  }
+  return Promise.resolve(result).then(() => {}, (err) => fail(entry, err));
+}
+
+// Starts the main half of each plugin that has one, once. main.js calls it
+// after creating the window, so no plugin holds the window back, and none
+// is awaited: an activate that returns a promise runs on while NEO starts,
+// and an invoke waits for it.
+function activateMains() {
+  for (const m of discover()) {
+    if (!m.mainPath || mains.has(m.id)) continue;
+    const entry = { id: m.id, ready: null, failed: false, handlers: new Map(), listeners: new Map() };
+    mains.set(m.id, entry);
+    entry.ready = start(entry, m.mainPath);
+  }
+}
+
+// plugin:invoke: waits until the plugin's main half has started, then
+// hands the payload to the handler it took for the channel. A handler's
+// error is logged and goes back to the window as the rejection.
+async function invoke(id, channel, payload) {
+  if (typeof channel !== 'string' || !CHANNEL.test(channel)) throw new TypeError(`${textOf(channel)} is not a channel name`);
+  const entry = mains.get(id);
+  if (!entry) throw new Error(`no plugin called ${textOf(id)} has a main half to answer ${channel}`);
+  await entry.ready;
+  if (entry.failed) throw new Error(`plugin ${entry.id} failed to start its main half, so nothing answers ${channel}`);
+  const fn = entry.handlers.get(channel);
+  if (!fn) throw new Error(`plugin ${entry.id} has no handler for ${channel}`);
+  try {
+    return await fn(payload);
+  } catch (err) {
+    report(entry, `invoke ${channel}`, err);
+    throw err;
+  }
+}
+
+// main.js calls this once a write from the window has landed: book.json
+// (kind 'meta', name 'book'), a chapter, an aux page or a JSON sidecar.
+// Listeners hear of it on a later turn, after the window has its answer,
+// so none can hold up a save or fail one.
+function afterWrite(kind, bookId, name) {
+  if (!listenersOf('after-write').length) return;
+  setImmediate(() => dispatch('after-write', { kind, bookId, name }));
+}
+
+module.exports = { wire, validManifest, discover, menuItems, activateMains, afterWrite };

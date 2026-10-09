@@ -320,6 +320,13 @@
   // what activate(neo) receives: API 1
   function apiFor(entry) {
     return Object.freeze({
+      // a call to this plugin's own main half (plugins-main.js), answered
+      // by the handler it took for the channel. The id is the caller's, so
+      // no plugin reaches another's half.
+      async invoke(channel, payload) {
+        if (entry.disposed) throw new Error(`plugin ${entry.id} is not active, so it cannot invoke ${channel}`);
+        return window.neo.pluginInvoke(entry.id, channel, payload);
+      },
       on(event, fn) {
         if (!EVENTS.includes(event)) throw new TypeError(`no plugin event is called ${event}`);
         if (typeof fn !== 'function') throw new TypeError(`on('${event}') needs a function`);

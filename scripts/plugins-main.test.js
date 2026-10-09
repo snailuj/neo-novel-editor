@@ -1,10 +1,12 @@
 'use strict';
 
-// plugins-main.js finds plugin folders (each with a plugin.json) and lists
-// their commands in a Plugins menu. It takes Electron's app and ipcMain from
+// plugins-main.js finds plugin folders (each with a plugin.json), lists
+// their commands in a Plugins menu and starts each one's main half. It takes
+// Electron's app and ipcMain, and main.js's settings and library folder, from
 // wire(), so these tests hand it stand-ins and, where a case needs folders of
-// its own, a temporary app folder. The last test loads main.js the way
-// filesystem.test.js does, to see the menu and the window's list wired up.
+// its own, a temporary app folder. Some tests load main.js the way
+// filesystem.test.js does, to see the menu, the window's list, the main
+// halves and their after-write events wired up.
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -12,7 +14,7 @@ const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 const { createRequire } = require('node:module');
-const { afterEach, describe, test } = require('node:test');
+const { after, afterEach, before, describe, test } = require('node:test');
 
 const plugins = require('../plugins-main.js');
 
@@ -27,19 +29,29 @@ afterEach(() => {
   while (made.length) fs.rmSync(made.pop(), { recursive: true, force: true });
 });
 
-// wires the module to stand-ins; dirs becomes NEO_PLUGIN_DIRS
-function wire({ appRoot = root, isPackaged = false, dirs, app = { isPackaged } } = {}) {
+// wires the module to stand-ins; dirs becomes NEO_PLUGIN_DIRS. Electron's
+// folders sit in the app folder, settings.json is saved.settings, and the
+// library folder is whatever library() says
+function wire({
+  appRoot = root, isPackaged = false, dirs,
+  app = { isPackaged, getPath: (name) => path.join(appRoot, name) },
+  settings = {}, library = () => path.join(appRoot, 'NEO Library')
+} = {}) {
   if (dirs === undefined) delete process.env.NEO_PLUGIN_DIRS;
   else process.env.NEO_PLUGIN_DIRS = dirs;
   const logs = [];
   const handlers = new Map();
+  const saved = { settings };
   plugins.wire({
     app,
-    ipcMain: { on: (channel, fn) => handlers.set(channel, fn) },
+    ipcMain: { on: (channel, fn) => handlers.set(channel, fn), handle: (channel, fn) => handlers.set(channel, fn) },
     logError: (source, err) => logs.push(`[${source}] ${err && err.stack ? err.stack : String(err)}`),
-    appRoot
+    appRoot,
+    readSettings: () => structuredClone(saved.settings),
+    writeSettings: (obj) => { saved.settings = structuredClone(obj); },
+    libraryDir: library
   });
-  return { logs, handlers };
+  return { logs, handlers, saved };
 }
 
 function tempFolder() {
@@ -71,7 +83,7 @@ describe('plugin discovery', { concurrency: 1 }, () => {
     assert.ok(probe, 'probe is listed');
     assert.equal(probe.rendererUrl, 'scripts/fixtures/plugins/probe/renderer.js');
     assert.equal(probe.styleUrl, null);
-    assert.equal(probe.mainPath, null);
+    assert.equal(probe.mainPath, path.join(root, fixtures, 'probe', 'main.js'));
   });
 
   test('a style gets a URL and a main entry an absolute path', () => {
@@ -291,6 +303,326 @@ describe('the Plugins menu', { concurrency: 1 }, () => {
   });
 });
 
+describe('a plugin\'s main half', { concurrency: 1 }, () => {
+  // a temporary app folder with a plugin for each id, whose main.cjs holds
+  // the source given
+  function withMains(sources) {
+    const app = appFolder(Object.fromEntries(Object.keys(sources)
+      .map((id) => [`plugins/${id}`, plugin(id, { main: 'main.cjs' })])));
+    for (const [id, source] of Object.entries(sources)) fs.writeFileSync(path.join(app, 'plugins', id, 'main.cjs'), source);
+    return app;
+  }
+  const mainOf = (app, id) => require(path.join(app, 'plugins', id, 'main.cjs'));
+  // a main half that keeps the host it is handed, for the test to use
+  const keeper = 'exports.activate = (host) => { exports.host = host; };';
+  const invoke = (handlers, ...args) => handlers.get('plugin:invoke')({}, ...args);
+  // a promise's handlers have run, and so has anything set on setImmediate
+  const turn = () => new Promise((resolve) => setImmediate(resolve));
+
+  test('invoke reaches the probe\'s main half and resolves its answer', async () => {
+    const { handlers } = wire({ dirs: fixtures });
+    plugins.activateMains();
+    assert.deepEqual(await invoke(handlers, 'probe', 'echo', { a: 1 }), { a: 1 });
+  });
+
+  test('an invoke sent before a slow activate ends waits for it, then resolves', async () => {
+    const app = withMains({
+      slow: [
+        'let open;',
+        'exports.opened = new Promise((resolve) => { open = resolve; });',
+        'exports.open = () => open();',
+        "exports.activate = async (host) => { await exports.opened; host.handle('echo', (payload) => payload); };"
+      ].join('\n')
+    });
+    const { handlers } = wire({ appRoot: app });
+    plugins.activateMains(); // returns while slow's activate still waits
+    let answered = false;
+    const answer = invoke(handlers, 'slow', 'echo', { a: 1 }).finally(() => { answered = true; });
+    await turn();
+    assert.equal(answered, false, 'no answer while activate is still running');
+    mainOf(app, 'slow').open();
+    assert.deepEqual(await answer, { a: 1 });
+  });
+
+  test('a plugin with no main half, a channel its half never took, or a name that is no channel rejects naming the channel', async () => {
+    const { handlers } = wire({ dirs: fixtures });
+    plugins.activateMains();
+    await assert.rejects(invoke(handlers, 'other', 'echo'), /\becho\b/);
+    await assert.rejects(invoke(handlers, 'broken', 'echo'), /\becho\b/); // a window half alone
+    await assert.rejects(invoke(handlers, 'probe', 'nope'), /\bnope\b/);
+    await assert.rejects(invoke(handlers, 'probe', 'Echo Me'), { name: 'TypeError', message: /Echo Me/ });
+  });
+
+  test('a handler that throws rejects the invoke, and the error is logged with its stack', async () => {
+    const { handlers, logs } = wire({ dirs: fixtures });
+    plugins.activateMains();
+    await assert.rejects(invoke(handlers, 'probe', 'fail'), /failed on purpose/);
+    assert.equal(logs.length, 1, logs.join('\n'));
+    assert.match(logs[0], /^\[plugin probe: invoke fail\] Error: failed on purpose\n\s+at /);
+  });
+
+  test('a main half that throws in activate, rejects, will not load or has no activate is logged, and the next still loads', async () => {
+    const app = withMains({
+      'a-throws': "exports.activate = (host) => { host.handle('echo', (p) => p); throw new Error('thrown in activate'); };",
+      'b-rejects': "exports.activate = async (host) => { host.handle('echo', (p) => p); throw new Error('rejected in activate'); };",
+      'c-unloadable': 'this is not JavaScript',
+      'd-inert': 'exports.answer = 42;',
+      'e-good': "exports.activate = (host) => host.handle('echo', (p) => p);"
+    });
+    const { handlers, logs } = wire({ appRoot: app });
+    plugins.activateMains();
+    assert.equal(await invoke(handlers, 'e-good', 'echo', 7), 7);
+    // a half that failed answers nothing, not even what it took before it failed
+    for (const id of ['a-throws', 'b-rejects', 'c-unloadable', 'd-inert']) {
+      await assert.rejects(invoke(handlers, id, 'echo'), new RegExp(`${id}\\b.*\\becho\\b`), id);
+    }
+    const line = (id) => logs.find((l) => l.startsWith(`[plugin ${id}: activate]`)) || `nothing logged for ${id}`;
+    assert.match(line('a-throws'), /\] Error: thrown in activate\n\s+at /);
+    assert.match(line('b-rejects'), /\] Error: rejected in activate\n\s+at /);
+    assert.match(line('c-unloadable'), /SyntaxError: /);
+    assert.match(line('d-inert'), /TypeError: .*no activate function/);
+    assert.equal(logs.length, 4, logs.join('\n'));
+  });
+
+  test('activateMains starts each main half once, however often it runs', async () => {
+    const app = withMains({ once: "let n = 0; exports.activate = (host) => { n++; host.handle('count', () => n); };" });
+    const { handlers } = wire({ appRoot: app });
+    plugins.activateMains();
+    plugins.activateMains();
+    assert.equal(await invoke(handlers, 'once', 'count'), 1);
+  });
+
+  test('handle refuses a name that is no channel, a handler that is not a function, and a channel already taken', async () => {
+    const app = withMains({ keeper });
+    const { handlers } = wire({ appRoot: app });
+    plugins.activateMains();
+    const { host } = mainOf(app, 'keeper');
+    host.handle('index.rebuild-2', () => 'first');
+    host.handle('x'.repeat(64), () => 'longest');
+    for (const bad of ['Index', '2nd', '-x', '', 'x'.repeat(65), 'a/b', 'a b', 7, null]) {
+      assert.throws(() => host.handle(bad, () => 'no'), TypeError, String(bad));
+    }
+    assert.throws(() => host.handle('later', 'not a function'), TypeError);
+    assert.throws(() => host.handle('index.rebuild-2', () => 'second'), TypeError);
+    assert.equal(await invoke(handlers, 'keeper', 'index.rebuild-2'), 'first');
+    assert.equal(await invoke(handlers, 'keeper', 'x'.repeat(64)), 'longest');
+  });
+
+  test('paths name the library folder as it is now, NEO\'s userData folder and the plugin\'s own folder', () => {
+    const app = withMains({ keeper });
+    let library = path.join(app, 'first library');
+    wire({ appRoot: app, library: () => library });
+    plugins.activateMains();
+    const { host } = mainOf(app, 'keeper');
+    assert.equal(host.id, 'keeper');
+    assert.equal(host.paths.library(), path.join(app, 'first library'));
+    library = path.join(app, 'second library'); // File > Library Folder moves it
+    assert.equal(host.paths.library(), path.join(app, 'second library'));
+    assert.equal(host.paths.userData, path.join(app, 'userData'));
+    assert.equal(host.paths.plugin, path.join(app, 'plugins', 'keeper'));
+  });
+
+  test('settings are the plugin\'s own: get reads them, set replaces them and refuses what is not an object', () => {
+    const app = withMains({ keeper });
+    const { saved } = wire({ appRoot: app, settings: { libraryDir: 'D:\\Books', plugins: { other: { kept: true } } } });
+    plugins.activateMains();
+    const { host } = mainOf(app, 'keeper');
+    assert.deepEqual(host.settings.get(), {});
+    host.settings.set({ colour: 'green' });
+    assert.deepEqual(host.settings.get(), { colour: 'green' });
+    assert.deepEqual(saved.settings, { libraryDir: 'D:\\Books', plugins: { other: { kept: true }, keeper: { colour: 'green' } } });
+    for (const bad of [null, [], 'green', 7]) assert.throws(() => host.settings.set(bad), TypeError, String(bad));
+    assert.deepEqual(host.settings.get(), { colour: 'green' });
+  });
+
+  test('log writes errors and warnings to the error log under the plugin\'s name, the rest to the console, and refuses a level it does not know', (t) => {
+    const app = withMains({ keeper });
+    const { logs } = wire({ appRoot: app });
+    plugins.activateMains();
+    const { host } = mainOf(app, 'keeper');
+    const printed = [];
+    t.mock.method(console, 'log', (line) => printed.push(line));
+    host.log('error', 'the index is unreadable', new Error('index cut short'));
+    host.log('warn', 'slow rebuild', { ms: 1200 });
+    host.log('info', 'indexed', { chapters: 3 });
+    host.log('debug', 'looked');
+    assert.throws(() => host.log('loud', 'shouted'), TypeError);
+    assert.equal(logs.length, 2, logs.join('\n'));
+    assert.match(logs[0], /^\[plugin keeper: error\] the index is unreadable Error: index cut short\n\s+at /);
+    assert.equal(logs[1], '[plugin keeper: warn] slow rebuild {"ms":1200}');
+    assert.deepEqual(printed, ['[plugin keeper: info] indexed {"chapters":3}', '[plugin keeper: debug] looked']);
+  });
+
+  test('after-write listeners hear each write on a later turn; one that throws or rejects is logged and the rest still hear it', async () => {
+    const app = withMains({ keeper, other: keeper });
+    const { logs } = wire({ appRoot: app });
+    plugins.activateMains();
+    const first = mainOf(app, 'keeper').host;
+    const second = mainOf(app, 'other').host;
+    const heard = [];
+    first.onAfterWrite(() => { throw new Error('throws on purpose'); });
+    first.onAfterWrite(async () => { throw new Error('rejects on purpose'); });
+    const off = second.onAfterWrite((event) => heard.push(event));
+    plugins.afterWrite('chapter', 'book-a', 'c1');
+    assert.deepEqual(heard, [], 'nothing is heard while the write is answered');
+    await turn();
+    assert.deepEqual(heard, [{ kind: 'chapter', bookId: 'book-a', name: 'c1' }]);
+    assert.ok(Object.isFrozen(heard[0]), 'every listener is handed the same detail, so it is frozen');
+    assert.equal(logs.length, 2, logs.join('\n'));
+    assert.match(logs[0], /^\[plugin keeper: after-write\] Error: throws on purpose\n\s+at /);
+    assert.match(logs[1], /^\[plugin keeper: after-write\] Error: rejects on purpose\n\s+at /);
+    off();
+    plugins.afterWrite('aux', 'book-a', 'notes');
+    await turn();
+    assert.equal(heard.length, 1, 'an unsubscribed listener hears nothing');
+    assert.throws(() => first.onAfterWrite('not a function'), TypeError);
+  });
+});
+
+describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
+  // main.js in a vm, as filesystem.test.js loads it, on a temporary profile
+  // whose settings.json already holds other settings. ready() runs what
+  // main.js does once Electron is ready, with the window, the menu, the
+  // spellchecker, the backup and the updater stood in for.
+  const probeMain = path.join(root, fixtures, 'probe', 'main.js');
+  let profile = null;
+  let main = null;
+  const library = () => path.join(profile, 'documents', 'NEO Library');
+  const errorLog = () => {
+    try { return fs.readFileSync(path.join(library(), 'neo-errors.log'), 'utf8'); } catch { return ''; }
+  };
+  const turn = () => new Promise((resolve) => setImmediate(resolve));
+
+  function loadMain() {
+    const handlers = new Map();
+    let whenReady = null;
+    const electron = {
+      app: {
+        isPackaged: false,
+        commandLine: { appendSwitch() {} },
+        getPath: (name) => path.join(profile, name),
+        getLocale: () => 'en',
+        requestSingleInstanceLock: () => true,
+        whenReady: () => ({ then: (fn) => { whenReady = fn; } }),
+        on() {}
+      },
+      ipcMain: { on() {}, handle: (channel, fn) => handlers.set(channel, fn) },
+      BrowserWindow: { getFocusedWindow: () => null, getAllWindows: () => [] },
+      Menu: { buildFromTemplate: (items) => items, setApplicationMenu() {} },
+      dialog: {},
+      utilityProcess: { fork: () => ({ on() {}, postMessage() {} }) },
+      screen: {}
+    };
+    const localRequire = createRequire(path.join(root, 'main.js'));
+    const context = vm.createContext({
+      require: (name) => name === 'electron' ? electron : localRequire(name),
+      __dirname: root,
+      process: { platform: process.platform, on() {} },
+      console,
+      setInterval: () => ({}),
+      libraryRoot: library()
+    });
+    vm.runInContext(fs.readFileSync(path.join(root, 'main.js'), 'utf8'), context, { filename: path.join(root, 'main.js') });
+    // nothing is logged into the real Documents folder before ready() moves the library
+    vm.runInContext('LIBRARY_DIR = libraryRoot; LIBRARY_FILE = require("path").join(libraryRoot, "library.json");', context);
+    return {
+      call: (channel, ...args) => handlers.get(channel)(null, ...args),
+      ready(order) {
+        context.createWindow = () => order.push('createWindow');
+        for (const name of ['announceLibraryFallback', 'initSpell', 'buildMenu', 'checkForUpdates']) context[name] = () => {};
+        context.dailyBackup = async () => {};
+        whenReady();
+      }
+    };
+  }
+
+  before(() => {
+    profile = fs.mkdtempSync(path.join(os.tmpdir(), 'neo-plugins-main-'));
+    fs.mkdirSync(path.join(profile, 'userData'));
+    fs.writeFileSync(path.join(profile, 'userData', 'settings.json'), JSON.stringify({ pageTheme: 'light', plugins: { other: { kept: true } } }));
+    // read once, by the first test's ready()
+    process.env.NEO_PLUGIN_DIRS = fixtures;
+    main = loadMain();
+  });
+  after(() => fs.rmSync(profile, { recursive: true, force: true }));
+
+  test('the window is created before any main half activates, and plugin:invoke answers from main.js', async (t) => {
+    const order = [];
+    const probe = require(probeMain);
+    const activate = probe.activate;
+    t.mock.method(probe, 'activate', (host) => { order.push('activate probe'); return activate(host); });
+    main.ready(order);
+    assert.deepEqual(order, ['createWindow', 'activate probe']);
+    assert.deepEqual(await main.call('plugin:invoke', 'probe', 'echo', { a: 1 }), { a: 1 });
+    assert.doesNotMatch(errorLog(), /\[(startup|plugins)\]/);
+  });
+
+  test('paths name the profile\'s library and userData folders and the probe\'s own folder', () => {
+    const { host } = require(probeMain);
+    assert.equal(host.paths.library(), library());
+    assert.equal(host.paths.userData, path.join(profile, 'userData'));
+    assert.equal(host.paths.plugin, path.join(root, fixtures, 'probe'));
+  });
+
+  test('settings.set keeps the other keys of settings.json, other plugins\' among them', () => {
+    const { host } = require(probeMain);
+    assert.deepEqual(host.settings.get(), {});
+    host.settings.set({ colour: 'green' });
+    const saved = JSON.parse(fs.readFileSync(path.join(profile, 'userData', 'settings.json'), 'utf8'));
+    assert.equal(saved.pageTheme, 'light');
+    assert.deepEqual(saved.plugins, { other: { kept: true }, probe: { colour: 'green' } });
+    // read by main.js, in the vm's realm, so compared as JSON
+    assert.equal(JSON.stringify(host.settings.get()), '{"colour":"green"}');
+  });
+
+  test('chapter:write answers before after-write listeners hear of it, and one that throws fails nothing', async () => {
+    const { host } = require(probeMain);
+    const heard = [];
+    const offs = [
+      host.onAfterWrite(() => { throw new Error('an after-write listener throws on purpose'); }),
+      host.onAfterWrite((event) => heard.push(event))
+    ];
+    try {
+      const book = main.call('book:create', { title: 'Owls', author: 'Ada' });
+      assert.equal(main.call('chapter:write', book.id, 'c1', '<p>Owl</p>'), true);
+      assert.deepEqual(heard, [], 'the write answered before any listener ran');
+      await turn();
+      assert.deepEqual(heard, [{ kind: 'chapter', bookId: book.id, name: 'c1' }]);
+      assert.equal(main.call('chapter:read', book.id, 'c1'), '<p>Owl</p>');
+      assert.match(errorLog(), /\[plugin probe: after-write\] Error: an after-write listener throws on purpose\r?\n\s+at /);
+    } finally {
+      for (const off of offs) off();
+    }
+  });
+
+  test('aux, JSON and book.json writes are heard with their kind, book and name; a chapter write refused for a conflict is not', async () => {
+    const { host } = require(probeMain);
+    const heard = [];
+    const off = host.onAfterWrite((event) => heard.push(event));
+    try {
+      const book = main.call('book:create', { title: 'Foxes', author: 'Ada' });
+      main.call('aux:write', book.id, 'notes', '<p>margin</p>');
+      main.call('json:write', book.id, 'darlings', []);
+      main.call('book:writeMeta', book.id, { ...book });
+      main.call('chapter:write', book.id, 'c1', '<p>Fox</p>');
+      await turn();
+      assert.deepEqual(heard, [
+        { kind: 'aux', bookId: book.id, name: 'notes' },
+        { kind: 'json', bookId: book.id, name: 'darlings' },
+        { kind: 'meta', bookId: book.id, name: 'book' },
+        { kind: 'chapter', bookId: book.id, name: 'c1' }
+      ]);
+      // another device wrote other words since: nothing is written, so nothing is heard
+      const refused = main.call('chapter:write', book.id, 'c1', '<p>Badger</p>', '<p>An older text</p>');
+      assert.equal(JSON.stringify(refused), '{"conflict":"<p>Fox</p>"}');
+      await turn();
+      assert.equal(heard.length, 4);
+    } finally {
+      off();
+    }
+  });
+});
+
 describe('the window half', () => {
   // Pocket runs app.js without plugins.js, so each call app.js makes into the
   // plugin host stands behind a check that the host is there
@@ -318,11 +650,13 @@ describe('the window half', () => {
   // the page: what it would add to the page (an element's remove() takes it
   // off again), what it logs, and what it writes to the console. reads
   // stands in for app.js's getters; logError, when given, for the log;
-  // clock.now is what performance.now() reads.
+  // clock.now is what performance.now() reads; invoked holds what reached
+  // window.neo.pluginInvoke.
   function windowHalf(list, reads = {}, logError = null) {
     const added = [];
     const logged = [];
     const consoled = [];
+    const invoked = [];
     const clock = { now: 0 };
     const page = { appendChild: (el) => added.push(el) };
     const element = (tag) => ({
@@ -333,7 +667,11 @@ describe('the window half', () => {
       }
     });
     const context = vm.createContext({
-      neo: { plugins: list, logError: logError || ((line) => logged.push(line)) },
+      neo: {
+        plugins: list,
+        logError: logError || ((line) => logged.push(line)),
+        pluginInvoke: async (...args) => { invoked.push(args); return { answered: args[2] }; }
+      },
       document: { head: page, body: page, addEventListener() {}, createElement: element },
       requestAnimationFrame: () => 1,
       performance: { now: () => clock.now },
@@ -343,7 +681,7 @@ describe('the window half', () => {
     context.window = context;
     vm.runInContext(fs.readFileSync(path.join(root, 'plugins.js'), 'utf8'), context, { filename: 'plugins.js' });
     const getters = { book: () => null, chapterHTML: () => undefined, currentTab: () => 'manuscript', ...reads };
-    return { NeoPlugins: context.NeoPlugins, attach: () => context.NeoPlugins.attach(getters), added, logged, consoled, clock };
+    return { NeoPlugins: context.NeoPlugins, attach: () => context.NeoPlugins.attach(getters), added, logged, consoled, invoked, clock };
   }
 
   // the host with one listed plugin, p, registered with activate; neo is
@@ -379,6 +717,15 @@ describe('the window half', () => {
     assert.equal(activated, false);
     assert.equal(host.logged.length, 1);
     assert.match(host.logged[0], /^plugin ahead: apiVersion 3\b.*knows 1\b.*not activated/);
+  });
+
+  test('invoke reaches the calling plugin\'s own main half, and a plugin that failed to activate invokes nothing', async () => {
+    const { neo, invoked } = withPlugin();
+    assert.deepEqual(await neo.invoke('echo', { a: 1 }), { answered: { a: 1 } });
+    assert.deepEqual(invoked, [['p', 'echo', { a: 1 }]], 'the id is the caller\'s own');
+    const failed = withPlugin(() => { throw new Error('activate fails on purpose'); });
+    await assert.rejects(failed.neo.invoke('echo', { a: 2 }), /\bp\b.*\becho\b/);
+    assert.deepEqual(failed.invoked, []);
   });
 
   test('a listener that throws, or whose promise rejects, is logged with its stack, and the rest still run', async () => {

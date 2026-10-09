@@ -2,6 +2,7 @@
   "id": "probe",
   "apiVersion": 1,
   "renderer": "renderer.js",
+  "main": "main.js",
   "commands": [
     { "id": "hello", "title": "Say Hello" }
   ]

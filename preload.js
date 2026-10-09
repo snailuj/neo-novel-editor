@@ -69,6 +69,8 @@ contextBridge.exposeInMainWorld('neo', {
   i18n: ipcRenderer.sendSync('i18n:get'),
   paper: ipcRenderer.sendSync('paper:get'), // 'Letter' or 'A4', from the computer's region
   plugins: ipcRenderer.sendSync('plugins:list'), // the plugin folders found at launch (plugins-main.js)
+  // a plugin's call to its own main half; plugins.js fills in the plugin's id
+  pluginInvoke: (id, channel, payload) => ipcRenderer.invoke('plugin:invoke', id, channel, payload),
   reloadForLanguage: () => ipcRenderer.invoke('i18n:reload'),
 
   writingStyleState: (st) => ipcRenderer.send('style:state', st),
