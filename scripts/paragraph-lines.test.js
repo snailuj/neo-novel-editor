@@ -31,41 +31,70 @@ test('blank lines and spaces between paragraphs come down to one line break', ()
   assert.equal(paragraphLines('<p>a</p>\n\n  <p>b</p>'), '<p>a</p>\n<p>b</p>\n');
 });
 
-// A book in memory, saved through persistChapter to a disk that only notes
-// what it is handed, and undone by structuralUndo; the page's drawing is
-// left out.
+// A book in memory, saved through persistChapter to a disk that notes what
+// it is handed, flushed by flushAllSaves, looked at again by refreshFromDisk
+// and undone by structuralUndo; the page's drawing is left out.
 const SLICES = [
   ['const diskKnown = {};', '// Another device\'s version of a chapter'],
+  ['function metaSig(', 'function scheduleMetaSave('],
+  ['function flushAllSaves(', '/*  SNAPSHOTS'],
   ['function mergeSidecar(', 'function writeSidecar('],
-  ['function wordsBeyond(', 'let refreshing = false;'],
+  ['function onlyDrops(', 'window.addEventListener(\'focus\''],
   ['function sealUndo(', '// after undoing a double-Enter break']
 ];
 function bookInMemory(chapters) {
   const writes = [];
+  const disk = { ...chapters };
   const none = () => {};
   const page = vm.createContext({
-    window: { neo: { writeChapter: async (bookId, chId, html) => { writes.push({ chId, html }); return true; } } },
+    window: { neo: {
+      writeChapter: async (bookId, chId, html) => { writes.push({ chId, html }); disk[chId] = html; return true; },
+      readChapter: async (bookId, chId) => disk[chId],
+      readBookMeta: async () => JSON.parse(JSON.stringify(page.book)),
+      readJSON: async () => null
+    } },
     book: { id: 'b', chapterOrder: Object.keys(chapters), chapterKinds: {}, chapterTitles: {}, chapterNotes: {}, sectionNotes: {}, looseCards: [], sceneNotes: {} },
     chapterHTML: { ...chapters },
     savedHTML: { ...chapters },
+    savedMetaSig: '',
     writing: {},
+    wordCache: {},
+    diskStamps: {},
+    sidecarPending: {},
+    sidecarBase: {},
+    saveTimers: {},
+    tabPlaces: {},
     darlings: [],
     stickies: [],
     undoStack: [],
     currentTab: 'manuscript',
     currentChapterId: null,
+    shelfExport: false,
+    library: null,
+    lastHereActivity: 0,
+    bookMetaCache: { clear: none },
+    console,
     setTimeout,
     document: { createElement: () => ({ children: [] }) },
+    $: () => ({ scrollTop: 0 }),
     t: (text) => text,
+    twinChapterTitle: (title) => (title || '') + ' from other device',
     captureCaret: () => null,
     saveMeta: async () => {},
     writeSidecar: async () => {},
     maybeDailySnapshot: none, // snapshotStructure's day snapshot (SNAPSHOTS) is not saving's
-    restoreCaret: none, renderChapters: none, renderStickies: none, updateCounters: none, rejoinAtCaret: none, resetNativeUndo: none
+    restoreCaret: none, renderChapters: none, renderStickies: none, updateCounters: none, rejoinAtCaret: none, resetNativeUndo: none,
+    flushAux: none, flushStickiesSave: none, flushSidecars: none, scheduleMetaSave: none, scheduleNavRefresh: none, toast: none
   });
-  for (const [from, to] of SLICES) vm.runInContext(app.slice(app.indexOf(from), app.indexOf(to)), page);
-  return { page, writes };
+  for (const [from, to] of SLICES) {
+    const at = app.indexOf(from);
+    vm.runInContext(app.slice(at, app.indexOf(to, at)), page);
+  }
+  page.savedMetaSig = page.metaSig(page.book);
+  return { page, writes, disk };
 }
+// every chapter write started so far, to the end
+const settled = (page) => vm.runInContext('Promise.all(Object.values(chapterChain))', page);
 
 const F = '<p>First line.</p>\n<p>Second line.</p>\n<p>Third line.</p>\n';
 
@@ -96,6 +125,37 @@ test('text handed in that the page no longer holds leaves the page alone', async
   await page.persistChapter('x', '<p>Older.</p>');
   assert.equal(page.chapterHTML.x, '<p>Newer.</p>');
   assert.equal(page.savedHTML.x, '<p>Older.</p>\n');
+});
+
+// A paragraph made by Enter has no line break before it on the page, so
+// capturing the page after its save, with nothing typed, gives back the
+// compact form of the text the file holds lined.
+const ENTERED = '<p>First line.</p>\n<p>Second line.</p><p>New.</p>\n<p>Third line.</p>\n';
+
+test('a capture of the page with nothing typed gives the flush nothing to write', async () => {
+  const { page, writes } = bookInMemory({ x: F });
+  page.chapterHTML.x = ENTERED;
+  await page.persistChapter('x');
+  writes.length = 0;
+  page.chapterHTML.x = ENTERED;
+  page.flushAllSaves();
+  await settled(page);
+  assert.deepEqual(writes, []);
+});
+
+test('a capture of the page with nothing typed leaves another device\'s change to be adopted', async () => {
+  const { page, writes, disk } = bookInMemory({ x: F });
+  page.chapterHTML.x = ENTERED;
+  await page.persistChapter('x');
+  writes.length = 0;
+  page.chapterHTML.x = ENTERED;
+  const theirs = '<p>First line.</p>\n<p>Second line.</p>\n<p>New.</p>\n<p>Third line, from the other device.</p>\n';
+  disk.x = theirs;
+  await page.refreshFromDisk();
+  await settled(page);
+  assert.deepEqual([...page.book.chapterOrder], ['x']);
+  assert.equal(page.chapterHTML.x, theirs);
+  assert.deepEqual(writes, []);
 });
 
 // structural undo hands back chapters whose files the action deleted, and

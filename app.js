@@ -2058,7 +2058,7 @@ function bookTile(meta, opts = {}) {
 // words go to disk first, so the copy has them.
 async function duplicateBook(meta) {
   if (book && book.id === meta.id) {
-    await Promise.all(book.chapterOrder.filter((c) => chapterHTML[c] !== undefined && chapterHTML[c] !== savedHTML[c]).map((c) => persistChapter(c)));
+    await Promise.all(book.chapterOrder.filter((c) => chapterHTML[c] !== undefined && !sameOnDisk(chapterHTML[c], savedHTML[c])).map((c) => persistChapter(c)));
     flushAllSaves();
     await saveMeta();
     await new Promise((resolve) => setTimeout(resolve, 300)); // notes and sidecars, written alongside
@@ -11162,6 +11162,13 @@ function paragraphLines(html) {
   }
   return out + html.slice(from);
 }
+// True when two copies of a chapter go to disk as the same file. A save
+// sets the page's copy one paragraph per line, but the page itself has no
+// line break before a paragraph made since it was drawn, so a capture of
+// the page with nothing typed differs from savedHTML in line breaks alone.
+function sameOnDisk(a, b) {
+  return a === b || (typeof a === 'string' && typeof b === 'string' && paragraphLines(a) === paragraphLines(b));
+}
 // One write at a time per chapter, in the order they were asked for
 const chapterChain = {};
 function persistChapter(chId, html) {
@@ -11320,7 +11327,7 @@ function flushAllSaves(e) {
     if (!writing) book.lastPosition.tabScroll = tabScroll;
   }
   for (const chId of book.chapterOrder) {
-    if (chapterHTML[chId] !== undefined && chapterHTML[chId] !== savedHTML[chId]) {
+    if (chapterHTML[chId] !== undefined && !sameOnDisk(chapterHTML[chId], savedHTML[chId])) {
       persistChapter(chId);
     }
   }
@@ -12025,7 +12032,7 @@ async function refreshFromDisk() {
       const other = mine ? meta.chapterOrder : book.chapterOrder;
       other.forEach((chId, i) => {
         if (order.includes(chId)) return;
-        if (mine ? !/[^\s]/.test(String(incoming[chId] || '').replace(/<[^>]*>/g, '')) : chapterHTML[chId] === savedHTML[chId]) return;
+        if (mine ? !/[^\s]/.test(String(incoming[chId] || '').replace(/<[^>]*>/g, '')) : sameOnDisk(chapterHTML[chId], savedHTML[chId])) return;
         const prev = other.slice(0, i).reverse().find((c) => order.includes(c));
         order.splice(prev ? order.indexOf(prev) + 1 : 0, 0, chId);
       });
@@ -12082,7 +12089,7 @@ async function refreshFromDisk() {
       if (disk === '' && savedHTML[chId]) continue; // unreadable or still downloading: not a change
       if (stamps) diskStamps[chId] = st; // seen; a file not read stays on the list
       if (disk === savedHTML[chId]) continue;
-      if (chapterHTML[chId] === savedHTML[chId]) {
+      if (sameOnDisk(chapterHTML[chId], savedHTML[chId])) {
         // A copy with nothing new in it, only fewer words, is an older copy
         // coming back (or text cut on the other device): the page's version
         // goes to Darlings instead of nowhere.
@@ -12375,15 +12382,13 @@ async function structuralUndo() {
   // the undo never takes away writing that came after it.
   const restored = { ...snap.chapterHTML };
   const displaced = [];
-  // a save sets the page's copy one paragraph per line (persistChapter), so
-  // copies taken either side of it differ in line breaks alone
-  const same = (a, b) => a === b || (a !== undefined && b !== undefined && paragraphLines(a) === paragraphLines(b));
+  // (copies taken either side of a save can differ in line breaks alone)
   for (const chId of new Set([...Object.keys(chapterHTML), ...Object.keys(after.chapterHTML)])) {
     const cur = chapterHTML[chId];
     const was = after.chapterHTML[chId];
-    if (cur === undefined || same(cur, was)) continue;
+    if (cur === undefined || sameOnDisk(cur, was)) continue;
     const textOf = (h) => String(h || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').trim();
-    if (snap.chapterHTML[chId] !== undefined && same(snap.chapterHTML[chId], was)) {
+    if (snap.chapterHTML[chId] !== undefined && sameOnDisk(snap.chapterHTML[chId], was)) {
       restored[chId] = cur; // the action left this chapter alone
     } else if (textOf(cur) && wordsBeyond(cur, restored[chId] || '')) {
       displaced.push({ chId, html: cur });
