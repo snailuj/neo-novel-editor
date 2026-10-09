@@ -1088,12 +1088,13 @@ describe('the window half', () => {
     return { ...host, neo };
   }
 
-  test('API 2 adds where and go; a plugin written for API 1 is handed neither', () => {
+  test('API 2 adds where, go and replace; a plugin written for API 1 is handed none of them', () => {
     const { NeoPlugins, neo } = bothApis();
     assert.deepEqual([...NeoPlugins.apiVersions], [1, 2]);
-    assert.deepEqual(Object.keys(neo.api2).filter((name) => !(name in neo.api1)), ['where', 'go']);
+    assert.deepEqual(Object.keys(neo.api2).filter((name) => !(name in neo.api1)), ['where', 'go', 'replace']);
     assert.equal(neo.api1.where, undefined);
     assert.equal(neo.api1.go, undefined);
+    assert.equal(neo.api1.replace, undefined);
   });
 
   test('a place is captureCaret\'s shape with len, scroll optional, its numbers whole and never negative', () => {

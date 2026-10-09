@@ -12,13 +12,16 @@
 // and, for a plugin written for API 2:
 //   where()                   where the writer is, as a place (see where)
 //   go(place)                 the writer taken there
-// None of them writes to the book: chapter writes go through persistChapter
-// alone. That is no wall. A plugin's script runs in NEO's page, where
-// window.neo, NEO's own way to the files (writeChapter among them), is in
-// reach of any script. So NEO trusts a plugin as it trusts its own code, and
-// loads plugins only from inside its app folder (plugins-main.js): from
-// plugins/ there and, when NEO is not packaged, from the folders named in
-// NEO_PLUGIN_DIRS, which must lie inside it too.
+//   replace(place, expectedText, newText)
+//                             the text at a place rewritten, as if typed
+// None of them writes a file: replace edits the page as typing does, and a
+// chapter reaches the disk through persistChapter alone. That is no wall.
+// A plugin's script runs in NEO's page, where window.neo, NEO's own way to
+// the files (writeChapter among them), is in reach of any script. So NEO
+// trusts a plugin as it trusts its own code, and loads plugins only from
+// inside its app folder (plugins-main.js): from plugins/ there and, when
+// NEO is not packaged, from the folders named in NEO_PLUGIN_DIRS, which
+// must lie inside it too.
 //
 // app.js calls in from a few hooks, each behind window.NeoPlugins, so
 // Pocket, which runs app.js without this file, is untouched.
@@ -239,15 +242,24 @@
 
   // The node and offset `off` UTF-16 units into a paragraph's text, found
   // as restoreCaret (app.js) finds a caret: in the first text node the
-  // offset falls inside or at the end of. null past the paragraph's end,
-  // and inside a character: a boundary there would cut it in two.
+  // offset falls inside or at the end of, except that the end of text the
+  // writer cannot type in (a placeholder's flag) is the point just after
+  // the element holding it, where an edit can begin. null past the
+  // paragraph's end, and inside a character: a boundary there would cut it
+  // in two.
   function pointIn(p, off) {
     if (splitsPair(p.textContent, off)) return null;
     const walk = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
     let pos = 0;
     for (let n = walk.nextNode(); n; n = walk.nextNode()) {
-      if (off <= pos + n.data.length) return [n, off - pos];
-      pos += n.data.length;
+      const to = pos + n.data.length;
+      if (off < to || (off === to && (n.parentElement === p || n.parentElement.isContentEditable))) return [n, off - pos];
+      if (off === to) {
+        let el = n.parentElement;
+        while (el.parentElement !== p && !el.parentElement.isContentEditable) el = el.parentElement;
+        return [el.parentNode, [...el.parentNode.childNodes].indexOf(el) + 1];
+      }
+      pos = to;
     }
     return off === 0 ? [p, 0] : null; // a paragraph with no text
   }
@@ -309,6 +321,114 @@
     const p = para(range.startContainer);
     const len = p && p === para(range.endContainer) ? range.toString().length : 0;
     return { chId: caret.chId, pIdx: caret.pIdx, off: caret.off, len, scroll: caret.scroll };
+  }
+
+  // An input method composing a word owns the page until it ends, as it
+  // owns the keys in app.js; attach listens for it
+  let composing = false;
+
+  // A selection boundary as the paragraph of a chapter it lies in and its
+  // offset there, counted as captureCaret counts; null anywhere else
+  function spotOf(node, offset) {
+    const el = node && node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+    const p = el && el.closest ? el.closest('#chapters .chapter-body p') : null;
+    if (!p) return null;
+    const pre = document.createRange();
+    pre.selectNodeContents(p);
+    pre.setEnd(node, offset);
+    return { p, off: pre.toString().length };
+  }
+
+  // Where an offset in a paragraph lands once a change rewrote len units at
+  // off as text: before the change it stays, after it it moves by the
+  // change in length, and inside it it stays, within the new text
+  function moved({ off, len, text }, at) {
+    if (at <= off) return at;
+    return at >= off + len ? at + text.length - len : Math.min(at, off + text.length);
+  }
+
+  // Runs edit() with the selection and the focus free for it, then gives
+  // the writer back the selection, focus and scroll they had, even when
+  // edit throws. edit returns what it changed, { p, off, len, text }: len
+  // units at off in paragraph p now read text. The writer's ends later in
+  // p move with the words after it; null, for nothing changed, moves none.
+  function withWriterCaret(edit) {
+    const sel = getSelection();
+    const scroller = document.getElementById('paper-scroll');
+    const scroll = scroller.scrollTop;
+    const focused = document.activeElement;
+    const ends = sel.rangeCount
+      ? [[sel.anchorNode, sel.anchorOffset], [sel.focusNode, sel.focusOffset]].map(([node, offset]) => ({ node, offset, spot: spotOf(node, offset) }))
+      : null;
+    let change = null;
+    try {
+      change = edit();
+    } finally {
+      const back = ({ node, offset, spot }) => {
+        if (!spot || !spot.p.isConnected) return [node, offset];
+        const off = change && spot.p === change.p ? moved(change, spot.off) : spot.off;
+        return pointIn(spot.p, off) || [spot.p, 0];
+      };
+      if (focused && focused !== document.body && focused.isConnected) focused.focus({ preventScroll: true });
+      else if (document.activeElement) document.activeElement.blur();
+      if (ends) sel.setBaseAndExtent(...back(ends[0]), ...back(ends[1]));
+      else sel.removeAllRanges();
+      scroller.scrollTop = scroll;
+    }
+    return change;
+  }
+
+  // The text at a place rewritten through the editor, as typing writes it:
+  // the engine's undo takes it back, and the input event saves it by NEO's
+  // own path. Refused, with nothing changed: busy while an input method
+  // composes, hidden off the manuscript, missing when the place is not on
+  // the page, blocked on a ghost line (an outline note, app.js) or when the
+  // editor would not take it, stale when the text there is not
+  // expectedText. A refusal is final; nothing queues or retries it. The
+  // place's scroll plays no part: the writer's caret and scroll stay.
+  async function replace(entry, place, expectedText, newText) {
+    if (!validPlace(place)) throw new TypeError(`replace takes a place, { chId, pIdx, off, len, scroll? } with whole numbers, not ${shown(place)}`);
+    if (typeof expectedText !== 'string' || expectedText.length !== place.len) {
+      throw new TypeError(`replace takes the text at the place, ${place.len} UTF-16 units long, as expectedText, not ${shown(expectedText)}`);
+    }
+    if (typeof newText !== 'string' || /[\r\n]/.test(newText)) {
+      throw new TypeError(`replace writes within one paragraph, so newText is a string with no line break, not ${shown(newText)}`);
+    }
+    const refused = (reason) => ({ ok: false, reason });
+    // a plugin that failed to activate writes nothing
+    if (entry.disposed) return refused('blocked');
+    if (composing) return refused('busy');
+    if (!openedBook() || get.currentTab() !== 'manuscript') return refused('hidden');
+    const range = rangeOfPlace(place);
+    if (!range) return refused('missing');
+    const body = bodyOf(place.chId);
+    const p = body.querySelectorAll('p')[place.pIdx];
+    if (!body.isContentEditable || p.classList.contains('ghost')) return refused('blocked');
+    const was = p.textContent;
+    if (was.slice(place.off, place.off + place.len) !== expectedText) return refused('stale');
+    const want = was.slice(0, place.off) + newText + was.slice(place.off + place.len);
+    const change = withWriterCaret(() => {
+      body.focus({ preventScroll: true });
+      const sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      // execCommand fires no beforeinput, so NEO's filters on typing hear
+      // one first and can refuse it as they refuse a key (vim keys' moving
+      // mode refuses every insertText, app.js)
+      const asked = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: newText });
+      if (body.dispatchEvent(asked)) document.execCommand('insertText', false, newText);
+      const now = body.querySelectorAll('p')[place.pIdx];
+      const got = now ? now.textContent : null;
+      if (got === want) return { p, off: place.off, len: place.len, text: newText };
+      // text left as it was is an insert the editor refused; anything else
+      // is taken back
+      if (got !== was) {
+        document.execCommand('undo');
+        log(entry.id, `replace was undone: the paragraph read ${shown(got)} where ${shown(want)} was meant`);
+      }
+      return null;
+    });
+    return change ? { ok: true } : refused('blocked');
   }
 
   // the open book, a copy; null on the shelf and while a shelf export
@@ -437,7 +557,7 @@
     slot.hidden = !value;
   }
 
-  // what activate(neo) receives: API 1, and where and go from API 2 on
+  // what activate(neo) receives: API 1, and where, go and replace from API 2 on
   function apiFor(entry, apiVersion) {
     const api = {
       // a call to this plugin's own main half (plugins-main.js), answered
@@ -470,6 +590,7 @@
       api.where = where;
       // a plugin that failed to activate moves the writer nowhere
       api.go = (place) => go(place, entry);
+      api.replace = (place, expectedText, newText) => replace(entry, place, expectedText, newText);
     }
     return Object.freeze(api);
   }
@@ -557,6 +678,8 @@
       selectionMoved = true;
       nextFrame();
     });
+    document.addEventListener('compositionstart', () => { composing = true; }, true);
+    document.addEventListener('compositionend', () => { composing = false; }, true);
     for (const m of listed()) {
       if (m.styleUrl) {
         const link = document.createElement('link');

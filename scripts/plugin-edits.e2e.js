@@ -1,10 +1,11 @@
 // End-to-end tests for API 2 of the plugin host (plugins.js): where the
-// writer is, and going to a place, on a throwaway library. A place is
-// { chId, pIdx, off, len, scroll? }, counted as captureCaret counts: pIdx
-// among the chapter's paragraphs on the page, off and len in UTF-16 units
-// across any inline elements. The fixture plugins are those of
-// scripts/fixtures/plugins: the probe, written for API 2, keeps what it was
-// handed as window.__probe.neo, and old-api is written for API 1.
+// writer is, going to a place and replacing the text there, on a throwaway
+// library. A place is { chId, pIdx, off, len, scroll? }, counted as
+// captureCaret counts: pIdx among the chapter's paragraphs on the page, off
+// and len in UTF-16 units across any inline elements. The fixture plugins
+// are those of scripts/fixtures/plugins: the probe, written for API 2,
+// keeps what it was handed as window.__probe.neo, and old-api is written
+// for API 1.
 // Run with `npm run test:plugin-edits`.
 
 'use strict';
@@ -61,6 +62,7 @@ let book;
 // the probe's calls
 const where = () => js('window.__probe.neo.where()');
 const go = (place) => js(`window.__probe.neo.go(${str(place)})`);
+const replace = (place, expected, text) => js(`window.__probe.neo.replace(${str(place)}, ${str(expected)}, ${str(text)})`);
 // a place without its scroll
 const at = (place) => {
   if (!place) return place;
@@ -97,6 +99,35 @@ const selection = () => js(`(() => {
 
 // a chapter's text set as NEO holds it, and the chapters drawn again
 const setChapter = (chId, html) => js(`(() => { chapterHTML[${str(chId)}] = ${str(html)}; renderChapters(); })()`);
+// the text of each of a chapter's paragraphs on the page
+const lines = (chId) => js(`[...document.querySelectorAll('.chapter[data-id="${chId}"] .chapter-body p')].map((p) => p.textContent)`);
+// a section note for a chapter, shown on the page as a ghost line after a
+// ***; and gone again
+const addGhost = (chId) => js(`(() => {
+  book.sectionNotes = { ...book.sectionNotes, ${str(chId)}: [{ id: 'sec-plugin-edits', text: 'An outline note.' }] };
+  syncGhosts(${str(chId)});
+})()`);
+const dropGhost = (chId) => js(`(() => { book.sectionNotes[${str(chId)}] = []; syncGhosts(${str(chId)}); })()`);
+
+// a chapter's file, as saved; and the error log
+const chapterFile = (chId) => fs.readFileSync(path.join(LIBRARY, book.id, 'chapters', chId + '.html'), 'utf8');
+const errorLog = () => {
+  try { return fs.readFileSync(path.join(LIBRARY, 'neo-errors.log'), 'utf8'); } catch { return ''; }
+};
+// waits for check() to hold, up to ms
+async function until(check, what, ms = 4000) {
+  for (const end = Date.now() + ms; Date.now() < end; await tick(50)) if (await check()) return;
+  assert.fail(`waited ${ms} ms for ${what}`);
+}
+// the details of the events the probe heard by this name, and forgetting
+// what it heard
+const heard = (name) => js(`window.__probe.events.filter(([n]) => n === ${str(name)}).map(([, detail]) => detail)`);
+const forget = () => js('window.__probe.events.length = 0');
+// the writer's ⌘Z (Ctrl+Z)
+const undoKey = () => {
+  const modifiers = [process.platform === 'darwin' ? 'meta' : 'control'];
+  for (const type of ['keyDown', 'keyUp']) wc.sendInputEvent({ type, keyCode: 'z', modifiers });
+};
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -259,12 +290,8 @@ test('missing place', async () => {
 test('a place the open card rewrites on the way back is missing', async () => {
   const three = book.chapters[2];
   await setChapter(three, '<p>Short.</p>');
-  await js(`(() => {
-    book.sectionNotes = { ...book.sectionNotes, ${str(three)}: [{ id: 'sec-plugin-edits', text: 'An outline note.' }] };
-    syncGhosts(${str(three)});
-  })()`);
-  const lines = () => js(`[...document.querySelectorAll('.chapter[data-id="${three}"] .chapter-body p')].map((p) => p.textContent)`);
-  const ghost = (await lines()).indexOf('An outline note.');
+  await addGhost(three);
+  const ghost = (await lines(three)).indexOf('An outline note.');
   assert.ok(ghost > 0, 'the note is a ghost line on the page');
   await select(three, 0, 2);
   const before = await where();
@@ -278,9 +305,9 @@ test('a place the open card rewrites on the way back is missing', async () => {
   // "outline", on the page until the card is put down
   assert.equal(await go({ chId: three, pIdx: ghost, off: 3, len: 7 }), false);
   assert.equal(await js('currentTab'), 'manuscript');
-  assert.equal((await lines())[ghost], 'Note.');
+  assert.equal((await lines(three))[ghost], 'Note.');
   assert.deepEqual(await where(), before, 'the caret is where the writer left it');
-  await js(`(() => { book.sectionNotes[${str(three)}] = []; syncGhosts(${str(three)}); })()`);
+  await dropGhost(three);
 });
 
 test('a place that is not one', async () => {
@@ -296,10 +323,200 @@ test('a place that is not one', async () => {
   for (const line of thrown) assert.match(line, /^TypeError: .*\bplace\b/);
 });
 
+// "paragraph" in "One paragraph.", chapter one's first line, and the place
+// "passage" takes once it is written there
+const word = () => ({ chId: book.chapters[0], pIdx: 0, off: 4, len: 9 });
+const written = () => ({ ...word(), len: 7 });
+
+test('replace saves', async () => {
+  const [one] = book.chapters;
+  await select(one, 1, 0);
+  await forget();
+  assert.deepEqual(await replace(word(), 'paragraph', 'passage'), { ok: true });
+  assert.equal((await lines(one))[0], 'One passage.');
+  const saves = async () => (await heard('chapter-saved')).filter((saved) => saved.chId === one);
+  await until(async () => (await saves()).length, 'chapter-saved');
+  assert.deepEqual(await saves(), [{ bookId: book.id, chId: one }]);
+  assert.match(chapterFile(one), /One passage\./);
+});
+
+// the engine's own undo, as for typing: "replace saves" left "One passage."
+test('undo restores', async () => {
+  const [one] = book.chapters;
+  assert.equal((await lines(one))[0], 'One passage.');
+  undoKey();
+  await until(async () => (await lines(one))[0] === 'One paragraph.', 'the undo');
+  await until(() => chapterFile(one).includes('One paragraph.'), 'the next save to write it');
+});
+
+test('stale is refused once', async () => {
+  const [one] = book.chapters;
+  await select(one, 1, 0);
+  const page = await lines(one);
+  const file = chapterFile(one);
+  await forget();
+  for (let i = 0; i < 2; i++) {
+    assert.deepEqual(await replace(word(), 'paragrap!', 'x'), { ok: false, reason: 'stale' });
+    assert.deepEqual(await lines(one), page);
+  }
+  await tick(1500); // past the save's wait
+  assert.deepEqual((await heard('chapter-saved')).filter((saved) => saved.chId === one), [], 'nothing is written');
+  assert.equal(chapterFile(one), file);
+});
+
+test('refusals', async () => {
+  const [one, , three] = book.chapters;
+  await select(one, 1, 0);
+  const page = await lines(one);
+  // off the manuscript, the writer stays where they are
+  await js(`switchTab('notes')`);
+  await tick(300);
+  assert.deepEqual(await replace(word(), 'paragraph', 'passage'), { ok: false, reason: 'hidden' });
+  assert.equal(await js('currentTab'), 'notes');
+  await js(`switchTab('manuscript')`);
+  await tick(300);
+  assert.deepEqual(await lines(one), page);
+  assert.deepEqual(await replace({ ...word(), pIdx: 99 }, 'paragraph', 'passage'), { ok: false, reason: 'missing' });
+  assert.deepEqual(await lines(one), page);
+  // a ghost line is the outline's note, not the writer's words
+  await setChapter(three, '<p>Short.</p>');
+  await addGhost(three);
+  const ghost = (await lines(three)).indexOf('An outline note.');
+  await select(one, 1, 0);
+  assert.deepEqual(await replace({ chId: three, pIdx: ghost, off: 3, len: 7 }, 'outline', 'inline'), { ok: false, reason: 'blocked' });
+  assert.equal((await lines(three))[ghost], 'An outline note.');
+  await dropGhost(three);
+  // vim keys' moving mode refuses whatever would be typed
+  await select(one, 1, 0);
+  await js('(() => { vimEnabled = true; vimSetNav(true); })()');
+  try {
+    assert.deepEqual(await replace(word(), 'paragraph', 'passage'), { ok: false, reason: 'blocked' });
+  } finally {
+    await js('(() => { vimSetNav(false); vimEnabled = false; applyVim(); })()');
+  }
+  assert.deepEqual(await lines(one), page);
+});
+
+// Text that comes out other than meant, because something changed it as it
+// was written, is taken back by the engine's undo, once, and both texts go
+// to the log
+test('a mismatch is taken back', async () => {
+  const [one] = book.chapters;
+  const html = await js(`chapterHTML[${str(one)}]`);
+  await select(one, 1, 0);
+  // the something: a listener that adds a ! to the line behind the engine
+  await js(`document.querySelector('.chapter[data-id="${one}"] .chapter-body').addEventListener('input', (e) => {
+    e.currentTarget.querySelector('p').firstChild.data += '!';
+  }, { once: true, capture: true })`);
+  assert.deepEqual(await replace(word(), 'paragraph', 'passage'), { ok: false, reason: 'blocked' });
+  assert.equal((await lines(one))[0], 'One paragraph.!', 'the edit is undone, and only the edit');
+  await until(() => errorLog().includes('replace was undone'), 'the log');
+  assert.match(errorLog(), /plugin probe: replace was undone: the paragraph read "One passage\.!" where "One passage\." was meant/);
+  await setChapter(one, html);
+  assert.equal((await lines(one))[0], 'One paragraph.');
+});
+
+test('caret kept', async () => {
+  const [one, two] = book.chapters;
+  // a caret in another chapter, far down the page, stays, with the scroll
+  await select(two, 20, 5);
+  const away = await where();
+  assert.deepEqual(await replace(word(), 'paragraph', 'passage'), { ok: true });
+  assert.deepEqual(await where(), away);
+  assert.equal(await js('document.activeElement.closest(".chapter").dataset.id'), two, 'and the focus');
+  assert.deepEqual(await replace(written(), 'passage', 'paragraph'), { ok: true });
+  // one in another paragraph of the chapter, or earlier in the same one, stays
+  for (const [pIdx, off] of [[1, 5], [0, 2], [0, 4]]) {
+    await select(one, pIdx, off);
+    const before = await where();
+    assert.deepEqual(await replace(word(), 'paragraph', 'passage'), { ok: true });
+    assert.deepEqual(await where(), before, `the caret at ${pIdx}:${off}`);
+    assert.deepEqual(await replace(written(), 'passage', 'paragraph'), { ok: true });
+  }
+  // one later in the same paragraph moves with the words after it, by -2
+  await select(one, 0, 13); // before the full stop
+  const later = await where();
+  assert.deepEqual(await replace(word(), 'paragraph', 'passage'), { ok: true });
+  assert.deepEqual(await where(), { ...later, off: 11 });
+  assert.deepEqual(await replace(written(), 'passage', 'paragraph'), { ok: true });
+  assert.equal((await lines(one))[0], 'One paragraph.');
+});
+
+// Review focus: replace while an input method composes is refused, and
+// changes nothing
+test('composition', async () => {
+  const [one] = book.chapters;
+  await select(one, 1, 0);
+  const compose = (type) => js(`document.querySelector('.chapter[data-id="${one}"] .chapter-body').dispatchEvent(new CompositionEvent('${type}', { bubbles: true, data: '' }))`);
+  await compose('compositionstart');
+  try {
+    assert.deepEqual(await replace(word(), 'paragraph', 'passage'), { ok: false, reason: 'busy' });
+    assert.equal((await lines(one))[0], 'One paragraph.');
+  } finally {
+    await compose('compositionend');
+  }
+  assert.deepEqual(await replace(word(), 'paragraph', 'passage'), { ok: true });
+  assert.equal((await lines(one))[0], 'One passage.');
+  assert.deepEqual(await replace(written(), 'passage', 'paragraph'), { ok: true });
+});
+
+// Review focus: offsets across inline marks count as captureCaret counts,
+// and what the engine wraps its edits in never reaches the file
+test('inline marks', async () => {
+  const three = book.chapters[2];
+  await setChapter(three, '<p>The <i>owl</i> flew home.</p>');
+  await select(three, 0, 0);
+  // "wl fl", from inside the italics to past them
+  assert.deepEqual(await replace({ chId: three, pIdx: 0, off: 5, len: 5 }, 'wl fl', 'ak dr'), { ok: true });
+  assert.equal((await lines(three))[0], 'The oak drew home.');
+  const text = (html) => html.replace(/<[^>]*>/g, '');
+  await until(() => text(chapterFile(three)).includes('The oak drew home.'), 'the file to follow');
+  assert.doesNotMatch(chapterFile(three), /style=/);
+  assert.doesNotMatch(chapterFile(three), /<span/);
+  // on either side of a placeholder's flag, which stays
+  await setChapter(three, '<p>ab<span class="ph-mark" data-sid="s-plugin-edits" contenteditable="false">⚑</span>cd</p>');
+  await select(three, 0, 0);
+  assert.deepEqual(await replace({ chId: three, pIdx: 0, off: 3, len: 2 }, 'cd', 'xy'), { ok: true });
+  assert.deepEqual(await replace({ chId: three, pIdx: 0, off: 1, len: 1 }, 'b', 'B'), { ok: true });
+  assert.equal((await lines(three))[0], 'aB⚑xy');
+  assert.equal(await js(`document.querySelectorAll('.chapter[data-id="${three}"] .ph-mark').length`), 1);
+  // and past a flag that ends its paragraph
+  await setChapter(three, '<p>ab<span class="ph-mark" data-sid="s-plugin-edits" contenteditable="false">⚑</span></p>');
+  await select(three, 0, 0);
+  assert.deepEqual(await replace({ chId: three, pIdx: 0, off: 3, len: 0 }, '', 'z'), { ok: true });
+  assert.equal((await lines(three))[0], 'ab⚑z');
+});
+
+test('bad input', async () => {
+  const [one] = book.chapters;
+  const thrown = await js(`(async () => {
+    const out = [];
+    for (const [place, expected, text] of [
+      [${str(word())}, 'paragrap', 'x'],
+      [${str(word())}, 'paragraph', 'two\\nlines'],
+      [${str(word())}, 'paragraph', 'two\\rlines'],
+      [${str(word())}, 'paragraph', 7],
+      [${str(word())}, null, 'x'],
+      [{ chId: ${str(one)}, pIdx: -1, off: 0, len: 0 }, '', 'x']
+    ]) {
+      try {
+        await window.__probe.neo.replace(place, expected, text);
+        out.push('replaced');
+      } catch (err) {
+        out.push(err.name + ': ' + err.message);
+      }
+    }
+    return out;
+  })()`);
+  assert.equal(thrown.length, 6);
+  for (const line of thrown) assert.match(line, /^TypeError: replace (takes|writes) /);
+  assert.equal((await lines(one))[0], 'One paragraph.');
+});
+
 test('old API', async () => {
   assert.equal(await js('window.__oldApi.activated'), true);
   assert.deepEqual(await js('[...NeoPlugins.apiVersions]'), [1, 2]);
-  assert.deepEqual(await js('[typeof window.__oldApi.neo.where, typeof window.__oldApi.neo.go]'), ['undefined', 'undefined']);
+  assert.deepEqual(await js('[typeof window.__oldApi.neo.where, typeof window.__oldApi.neo.go, typeof window.__oldApi.neo.replace]'), ['undefined', 'undefined', 'undefined']);
 });
 
 /* ---------- runner ---------- */

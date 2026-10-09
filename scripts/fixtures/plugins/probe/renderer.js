@@ -1,6 +1,7 @@
 // The probe: a plugin that writes down everything the host tells it, for
 // scripts/plugins.e2e.js to read back. It is written for API 2, so what it
-// keeps as neo has where and go too, for scripts/plugin-edits.e2e.js.
+// keeps as neo has where, go and replace too, for
+// scripts/plugin-edits.e2e.js.
 
 'use strict';
 
