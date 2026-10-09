@@ -407,6 +407,40 @@ test('pane', async () => {
   assert.equal(await js(`document.querySelectorAll('.tab[data-tab^="plugin:probe:"]').length`), 1);
 });
 
+// what Find shows: its count, the matches it holds and the ones it paints
+const findView = () => js(`({
+  count: document.getElementById('search-count').textContent,
+  matches: searchState.matches.length,
+  painted: CSS.highlights.has('neo-search') ? CSS.highlights.get('neo-search').size : 0
+})`);
+// typed into the find bar; the bar searches 250 ms after the last key
+const findFor = async (q) => {
+  await js(`(() => {
+    const input = document.getElementById('search-input');
+    input.value = ${str(q)};
+    input.dispatchEvent(new Event('input'));
+  })()`);
+  await tick(400);
+};
+
+test('Find on a pane counts nothing in the Notes behind it', async () => {
+  await clickTab('notes', 600);
+  await js('openSearch()');
+  await findFor('owls');
+  assert.deepEqual(await findView(), { count: '1 found', matches: 1, painted: 1 });
+  // the open Find follows the writer to the pane, where NEO has no words
+  await clickTab('plugin:probe:pane');
+  assert.deepEqual(await findView(), { count: 'none', matches: 0, painted: 0 });
+  // a search typed on the pane finds nothing either, and Next scrolls nowhere
+  await findFor('notes');
+  const scroll = await js(`document.getElementById('paper-scroll').scrollTop`);
+  await js(`document.getElementById('search-next').click()`);
+  assert.deepEqual(await findView(), { count: 'none', matches: 0, painted: 0 });
+  assert.equal(await js(`document.getElementById('paper-scroll').scrollTop`), scroll);
+  await js('closeSearch()');
+  await clickTab('manuscript');
+});
+
 // a command in the Plugins menu, clicked as the writer would
 async function menuCommand(title) {
   const plugins = Menu.getApplicationMenu().items.find((item) => item.label === 'Plugins');
