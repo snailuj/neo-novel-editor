@@ -1,0 +1,5 @@
+{
+  "id": "old-api",
+  "apiVersion": 1,
+  "renderer": "renderer.js"
+}

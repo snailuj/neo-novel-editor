@@ -1076,6 +1076,62 @@ describe('the window half', () => {
     }
   });
 
+  // a host with plugins api1 and api2 listed and registered, each written
+  // for that API; neo holds what each was handed, by id
+  function bothApis(activate = () => {}) {
+    const host = windowHalf([1, 2].map((v) => ({ id: `api${v}`, apiVersion: v, rendererUrl: `plugins/api${v}/renderer.js`, styleUrl: null })));
+    host.attach();
+    const neo = {};
+    for (const v of [1, 2]) {
+      host.NeoPlugins.register({ id: `api${v}`, apiVersion: v, activate(api) { neo[`api${v}`] = api; return activate(api); } });
+    }
+    return { ...host, neo };
+  }
+
+  test('API 2 adds where and go; a plugin written for API 1 is handed neither', () => {
+    const { NeoPlugins, neo } = bothApis();
+    assert.deepEqual([...NeoPlugins.apiVersions], [1, 2]);
+    assert.deepEqual(Object.keys(neo.api2).filter((name) => !(name in neo.api1)), ['where', 'go']);
+    assert.equal(neo.api1.where, undefined);
+    assert.equal(neo.api1.go, undefined);
+  });
+
+  test('a place is captureCaret\'s shape with len, scroll optional, its numbers whole and never negative', () => {
+    const { validPlace } = windowHalf([]).NeoPlugins;
+    const place = { chId: 'c1', pIdx: 2, off: 5, len: 0 };
+    for (const ok of [place, { ...place, scroll: 0 }, { ...place, scroll: 120.5 }, { ...place, len: 9 }]) {
+      assert.equal(validPlace(ok), true, JSON.stringify(ok));
+    }
+    const refused = [
+      undefined, null, 'c1', [], {},
+      { pIdx: 0, off: 0, len: 0 }, { chId: '', pIdx: 0, off: 0, len: 0 }, { chId: 7, pIdx: 0, off: 0, len: 0 },
+      { chId: 'c1', off: 0, len: 0 }, { chId: 'c1', pIdx: 0, len: 0 }, { chId: 'c1', pIdx: 0, off: 0 },
+      { ...place, pIdx: -1 }, { ...place, off: 1.5 }, { ...place, len: '3' }, { ...place, off: Infinity },
+      { ...place, scroll: -1 }, { ...place, scroll: null }, { ...place, scroll: NaN }, { ...place, scroll: '10' },
+      { ...place, note: 'a key a place does not have' }
+    ];
+    for (const bad of refused) assert.equal(validPlace(bad), false, String(JSON.stringify(bad)));
+  });
+
+  test('go throws for what is not a place, and moves nothing with no book open or for a plugin that failed to activate', async () => {
+    const { neo } = bothApis();
+    assert.throws(() => neo.api2.go({ chId: 'c1', pIdx: -1, off: 0, len: 0 }), { name: 'TypeError', message: /\bplace\b.*"pIdx":-1/ });
+    assert.throws(() => neo.api2.go(), { name: 'TypeError', message: /\bplace\b.*undefined/ });
+    const cyclic = { chId: 'c1' };
+    cyclic.self = cyclic;
+    assert.throws(() => neo.api2.go(cyclic), { name: 'TypeError', message: /\bplace\b/ });
+    assert.equal(neo.api2.go({ chId: 'c1', pIdx: 0, off: 0, len: 0 }), false, 'no book is open');
+    assert.equal(neo.api2.where(), null);
+    // the book is open, but the plugin's activate failed
+    const book = { id: 'owls', chapterOrder: ['c1'] };
+    const host = windowHalf([{ id: 'p', apiVersion: 2, rendererUrl: 'plugins/p/renderer.js', styleUrl: null }], { book: () => book });
+    host.attach();
+    host.NeoPlugins.emit('book-open', { bookId: 'owls' });
+    let failed = null;
+    host.NeoPlugins.register({ id: 'p', apiVersion: 2, activate(api) { failed = api; throw new Error('activate fails on purpose'); } });
+    assert.equal(failed.go({ chId: 'c1', pIdx: 0, off: 0, len: 0 }), false);
+  });
+
   // what a plugin is handed, in every API this NEO knows, is listed where a
   // reader of plugins.js starts, as calls; and so is what else a plugin's
   // script can reach

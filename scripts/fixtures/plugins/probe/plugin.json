@@ -1,6 +1,6 @@
 {
   "id": "probe",
-  "apiVersion": 1,
+  "apiVersion": 2,
   "renderer": "renderer.js",
   "main": "main.js",
   "commands": [

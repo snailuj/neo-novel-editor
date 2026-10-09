@@ -9,6 +9,9 @@
 //   addCommand(id, run)       the handler for a command in the Plugins menu
 //   status(text)              a quiet line among the counters
 //   invoke(channel, payload)  a call to its own main half (plugins-main.js)
+// and, for a plugin written for API 2:
+//   where()                   where the writer is, as a place (see where)
+//   go(place)                 the writer taken there
 // None of them writes to the book: chapter writes go through persistChapter
 // alone. That is no wall. A plugin's script runs in NEO's page, where
 // window.neo, NEO's own way to the files (writeChapter among them), is in
@@ -22,7 +25,7 @@
 'use strict';
 
 (() => {
-  const API_VERSIONS = Object.freeze([1]);
+  const API_VERSIONS = Object.freeze([1, 2]);
   const EVENTS = ['book-open', 'book-close', 'chapter-change', 'chapter-saved', 'selection', 'rendered'];
 
   // One entry per plugin that registered: { id, listeners, panes, commands,
@@ -192,7 +195,102 @@
     if (event === 'book-close') openId = null;
   }
 
-  // Where the writer is, in the shape captureCaret gives (chId, pIdx, off,
+  // A place is { chId, pIdx, off, len, scroll? }, counted as captureCaret
+  // (app.js) counts: pIdx indexes the chapter's paragraphs on the page, off
+  // and len are UTF-16 units of their text across any inline elements, and
+  // a place lies inside one paragraph. scroll, when given, is the page's
+  // scrollTop. The same rules as schemas/place-v1.json, written out by hand.
+  const PLACE_KEYS = ['chId', 'pIdx', 'off', 'len', 'scroll'];
+  const whole = (n) => Number.isInteger(n) && n >= 0;
+  function validPlace(place) {
+    if (!place || typeof place !== 'object' || Array.isArray(place)) return false;
+    if (Object.keys(place).some((key) => !PLACE_KEYS.includes(key))) return false;
+    if (typeof place.chId !== 'string' || !place.chId) return false;
+    if (!whole(place.pIdx) || !whole(place.off) || !whole(place.len)) return false;
+    return place.scroll === undefined || (typeof place.scroll === 'number' && Number.isFinite(place.scroll) && place.scroll >= 0);
+  }
+
+  // a value as a message can show it, whatever it is
+  function shown(value) {
+    try {
+      return JSON.stringify(value) || text(value);
+    } catch {
+      return text(value);
+    }
+  }
+
+  // a chapter of the open book as the page shows it, or null when it is
+  // not drawn
+  function bodyOf(chId) {
+    for (const chapter of document.querySelectorAll('#chapters .chapter')) {
+      if (chapter.dataset.id === chId) return chapter.querySelector('.chapter-body');
+    }
+    return null;
+  }
+
+  // The node and offset `off` UTF-16 units into a paragraph's text, found
+  // as restoreCaret (app.js) finds a caret: in the first text node the
+  // offset falls inside or at the end of. null past the paragraph's end.
+  function pointIn(p, off) {
+    const walk = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+    let pos = 0;
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      if (off <= pos + n.data.length) return [n, off - pos];
+      pos += n.data.length;
+    }
+    return off === 0 ? [p, 0] : null; // a paragraph with no text
+  }
+
+  // The one way from a place to the page, for every call that takes a
+  // place: the Range it covers in the open book's chapter on the page, or
+  // null when the chapter is not there, nor the paragraph, or the place
+  // runs past the paragraph's end.
+  function rangeOfPlace(place) {
+    const book = openedBook();
+    const body = book && book.chapterOrder.includes(place.chId) ? bodyOf(place.chId) : null;
+    const p = body && body.querySelectorAll('p')[place.pIdx];
+    const start = p && pointIn(p, place.off);
+    const end = start && pointIn(p, place.off + place.len);
+    if (!end) return null;
+    const range = document.createRange();
+    range.setStart(...start);
+    range.setEnd(...end);
+    return range;
+  }
+
+  // the start of a range a third of the way down the page, where
+  // resumePosition (app.js) puts the caret when a book opens
+  function thirdDown(range) {
+    const sc = document.getElementById('paper-scroll');
+    let rect = range.getBoundingClientRect();
+    if (!rect.height) {
+      const node = range.startContainer.nodeType === Node.ELEMENT_NODE ? range.startContainer : range.startContainer.parentElement;
+      if (node) rect = node.getBoundingClientRect();
+    }
+    sc.scrollTop += rect.top - sc.getBoundingClientRect().top - sc.clientHeight / 3;
+  }
+
+  // The writer taken to a place: the manuscript, the place selected, and
+  // the scroll given, else the place a third of the way down the page.
+  // False, with nothing moved, when the place is not in the open book or
+  // the plugin asking has been disposed.
+  function go(place, entry) {
+    if (!validPlace(place)) throw new TypeError(`go takes a place, { chId, pIdx, off, len, scroll? } with whole numbers, not ${shown(place)}`);
+    const range = entry.disposed ? null : rangeOfPlace(place);
+    if (!range) return false;
+    // switchTab leaves the chapters on the page as they are, and the range
+    // with them
+    if (get.currentTab() !== 'manuscript') get.switchTab('manuscript');
+    // the focus, the chapter NEO counts as current, and the scroll given
+    get.restoreCaret({ chId: place.chId, pIdx: place.pIdx, off: place.off, scroll: place.scroll });
+    const sel = getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    if (place.scroll === undefined) thirdDown(range);
+    return true;
+  }
+
+  // Where the writer is, as a place: captureCaret's (chId, pIdx, off,
   // scroll) plus len, the length selected when the selection starts and
   // ends in one paragraph, else 0. null off the manuscript.
   function where() {
@@ -217,14 +315,21 @@
   }
 
   // a chapter of the open book: its HTML as NEO holds it, and the text of
-  // each paragraph, indexed as a place's pIdx counts them
+  // each paragraph, indexed as a place's pIdx counts them. A chapter on the
+  // page gives the page's paragraphs, which a place counts against: drawing
+  // a chapter heals its text (stray no-break spaces, old placeholder marks),
+  // and NEO holds the old HTML until the writer types there.
   function readChapter(chId) {
     const book = openedBook();
     const html = book && book.chapterOrder.includes(chId) ? get.chapterHTML(chId) : undefined;
     if (typeof html !== 'string') return null;
-    const inert = document.createElement('template'); // parsed, never run or loaded
-    inert.innerHTML = html;
-    return { id: chId, html, paragraphs: [...inert.content.querySelectorAll('p')].map((p) => p.textContent) };
+    let root = bodyOf(chId);
+    if (!root) {
+      const inert = document.createElement('template'); // parsed, never run or loaded
+      inert.innerHTML = html;
+      root = inert.content;
+    }
+    return { id: chId, html, paragraphs: [...root.querySelectorAll('p')].map((p) => p.textContent) };
   }
 
   // A pane is a plugin's own tab beside Notes, Outline and Darlings, named
@@ -328,9 +433,9 @@
     slot.hidden = !value;
   }
 
-  // what activate(neo) receives: API 1
-  function apiFor(entry) {
-    return Object.freeze({
+  // what activate(neo) receives: API 1, and where and go from API 2 on
+  function apiFor(entry, apiVersion) {
+    const api = {
       // a call to this plugin's own main half (plugins-main.js), answered
       // by the handler it took for the channel. The id filled in here keeps
       // a plugin from reaching another's half by mistake. It is no wall:
@@ -356,7 +461,13 @@
       addPane: (spec) => addPane(entry, spec),
       addCommand: (commandId, run) => addCommand(entry, commandId, run),
       status: (value) => setStatus(entry, value)
-    });
+    };
+    if (apiVersion >= 2) {
+      api.where = where;
+      // a plugin that failed to activate moves the writer nowhere
+      api.go = (place) => go(place, entry);
+    }
+    return Object.freeze(api);
   }
 
   function dropStyle(id) {
@@ -416,7 +527,7 @@
     registry.set(id, entry);
     let result;
     try {
-      result = plugin.activate(apiFor(entry));
+      result = plugin.activate(apiFor(entry, plugin.apiVersion));
     } catch (err) {
       fail(entry, err);
       return;
@@ -463,5 +574,6 @@
     }
   }
 
-  window.NeoPlugins = Object.freeze({ apiVersions: API_VERSIONS, register, emit, attach, showTab, runCommand });
+  // validPlace, for a plugin to check a place before it hands it over
+  window.NeoPlugins = Object.freeze({ apiVersions: API_VERSIONS, register, emit, attach, showTab, runCommand, validPlace });
 })();
