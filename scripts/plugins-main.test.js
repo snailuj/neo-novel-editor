@@ -715,11 +715,11 @@ describe('the window half', () => {
   });
 
   // plugins.js in a vm, with window.neo.plugins as given and stand-ins for
-  // the page: what it would add to the page (an element's remove() takes it
-  // off again), what it logs, and what it writes to the console. reads
-  // stands in for app.js's getters; logError, when given, for the log;
-  // clock.now is what performance.now() reads; invoked holds what reached
-  // window.neo.pluginInvoke.
+  // the page: what it would add to the page, wherever it goes (an element's
+  // remove() takes it off again), what it logs, and what it writes to the
+  // console. reads stands in for app.js's getters; logError, when given,
+  // for the log; clock.now is what performance.now() reads; invoked holds
+  // what reached window.neo.pluginInvoke.
   function windowHalf(list, reads = {}, logError = null) {
     const added = [];
     const logged = [];
@@ -729,6 +729,9 @@ describe('the window half', () => {
     const page = { appendChild: (el) => added.push(el) };
     const element = (tag) => ({
       tag,
+      dataset: {},
+      setAttribute() {},
+      addEventListener() {},
       remove() {
         const i = added.indexOf(this);
         if (i >= 0) added.splice(i, 1);
@@ -740,7 +743,7 @@ describe('the window half', () => {
         logError: logError || ((line) => logged.push(line)),
         pluginInvoke: async (...args) => { invoked.push(args); return { answered: args[2] }; }
       },
-      document: { head: page, body: page, addEventListener() {}, createElement: element },
+      document: { head: page, body: page, addEventListener() {}, createElement: element, getElementById: () => page },
       requestAnimationFrame: () => 1,
       performance: { now: () => clock.now },
       console: { error: (...args) => consoled.push(args.map(String).join(' ')) },
@@ -1041,5 +1044,54 @@ describe('the window half', () => {
       ['book-close', 'owls'],
       ['chapter-saved', 'owls']
     ]);
+  });
+
+  // A plugin that fails while the writer looks at its pane: the pane gives
+  // way to the manuscript. Should that throw too, the plugin's own error
+  // must still reach the log, and the rest of its things still go.
+  test('a failing plugin\'s error is logged before what it added is cleared away, even when leaving its pane throws', async () => {
+    for (const how of ['throws', 'rejects']) {
+      const book = { id: 'owls', chapterOrder: [] };
+      let tab = 'manuscript';
+      const host = windowHalf([listedP], {
+        book: () => book,
+        currentTab: () => tab,
+        switchTab: () => { throw new Error('switchTab fails on purpose'); }
+      });
+      host.attach();
+      host.NeoPlugins.emit('book-open', { bookId: 'owls' });
+      assert.doesNotThrow(() => host.NeoPlugins.register({ id: 'p', apiVersion: 1, activate(neo) {
+        neo.addPane({ id: 'pane', title: 'Pane' });
+        neo.status('Busy');
+        tab = 'plugin:p:pane';
+        const err = new Error(`activate ${how} on purpose`);
+        if (how === 'throws') throw err;
+        return Promise.reject(err);
+      } }), how);
+      await settled();
+      assert.equal(host.logged.length, 2, host.logged.join('\n'));
+      assert.match(host.logged[0], new RegExp(`^plugin p: Error: activate ${how} on purpose\\n\\s+at `), how);
+      assert.match(host.logged[1], /^plugin p: .*switchTab fails on purpose/, how);
+      assert.deepEqual(host.added.filter((el) => el.tag === 'div'), [], `${how}: its tab, pane and status are gone`);
+    }
+  });
+
+  // what a plugin is handed, in every API this NEO knows, is listed where a
+  // reader of plugins.js starts, as calls; and so is what else a plugin's
+  // script can reach
+  test('the comment at the top of plugins.js names every call a plugin is handed, and what its script can reach besides', () => {
+    const source = fs.readFileSync(path.join(root, 'plugins.js'), 'utf8');
+    const head = source.slice(0, source.indexOf('\'use strict\''));
+    const versions = [...windowHalf([]).NeoPlugins.apiVersions];
+    const host = windowHalf(versions.map((v) => ({ id: `api${v}`, apiVersion: v, rendererUrl: `plugins/api${v}/renderer.js`, styleUrl: null })));
+    host.attach();
+    const calls = new Set();
+    for (const v of versions) {
+      host.NeoPlugins.register({ id: `api${v}`, apiVersion: v, activate(neo) { for (const name of Object.keys(neo)) calls.add(name); } });
+    }
+    assert.ok(calls.has('on') && calls.has('invoke'), [...calls].join(', '));
+    assert.deepEqual([...calls].filter((name) => !new RegExp(`\\b${name}\\(`).test(head)), [], head);
+    assert.match(head, /\bwindow\.neo\b/, 'it says window.neo is in reach of any plugin script');
+    assert.match(head, /\btrust/, 'and which plugins NEO trusts because of it');
   });
 });

@@ -1,12 +1,23 @@
 // Plugins, window half. main.js lists the plugin folders it found at launch
 // (plugins-main.js, on window.neo.plugins); this file loads each one's script
-// and stylesheet and gives the script a read-only view of NEO: the open
-// book, its chapters, and events as the writer works. A plugin also gets
-// places of its own: panes (tabs beside Notes), commands in the Plugins
-// menu, and a status slot among the counters. app.js calls in from a few
-// hooks, each behind window.NeoPlugins, so Pocket, which runs app.js
-// without this file, is untouched. A plugin never writes: chapter writes go
-// through persistChapter alone.
+// and stylesheet. The script calls NeoPlugins.register, and its activate(neo)
+// is handed these calls (apiFor):
+//   on(event, fn)             book-open, book-close, chapter-change,
+//                             chapter-saved, selection and rendered
+//   book(), chapter(chId)     copies of the open book and of a chapter
+//   addPane({ id, title })    a tab of its own beside Notes
+//   addCommand(id, run)       the handler for a command in the Plugins menu
+//   status(text)              a quiet line among the counters
+//   invoke(channel, payload)  a call to its own main half (plugins-main.js)
+// None of them writes to the book: chapter writes go through persistChapter
+// alone. That is no wall. A plugin's script runs in NEO's page, where
+// window.neo, NEO's own way to the files (writeChapter among them), is in
+// reach of any script. So NEO trusts a plugin as it trusts its own code, and
+// loads only those inside its app folder (plugins-main.js): the bundled
+// ones, and outside a packaged app a developer's own.
+//
+// app.js calls in from a few hooks, each behind window.NeoPlugins, so
+// Pocket, which runs app.js without this file, is untouched.
 
 'use strict';
 
@@ -361,8 +372,15 @@
     for (const pane of entry.panes.values()) {
       pane.tab.remove();
       pane.element.remove();
-      // the writer was looking at it: back to the page
-      if (openedBook() && get.currentTab() === pane.name) get.switchTab('manuscript');
+      // the writer was looking at it: back to the page. Should that fail,
+      // it is logged and the rest of the plugin's things still go.
+      if (openedBook() && get.currentTab() === pane.name) {
+        try {
+          get.switchTab('manuscript');
+        } catch (err) {
+          log(entry.id, `its pane could not give way to the manuscript: ${text(err)}`);
+        }
+      }
     }
     entry.panes.clear();
     if (entry.status) entry.status.remove();
@@ -371,10 +389,12 @@
   }
 
   // A plugin that fails to activate loses whatever it added, and the error
-  // goes to the log, never in front of the writer
+  // goes to the log, never in front of the writer. The error is logged
+  // first, so nothing that goes wrong while its things are taken away can
+  // lose it.
   function fail(entry, err) {
-    dispose(entry);
     log(entry.id, err);
+    dispose(entry);
   }
 
   function register(plugin) {
