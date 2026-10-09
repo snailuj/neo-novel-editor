@@ -14,7 +14,7 @@
 const fs = require('fs');
 const path = require('path');
 
-// the same rules as schemas/plugin-manifest-v1.json, written out by hand
+// what a plugin.json may hold, and the limits on it (validManifest)
 const MANIFEST_KEYS = ['id', 'apiVersion', 'renderer', 'main', 'style', 'commands'];
 const COMMAND_KEYS = ['id', 'title'];
 const PLUGIN_ID = /^[a-z][a-z0-9-]{1,31}$/;

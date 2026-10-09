@@ -1078,12 +1078,12 @@ describe('the window half', () => {
 
   // a host with plugins api1 and api2 listed and registered, each written
   // for that API; neo holds what each was handed, by id
-  function bothApis(activate = () => {}) {
+  function bothApis() {
     const host = windowHalf([1, 2].map((v) => ({ id: `api${v}`, apiVersion: v, rendererUrl: `plugins/api${v}/renderer.js`, styleUrl: null })));
     host.attach();
     const neo = {};
     for (const v of [1, 2]) {
-      host.NeoPlugins.register({ id: `api${v}`, apiVersion: v, activate(api) { neo[`api${v}`] = api; return activate(api); } });
+      host.NeoPlugins.register({ id: `api${v}`, apiVersion: v, activate(api) { neo[`api${v}`] = api; } });
     }
     return { ...host, neo };
   }
@@ -1113,7 +1113,7 @@ describe('the window half', () => {
     for (const bad of refused) assert.equal(validPlace(bad), false, String(JSON.stringify(bad)));
   });
 
-  test('go throws for what is not a place, and moves nothing with no book open or for a plugin that failed to activate', async () => {
+  test('go throws for what is not a place, and moves nothing with no book open or for a plugin that failed to activate', () => {
     const { neo } = bothApis();
     assert.throws(() => neo.api2.go({ chId: 'c1', pIdx: -1, off: 0, len: 0 }), { name: 'TypeError', message: /\bplace\b.*"pIdx":-1/ });
     assert.throws(() => neo.api2.go(), { name: 'TypeError', message: /\bplace\b.*undefined/ });
@@ -1149,5 +1149,7 @@ describe('the window half', () => {
     assert.deepEqual([...calls].filter((name) => !new RegExp(`\\b${name}\\(`).test(head)), [], head);
     assert.match(head, /\bwindow\.neo\b/, 'it says window.neo is in reach of any plugin script');
     assert.match(head, /\btrust/, 'and which plugins NEO trusts because of it');
+    assert.match(head, /\bapp folder\b/, 'it says where those plugins load from: the app folder');
+    assert.match(head, /\bnot packaged\b[^.]*\bNEO_PLUGIN_DIRS\b/, 'and, when NEO is not packaged, the folders in NEO_PLUGIN_DIRS');
   });
 });

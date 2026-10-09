@@ -16,8 +16,9 @@
 // alone. That is no wall. A plugin's script runs in NEO's page, where
 // window.neo, NEO's own way to the files (writeChapter among them), is in
 // reach of any script. So NEO trusts a plugin as it trusts its own code, and
-// loads only those inside its app folder (plugins-main.js): the bundled
-// ones, and outside a packaged app a developer's own.
+// loads plugins only from inside its app folder (plugins-main.js): from
+// plugins/ there and, when NEO is not packaged, from the folders named in
+// NEO_PLUGIN_DIRS, which must lie inside it too.
 //
 // app.js calls in from a few hooks, each behind window.NeoPlugins, so
 // Pocket, which runs app.js without this file, is untouched.
@@ -199,7 +200,7 @@
   // (app.js) counts: pIdx indexes the chapter's paragraphs on the page, off
   // and len are UTF-16 units of their text across any inline elements, and
   // a place lies inside one paragraph. scroll, when given, is the page's
-  // scrollTop. The same rules as schemas/place-v1.json, written out by hand.
+  // scrollTop.
   const PLACE_KEYS = ['chId', 'pIdx', 'off', 'len', 'scroll'];
   const whole = (n) => Number.isInteger(n) && n >= 0;
   function validPlace(place) {
@@ -228,10 +229,20 @@
     return null;
   }
 
+  // true when `off` falls between the two halves of a surrogate pair, the
+  // two UTF-16 units of one character such as an emoji
+  function splitsPair(text, off) {
+    const before = text.charCodeAt(off - 1);
+    const after = text.charCodeAt(off);
+    return before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;
+  }
+
   // The node and offset `off` UTF-16 units into a paragraph's text, found
   // as restoreCaret (app.js) finds a caret: in the first text node the
-  // offset falls inside or at the end of. null past the paragraph's end.
+  // offset falls inside or at the end of. null past the paragraph's end,
+  // and inside a character: a boundary there would cut it in two.
   function pointIn(p, off) {
+    if (splitsPair(p.textContent, off)) return null;
     const walk = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
     let pos = 0;
     for (let n = walk.nextNode(); n; n = walk.nextNode()) {
@@ -262,14 +273,16 @@
   // the scroll given, else the place a third of the way down the page, as
   // resumePosition (app.js) puts the caret when a book opens. False, with
   // nothing moved, when the place is not in the open book or the plugin
-  // asking has been disposed.
+  // asking has been disposed; false, with nothing selected, when the place
+  // is gone once the manuscript is up.
   function go(place, entry) {
     if (!validPlace(place)) throw new TypeError(`go takes a place, { chId, pIdx, off, len, scroll? } with whole numbers, not ${shown(place)}`);
-    const range = entry.disposed ? null : rangeOfPlace(place);
-    if (!range) return false;
-    // switchTab leaves the chapters on the page as they are, and the range
-    // with them
+    if (entry.disposed || !rangeOfPlace(place)) return false;
+    // switchTab puts down an open Outline card, and saving its note can
+    // rewrite a ghost line or add lines: the place is found again after it
     if (get.currentTab() !== 'manuscript') get.switchTab('manuscript');
+    const range = rangeOfPlace(place);
+    if (!range) return false;
     // the caret at the place's start, with the focus and the chapter NEO
     // counts as current: at the scroll given, else a third of the way down
     if (place.scroll === undefined) get.resumePosition({ chapterId: place.chId, pIdx: place.pIdx, off: place.off });

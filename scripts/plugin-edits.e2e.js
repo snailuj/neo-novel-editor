@@ -168,17 +168,57 @@ test('astral offsets', async () => {
   }
 });
 
+// A place that starts or ends between the two halves of a character outside
+// the Basic Multilingual Plane would cut it in two: there is no such place.
+test('a place never cuts a character in two', async () => {
+  const three = book.chapters[2];
+  await setChapter(three, '<p>A\u{1F600}é <i>x</i>y</p>');
+  await select(three, 0, 0);
+  const before = await where();
+  for (const half of [{ off: 2, len: 0 }, { off: 2, len: 1 }, { off: 1, len: 1 }, { off: 0, len: 2 }]) {
+    assert.equal(await go({ chId: three, pIdx: 0, ...half }), false, str(half));
+    assert.deepEqual(await where(), before, `nothing moved for ${str(half)}`);
+  }
+  assert.equal(await go({ chId: three, pIdx: 0, off: 1, len: 2 }), true, 'the whole character is a place');
+  assert.equal((await selection()).text, '\u{1F600}');
+});
+
+// A placeholder's flag sits mid-paragraph as a span the writer cannot type
+// in, and its ⚑ counts as one unit, as captureCaret counts it.
+test('a place across a placeholder mark', async () => {
+  const three = book.chapters[2];
+  await setChapter(three, '<p>ab<span class="ph-mark" data-sid="s-plugin-edits" contenteditable="false">⚑</span>cd</p>');
+  // the caret just past the mark, as the element's child offset and as
+  // the start of the text after it
+  for (const after of ['[p, 2]', '[p.lastChild, 0]']) {
+    await js(`(() => {
+      const p = document.querySelector('.chapter[data-id="${three}"] .chapter-body p');
+      p.closest('.chapter-body').focus();
+      const r = document.createRange();
+      r.setStart(...${after});
+      getSelection().removeAllRanges();
+      getSelection().addRange(r);
+    })()`);
+    await tick(100);
+    assert.deepEqual(at(await where()), { chId: three, pIdx: 0, off: 3, len: 0 }, after);
+  }
+  // and over it
+  assert.equal(await go({ chId: three, pIdx: 0, off: 1, len: 3 }), true);
+  assert.equal((await selection()).text, 'b⚑c');
+  assert.deepEqual(at(await where()), { chId: three, pIdx: 0, off: 1, len: 3 });
+});
+
 // The page is what a place counts against, and it can differ from the
 // HTML NEO holds: drawing a chapter heals no-break spaces the old editing
 // engine planted, and NEO holds the old HTML until the writer types there.
 test('chapter() reads the paragraphs a place counts, where the page healed the text', async () => {
   const three = book.chapters[2];
-  await setChapter(three, '<p>Stray  space.</p>');
+  await setChapter(three, '<p>Stray\u00a0 space.</p>');
   const read = await js(`({
     held: chapterHTML[${str(three)}],
     paragraphs: window.__probe.neo.chapter(${str(three)}).paragraphs
   })`);
-  assert.ok(read.held.includes(' '), 'NEO still holds the no-break space');
+  assert.ok(read.held.includes('\u00a0'), 'NEO still holds the no-break space');
   assert.deepEqual(read.paragraphs, ['Stray  space.']);
   const place = { chId: three, pIdx: 0, off: 3, len: 5 };
   assert.equal(await go(place), true);
@@ -210,6 +250,37 @@ test('missing place', async () => {
   assert.equal(await js(`document.getElementById('paper').checkVisibility()`), true);
   assert.equal((await selection()).text, 'paragraph');
   assert.deepEqual(at(await where()), { chId: one, pIdx: 0, off: 4, len: 9 });
+});
+
+// Leaving the Outline puts down an open card, and saving its note can
+// rewrite a ghost line or add lines to the page. go looks for the place
+// again once the manuscript is up: one gone by then is missing, and
+// nothing is selected.
+test('a place the open card rewrites on the way back is missing', async () => {
+  const three = book.chapters[2];
+  await setChapter(three, '<p>Short.</p>');
+  await js(`(() => {
+    book.sectionNotes = { ...book.sectionNotes, ${str(three)}: [{ id: 'sec-plugin-edits', text: 'An outline note.' }] };
+    syncGhosts(${str(three)});
+  })()`);
+  const lines = () => js(`[...document.querySelectorAll('.chapter[data-id="${three}"] .chapter-body p')].map((p) => p.textContent)`);
+  const ghost = (await lines()).indexOf('An outline note.');
+  assert.ok(ghost > 0, 'the note is a ghost line on the page');
+  await select(three, 0, 2);
+  const before = await where();
+  await js(`switchTab('outline')`);
+  await tick(300);
+  // the card open, its note shortened and not yet saved
+  await js(`(() => {
+    openCard(document.querySelector('.ob-cell[data-sec="sec-plugin-edits"]'));
+    cardEditor.text.textContent = 'Note.';
+  })()`);
+  // "outline", on the page until the card is put down
+  assert.equal(await go({ chId: three, pIdx: ghost, off: 3, len: 7 }), false);
+  assert.equal(await js('currentTab'), 'manuscript');
+  assert.equal((await lines())[ghost], 'Note.');
+  assert.deepEqual(await where(), before, 'the caret is where the writer left it');
+  await js(`(() => { book.sectionNotes[${str(three)}] = []; syncGhosts(${str(three)}); })()`);
 });
 
 test('a place that is not one', async () => {
