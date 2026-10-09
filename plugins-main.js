@@ -41,8 +41,17 @@ let found = null; // discover()'s answer, kept for the life of the process
 function wire(deps) {
   host = deps;
   found = null;
-  // the window asks once, synchronously, before any of its code runs
-  host.ipcMain.on('plugins:list', (e) => { e.returnValue = discover(); });
+  // the window asks once, synchronously, before any of its code runs, and
+  // waits until it has an answer, so a throw here would hang it. It gets no
+  // mainPath: the window never touches the disk, so it needs no paths on it
+  host.ipcMain.on('plugins:list', (e) => {
+    try {
+      e.returnValue = discover().map(({ mainPath, ...listed }) => listed);
+    } catch (err) {
+      host.logError('plugins', err);
+      e.returnValue = [];
+    }
+  });
 }
 
 function skip(folder, why) {
@@ -86,6 +95,9 @@ function discover() {
       if (!(err.code === 'ENOENT' && root === bundled)) skip(root, err);
       continue;
     }
+    // a link (a symlink, or a junction on Windows) can lead outside the app
+    // folder, so it is refused like a root outside it
+    for (const e of entries) if (e.isSymbolicLink()) skip(path.join(root, e.name), 'skipped: a link, which can lead outside the app folder');
     for (const name of entries.filter((e) => e.isDirectory()).map((e) => e.name).sort()) {
       const folder = path.join(root, name);
       let manifest;
@@ -94,11 +106,17 @@ function discover() {
       } catch (err) { skip(folder, err); continue; }
       if (!validManifest(manifest)) { skip(folder, 'skipped: plugin.json does not match the manifest format'); continue; }
       if (byId.has(manifest.id)) { skip(folder, `skipped: the id "${manifest.id}" is already used by ${byId.get(manifest.id)}`); continue; }
+      let rendererUrl, styleUrl;
+      try {
+        // encodeURIComponent throws URIError on a name holding a lone surrogate
+        rendererUrl = urlOf(rel, name, manifest.renderer);
+        styleUrl = manifest.style ? urlOf(rel, name, manifest.style) : null;
+      } catch (err) { skip(folder, err); continue; }
       byId.set(manifest.id, folder);
       list.push({
         ...manifest,
-        rendererUrl: urlOf(rel, name, manifest.renderer),
-        styleUrl: manifest.style ? urlOf(rel, name, manifest.style) : null,
+        rendererUrl,
+        styleUrl,
         mainPath: manifest.main ? path.join(folder, manifest.main) : null
       });
     }

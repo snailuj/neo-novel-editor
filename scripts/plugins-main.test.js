@@ -28,13 +28,13 @@ afterEach(() => {
 });
 
 // wires the module to stand-ins; dirs becomes NEO_PLUGIN_DIRS
-function wire({ appRoot = root, isPackaged = false, dirs } = {}) {
+function wire({ appRoot = root, isPackaged = false, dirs, app = { isPackaged } } = {}) {
   if (dirs === undefined) delete process.env.NEO_PLUGIN_DIRS;
   else process.env.NEO_PLUGIN_DIRS = dirs;
   const logs = [];
   const handlers = new Map();
   plugins.wire({
-    app: { isPackaged },
+    app,
     ipcMain: { on: (channel, fn) => handlers.set(channel, fn) },
     logError: (source, err) => logs.push(`[${source}] ${err && err.stack ? err.stack : String(err)}`),
     appRoot
@@ -153,7 +153,64 @@ describe('plugin discovery', { concurrency: 1 }, () => {
     assert.deepEqual(list.map((m) => m.id), ['first']);
     const event = {};
     handlers.get('plugins:list')(event);
-    assert.equal(event.returnValue, list);
+    assert.deepEqual(event.returnValue, list.map(({ mainPath, ...listed }) => listed));
+  });
+
+  test('the window gets each plugin without its main path, which discover keeps', () => {
+    const app = appFolder({ 'plugins/full': plugin('full', { main: 'main.cjs' }) });
+    const { handlers } = wire({ appRoot: app });
+    const event = {};
+    handlers.get('plugins:list')(event);
+    assert.deepEqual(event.returnValue.map((m) => m.id), ['full']);
+    assert.equal(event.returnValue[0].rendererUrl, 'plugins/full/renderer.js');
+    assert.ok(!('mainPath' in event.returnValue[0]), 'the window never sees a path on disk');
+    assert.equal(find('full').mainPath, path.join(app, 'plugins', 'full', 'main.cjs'));
+  });
+
+  test('plugins:list answers [] and logs the stack when discovery throws', () => {
+    // the window waits on this answer (sendSync), so a throw must not escape
+    const app = { get isPackaged() { throw new Error('discovery broke'); } };
+    const { logs, handlers } = wire({ appRoot: appFolder({}), app });
+    const event = {};
+    handlers.get('plugins:list')(event);
+    assert.deepEqual(event.returnValue, []);
+    assert.equal(logs.length, 1);
+    assert.match(logs[0], /discovery broke\n\s+at /);
+  });
+
+  test('a folder whose name cannot go in a URL is skipped and logged with its folder', (t) => {
+    // a lone surrogate makes encodeURIComponent throw; a real disk hands Node
+    // such a name only rarely, so the folder listing is stood in for
+    const app = appFolder({ 'plugins/good': plugin('good') });
+    const bundled = path.join(app, 'plugins');
+    const odd = path.join(bundled, 'odd\uD800');
+    const { readdirSync, readFileSync } = fs;
+    t.mock.method(fs, 'readdirSync', (dir, options) => dir === bundled
+      ? [...readdirSync(dir, options), { name: path.basename(odd), isDirectory: () => true, isSymbolicLink: () => false }]
+      : readdirSync(dir, options));
+    t.mock.method(fs, 'readFileSync', (file, ...rest) => file === path.join(odd, 'plugin.json')
+      ? JSON.stringify(plugin('odd'))
+      : readFileSync(file, ...rest));
+    const { logs } = wire({ appRoot: app });
+    assert.deepEqual(ids(), ['good']);
+    assert.ok(logs.some((line) => line.includes(odd) && line.includes('URIError')), 'the odd folder is logged');
+  });
+
+  test('a plugin folder that is a link is skipped and logged with its folder', (t) => {
+    // a link can lead outside the app folder, where 'self' no longer holds
+    const app = appFolder({ 'plugins/real': plugin('real') });
+    const target = path.join(tempFolder(), 'linked');
+    addPlugin(target, '.', plugin('linked'));
+    const link = path.join(app, 'plugins', 'linked');
+    try {
+      fs.symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (err) {
+      t.skip(`this system refused the link: ${err.code}`);
+      return;
+    }
+    const { logs } = wire({ appRoot: app });
+    assert.deepEqual(ids(), ['real']);
+    assert.ok(logs.some((line) => line.includes(link)), 'the link is logged');
   });
 });
 
