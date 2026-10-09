@@ -16413,4 +16413,4 @@ loadLibrary().then(() => {
 // Plugins (plugins.js) come last, once all of NEO is defined. Getters,
 // because book, chapterHTML and currentTab are reassigned; a shelf export
 // borrows book for a moment, and no plugin should see that book as open.
-if (window.NeoPlugins) NeoPlugins.attach({ book: () => (shelfExport ? null : book), chapterHTML: (id) => chapterHTML[id], currentTab: () => currentTab, switchTab, captureCaret, restoreCaret });
+if (window.NeoPlugins) NeoPlugins.attach({ book: () => book, chapterHTML: (id) => chapterHTML[id], currentTab: () => currentTab, switchTab, captureCaret, restoreCaret });

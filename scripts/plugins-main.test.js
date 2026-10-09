@@ -433,6 +433,24 @@ describe('the window half', () => {
     assert.match(logged[4], /^plugin p: Error: throws every time\n/);
   });
 
+  test('book() and a late book-open read only the book the plugins heard open, never one a shelf export borrowed', () => {
+    // app.js's book, borrowed by a shelf export: no plugin heard it open
+    let book = { id: 'other', chapterOrder: [] };
+    const heard = [];
+    const { NeoPlugins, neo } = withPlugin((api) => { api.on('book-open', (d) => heard.push(d.bookId)); }, { book: () => book });
+    assert.deepEqual(heard, []);
+    assert.equal(neo.book(), null);
+    book = { id: 'owls', chapterOrder: ['c1'] };
+    NeoPlugins.emit('book-open', { bookId: 'owls' });
+    assert.deepEqual(neo.book(), book);
+    // a book-close listener still reads the closing book; after it, nothing
+    let closing = null;
+    neo.on('book-close', () => { closing = neo.book(); });
+    NeoPlugins.emit('book-close', { bookId: 'owls' });
+    assert.deepEqual(closing, book);
+    assert.equal(neo.book(), null);
+  });
+
   test('an activate whose promise rejects is logged, and the listeners it added are taken away', async () => {
     let heard = 0;
     const { NeoPlugins, neo, logged } = withPlugin(async (api) => {

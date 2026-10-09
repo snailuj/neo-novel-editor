@@ -17,6 +17,14 @@
   // adds to NEO hangs off its entry, so disposal can take it all away.
   const registry = new Map();
   let get = null; // app.js's getters, from attach()
+  // The book the plugins last heard open, until they hear it close. A shelf
+  // export borrows app.js's `book` without opening it, and an openBook can
+  // finish while the export still runs: only the book announced is read.
+  let openId = null;
+  function openedBook() {
+    const book = get && get.book();
+    return book && book.id === openId ? book : null;
+  }
 
   // the plugins main.js found; Pocket and a failed discovery have none
   function listed() {
@@ -121,14 +129,17 @@
       return;
     }
     sendChanges();
+    if (event === 'book-open') openId = detail.bookId;
     dispatch(listenersOf(event), detail);
+    // its listeners could still read the closing book
+    if (event === 'book-close') openId = null;
   }
 
   // Where the writer is, in the shape captureCaret gives (chId, pIdx, off,
   // scroll) plus len, the length selected when the selection starts and
   // ends in one paragraph, else 0. null off the manuscript.
   function where() {
-    if (!get || !get.book() || get.currentTab() !== 'manuscript') return null;
+    if (!openedBook() || get.currentTab() !== 'manuscript') return null;
     const caret = get.captureCaret();
     if (!caret) return null;
     const range = getSelection().getRangeAt(0);
@@ -144,14 +155,14 @@
   // the open book, a copy; null on the shelf and while a shelf export
   // borrows the book
   function readBook() {
-    const book = get && get.book();
+    const book = openedBook();
     return book ? structuredClone(book) : null;
   }
 
   // a chapter of the open book: its HTML as NEO holds it, and the text of
   // each paragraph, indexed as a place's pIdx counts them
   function readChapter(chId) {
-    const book = get && get.book();
+    const book = openedBook();
     const html = book && book.chapterOrder.includes(chId) ? get.chapterHTML(chId) : undefined;
     if (typeof html !== 'string') return null;
     const inert = document.createElement('template'); // parsed, never run or loaded
@@ -211,7 +222,7 @@
     }
     if (result && typeof result.then === 'function') result.then(null, (err) => fail(entry, err));
     // a plugin whose script came after the book opened still hears of it
-    const book = get && get.book();
+    const book = openedBook();
     if (book) dispatch(listenersOf('book-open', [entry]), { bookId: book.id });
   }
 

@@ -199,10 +199,14 @@ test('book switch', async () => {
   await js('backToShelf()');
   await tick(200);
   // a shelf export borrows `book` while an openBook waits on its reads:
-  // that book was never open, so nothing closes
+  // that book was never open, so nothing closes. The book that opens is
+  // open, and readable, though the export has not finished.
   await forget();
   const order = await js(`(async () => {
     const order = [];
+    const neo = window.__probe.neo;
+    const reads = () => (neo.book() && neo.book().id) + (neo.chapter(${str(owls.chapters[0])}) ? ' and its chapter' : '');
+    const off = neo.on('book-open', () => order.push('book-open reads ' + reads()));
     const realExport = doExport;
     let release = null;
     doExport = () => {
@@ -213,14 +217,21 @@ test('book switch', async () => {
       const opening = openBook(${str(owls.id)}).then(() => order.push('opened'));
       const exporting = exportFromShelf(${str(other.id)}, 'txt');
       await opening;
+      order.push('then reads ' + reads());
       if (release) release();
       await exporting;
     } finally {
       doExport = realExport;
+      off();
     }
     return order;
   })()`);
-  assert.deepEqual(order, ['export holds the book', 'opened'], 'the export held the book while openBook read');
+  assert.deepEqual(order, [
+    'export holds the book',
+    `book-open reads ${owls.id} and its chapter`,
+    'opened',
+    `then reads ${owls.id} and its chapter`
+  ], 'the export held the book while openBook read, and the opened book reads as open');
   await tick(300);
   assert.deepEqual(await heard('book-open', 'book-close'), [['book-open', { bookId: owls.id }]]);
 });
