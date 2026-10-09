@@ -24,8 +24,19 @@
     return Array.isArray(list) ? list : [];
   }
 
+  // A plugin can throw anything, and a Symbol or an object with no prototype
+  // has no text form. Logging must not throw: it runs inside NEO's saves and
+  // book opening.
+  function text(what) {
+    try {
+      return String((what && what.stack) || what);
+    } catch {
+      return `(a value of type ${typeof what} with no text form)`;
+    }
+  }
+
   function log(id, what) {
-    window.neo.logError(`plugin ${id}: ${(what && what.stack) || what}`);
+    window.neo.logError(`plugin ${text(id)}: ${text(what)}`);
   }
 
   // The listeners a plugin added for an event, as { entry, fn }, in the order

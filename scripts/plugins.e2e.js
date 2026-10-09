@@ -320,14 +320,15 @@ test('listeners that throw or reject', async () => {
   const chId = owls.chapters[0];
   // the probe adds listeners as any plugin might: one throws, the next
   // one's promise rejects, and one comes after them. chapter-saved goes out
-  // from inside the save itself.
+  // from inside the save itself. A Symbol has no text form.
   await js(`(() => {
     const neo = window.__probe.neo;
     window.__calls = [];
     window.__off = [
       neo.on('chapter-saved', () => { window.__calls.push('throws'); throw new Error('a listener throws on purpose'); }),
       neo.on('chapter-saved', async () => { window.__calls.push('rejects'); throw new Error('a listener rejects on purpose'); }),
-      neo.on('chapter-saved', () => { window.__calls.push('after'); })
+      neo.on('chapter-saved', () => { window.__calls.push('after'); }),
+      neo.on('book-close', () => { throw Symbol('boom'); })
     ];
     document.getElementById('hint').textContent = '';
   })()`);
@@ -342,6 +343,13 @@ test('listeners that throw or reject', async () => {
   // nothing reached NEO's own net for errors, which would tell the writer
   assert.doesNotMatch(log, /Unhandled: .*on purpose/);
   assert.equal(await js(`document.getElementById('hint').textContent`), '', 'nothing was shown to the writer');
+  // the Symbol thrown as the book closes is logged, and the writer reaches the shelf
+  await js('backToShelf()');
+  await tick(200);
+  assert.equal(await js(`book === null && !document.getElementById('bookshelf-view').hidden`), true, 'back on the shelf');
+  assert.match(await logWith('Symbol(boom)'), /plugin probe: Symbol\(boom\)/);
+  await js(`openBook(${str(owls.id)})`);
+  await tick(300);
   // unsubscribed, they are not called again
   await js('window.__off.forEach((off) => off())');
   const calls = (await js('window.__calls')).length;

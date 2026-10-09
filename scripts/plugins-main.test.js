@@ -382,6 +382,26 @@ describe('the window half', () => {
     assert.match(logged[1], /^plugin p: Error: rejected on purpose\n\s+at /);
   });
 
+  test('a listener that throws what has no text form is logged, and emit never throws', async () => {
+    const { NeoPlugins, neo, logged } = withPlugin();
+    const calls = [];
+    neo.on('chapter-change', () => { calls.push('change'); throw Symbol('change'); });
+    neo.on('book-close', () => { calls.push('symbol'); throw Symbol('boom'); });
+    neo.on('book-close', () => { calls.push('bare'); throw Object.create(null); });
+    neo.on('book-close', async () => { calls.push('rejects'); throw Symbol('later'); });
+    // the change waits for a frame, and goes out ahead of the next event
+    NeoPlugins.emit('chapter-change', { bookId: 'b', chId: 'c' });
+    NeoPlugins.emit('book-close', { bookId: 'b' });
+    assert.deepEqual(calls, ['change', 'symbol', 'bare', 'rejects']);
+    await settled();
+    assert.deepEqual(logged, [
+      'plugin p: Symbol(change)',
+      'plugin p: Symbol(boom)',
+      'plugin p: (a value of type object with no text form)',
+      'plugin p: Symbol(later)'
+    ]);
+  });
+
   test('an activate whose promise rejects is logged, and the listeners it added are taken away', async () => {
     let heard = 0;
     const { NeoPlugins, neo, logged } = withPlugin(async (api) => {
