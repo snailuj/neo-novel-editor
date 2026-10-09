@@ -274,10 +274,13 @@
     return off === 0 ? [p, 0] : null; // a paragraph with no text
   }
 
-  // The one way from a place to the page, for every call that takes a
-  // place: the Range it covers in the open book's chapter on the page, or
+  // The Range a place covers in the open book's chapter on the page, or
   // null when the chapter is not there, nor the paragraph, or the place
-  // runs past the paragraph's end.
+  // runs past the paragraph's end. Every call that takes one place uses it;
+  // rangesOfPlaces finds a highlight's many places by the same rules,
+  // written out again. A new rule goes in pointIn, which both use, or in
+  // both: "highlight and go agree on every place"
+  // (scripts/plugin-edits.e2e.js) fails when they differ.
   function rangeOfPlace(place) {
     const book = openedBook();
     const body = book && book.chapterOrder.includes(place.chId) ? bodyOf(place.chId) : null;
@@ -291,7 +294,7 @@
     return range;
   }
 
-  // The Ranges of many places, each found as rangeOfPlace finds one, but
+  // The Ranges of many places, by rangeOfPlace's rules (keep the two alike),
   // with each chapter's paragraphs looked up once for all its places: a
   // highlight can hold hundreds, and is built again on every rendered.
   // paras keeps those lookups, by chId, for the caller to share while the

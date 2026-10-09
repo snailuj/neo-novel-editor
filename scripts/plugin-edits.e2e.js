@@ -654,6 +654,59 @@ test('inside a placeholder', async () => {
   await highlight('claims', []);
 });
 
+// go finds its place through rangeOfPlace and a highlight finds its places
+// through rangesOfPlaces, by the same rules. Each place here is one both
+// take, with the same text, or both leave out, so a rule added to one of
+// them alone fails here.
+test('highlight and go agree on every place', async () => {
+  const [one, , three] = book.chapters;
+  // A, an emoji of two UTF-16 units, an e with its accent, a space, then x
+  // in italics and y after them: seven units
+  await setChapter(three, '<p>A\u{1F600}é <i>x</i>y</p>');
+  // the text go selects and the text the highlight marks, each null when it
+  // takes nothing, as JSON, which keeps a lone surrogate; with unordered,
+  // the place's chapter stays on the page but is out of the book's order
+  const verdicts = (place, unordered = false) => js(`(() => {
+    const neo = window.__probe.neo;
+    const order = book.chapterOrder;
+    if (${unordered}) book.chapterOrder = order.filter((id) => id !== ${str(place.chId)});
+    try {
+      const went = neo.go(${str(place)});
+      neo.highlight('agree', [${str(place)}]);
+      const marks = [...CSS.highlights.get('plugin-probe-agree')];
+      return {
+        go: went ? JSON.stringify(getSelection().getRangeAt(0).toString()) : null,
+        highlight: marks.length ? JSON.stringify(marks[0].toString()) : null
+      };
+    } finally {
+      book.chapterOrder = order;
+    }
+  })()`);
+  const both = (text) => ({ go: text === null ? null : str(text), highlight: text === null ? null : str(text) });
+  for (const [place, text] of [
+    [{ chId: one, pIdx: 0, off: 4, len: 9 }, 'paragraph'],
+    [{ chId: one, pIdx: 1, off: 24, len: 0 }, ''], // the end of "Rain fell on the harbor."
+    [{ chId: three, pIdx: 0, off: 1, len: 2 }, '\u{1F600}'],
+    [{ chId: three, pIdx: 0, off: 3, len: 4 }, 'é xy'],
+    [{ chId: 'nope', pIdx: 0, off: 0, len: 0 }, null],
+    [{ chId: one, pIdx: 999, off: 0, len: 0 }, null],
+    [{ chId: one, pIdx: 1, off: 99, len: 0 }, null],
+    [{ chId: one, pIdx: 1, off: 20, len: 9 }, null],
+    [{ chId: three, pIdx: 0, off: 7, len: 1 }, null] // past the y
+  ]) {
+    assert.deepEqual(await verdicts(place), both(text), str(place));
+  }
+  // a chapter on the page that the book no longer orders
+  const x = { chId: three, pIdx: 0, off: 5, len: 1 };
+  assert.deepEqual(await verdicts(x), both('x'));
+  assert.deepEqual(await verdicts(x, true), both(null), 'out of the book\'s order');
+  // half of the emoji: whether a place may split one is pointIn's to say,
+  // for both of them alike
+  const half = await verdicts({ chId: three, pIdx: 0, off: 1, len: 1 });
+  assert.equal(half.go, half.highlight, 'half of the emoji');
+  await highlight('agree', []);
+});
+
 // A place names no book, so a highlight holds for the open book alone: it
 // goes when the book closes, and on the shelf there is nothing to mark.
 test('a book closing clears them', async () => {
