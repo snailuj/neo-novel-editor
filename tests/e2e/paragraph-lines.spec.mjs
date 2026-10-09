@@ -183,3 +183,37 @@ test('undoing a break and a split sends nothing to Darlings', async () => {
     expect(await fixture.page.evaluate(() => ({ order: book.chapterOrder, darlings }))).toEqual({ order: [CHAPTER], darlings: [] });
   } finally { await fixture.close(); }
 });
+
+// A paragraph made by Enter has no line break node before it on the page,
+// so after its save a capture of the page with nothing typed (the one
+// moveSelectionToDarlings makes) gives chapterHTML the compact form of the
+// text the file holds lined. That is not an edit: the flush leaves the file
+// alone, and a change from another device is adopted, not twinned.
+test('a capture with nothing typed is not an edit', async () => {
+  const fixture = await launchProfile();
+  try {
+    const bookId = await seedBook(fixture.page, F);
+    const file = chapterFile(fixture, bookId);
+    await typeAtEndOf(fixture.page, 1, '');
+    await fixture.page.keyboard.press('Enter');
+    await fixture.page.keyboard.insertText('New line.');
+    await expect.poll(async () => (await onDisk(file)).text).toContain('<p>New line.</p>');
+    await fixture.page.evaluate(() => Promise.all(Object.values(chapterChain)));
+    const saved = await onDisk(file);
+    expect(saved.text.split('\n')).toEqual([F_LINES[0], F_LINES[1], '<p>New line.</p>', F_LINES[2], '']);
+    const compact = await fixture.page.evaluate((chId) => {
+      chapterHTML[chId] = captureBody(document.querySelector(`.chapter[data-id="${chId}"] .chapter-body`));
+      wordCache[chId] = null;
+      return chapterHTML[chId] !== savedHTML[chId];
+    }, CHAPTER);
+    expect(compact).toBe(true);
+    await flush(fixture.page);
+    expect(await onDisk(file)).toEqual(saved);
+    const theirs = [F_LINES[0], F_LINES[1], '<p>New line.</p>', '<p>Third line, from the other device.</p>', ''].join('\n');
+    await writeFile(file, theirs);
+    await fixture.page.evaluate(() => refreshFromDisk());
+    await expect(fixture.page.locator('.chapter-body p').nth(3)).toHaveText('Third line, from the other device.');
+    expect(await fixture.page.evaluate(() => book.chapterOrder)).toEqual([CHAPTER]);
+    await expect(fixture.page.locator('.chapter')).toHaveCount(1);
+  } finally { await fixture.close(); }
+});
