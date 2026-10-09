@@ -462,6 +462,31 @@ test('throwing command', async () => {
   assert.match(chapterFile(owls.id, owls.chapters[0]), /Cat/);
 });
 
+// the probe's status slot among the counters: its text, and whether it shows
+const statusSlot = () => js(`(() => {
+  const el = document.querySelector('#counters .plugin-status[data-plugin="probe"]');
+  return el && { text: el.textContent, shown: el.checkVisibility() };
+})()`);
+
+test('status', async () => {
+  assert.deepEqual(await statusSlot(), { text: 'Indexed', shown: true });
+  await js(`window.__probe.neo.status('')`);
+  assert.deepEqual(await statusSlot(), { text: '', shown: false });
+  // A new status changes the slot's text node in place: a new node would
+  // end the writer's undo run, as NEO's own counters know (app.js setText)
+  const kept = await js(`(() => {
+    const el = document.querySelector('#counters .plugin-status[data-plugin="probe"]');
+    window.__probe.neo.status('Indexed 1');
+    const node = el.firstChild;
+    window.__probe.neo.status('Indexed 2');
+    return node === el.firstChild && el.childNodes.length === 1;
+  })()`);
+  assert.equal(kept, true, 'the same text node');
+  assert.deepEqual(await statusSlot(), { text: 'Indexed 2', shown: true });
+  assert.equal(await js(`document.querySelectorAll('#counters .plugin-status').length`), 1, 'one slot per plugin');
+  assert.equal(await js(`(() => { try { window.__probe.neo.status(42); return 'set'; } catch (err) { return err.name; } })()`), 'TypeError');
+});
+
 test('broken plugin', async () => {
   assert.equal(hintAtLaunch, '', 'nothing was shown to the writer');
   const log = await logWith('plugin broken:');
@@ -477,6 +502,8 @@ test('broken plugin', async () => {
   // nor is the pane it added before it threw anywhere to be seen
   assert.equal(await js(`document.querySelector('.tab[data-tab^="plugin:broken:"]')`), null);
   assert.deepEqual(await js(`[...document.querySelectorAll('.plugin-pane')].map((el) => el === window.__probe.pane.element)`), [true]);
+  // nor its status
+  assert.equal(await js(`document.querySelector('#counters .plugin-status[data-plugin="broken"]')`), null);
   // and its command, still in the menu from its plugin.json, runs nothing
   await menuCommand('Fix Broken');
   assert.equal(await js('window.__brokenFixed'), 0);

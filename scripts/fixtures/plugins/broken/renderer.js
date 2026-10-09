@@ -1,6 +1,6 @@
-// A plugin that adds a listener, a pane and a command and then throws while
-// it activates. The host takes them away again and logs the error; NEO
-// carries on.
+// A plugin that adds a listener, a pane, a command and a status and then
+// throws while it activates. The host takes them away again and logs the
+// error; NEO carries on.
 
 'use strict';
 
@@ -14,6 +14,7 @@ NeoPlugins.register({
     neo.on('chapter-saved', () => { window.__brokenHeard++; });
     neo.addPane({ id: 'pane', title: 'Broken Pane' });
     neo.addCommand('fix', () => { window.__brokenFixed++; });
+    neo.status('Broken');
     throw new Error('broken on purpose');
   }
 });

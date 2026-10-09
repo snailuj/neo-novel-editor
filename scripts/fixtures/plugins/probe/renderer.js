@@ -25,5 +25,6 @@ NeoPlugins.register({
       window.__probe.said++;
       if (window.__probe.sayFails) return window.__probe.sayFails();
     });
+    neo.status('Indexed');
   }
 });

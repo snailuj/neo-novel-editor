@@ -1,8 +1,10 @@
 // Plugins, window half. main.js lists the plugin folders it found at launch
 // (plugins-main.js, on window.neo.plugins); this file loads each one's script
 // and stylesheet and gives the script a read-only view of NEO: the open
-// book, its chapters, and events as the writer works. app.js calls in from
-// a few hooks, each behind window.NeoPlugins, so Pocket, which runs app.js
+// book, its chapters, and events as the writer works. A plugin also gets
+// places of its own: panes (tabs beside Notes), commands in the Plugins
+// menu, and a status slot among the counters. app.js calls in from a few
+// hooks, each behind window.NeoPlugins, so Pocket, which runs app.js
 // without this file, is untouched. A plugin never writes: chapter writes go
 // through persistChapter alone.
 
@@ -12,10 +14,12 @@
   const API_VERSIONS = Object.freeze([1]);
   const EVENTS = ['book-open', 'book-close', 'chapter-change', 'chapter-saved', 'selection', 'rendered'];
 
-  // One entry per plugin that registered: { id, listeners, told, disposed },
-  // where listeners maps an event name to a Set of functions and told is
-  // the last opening the plugin heard (see tellOpen). Everything a plugin
-  // adds to NEO hangs off its entry, so disposal can take it all away.
+  // One entry per plugin that registered: { id, listeners, panes, commands,
+  // status, told, disposed }. listeners maps an event name to a Set of
+  // functions, panes a pane id to its tab and element, commands a command
+  // id to its handler; status is its slot among the counters, and told the
+  // last opening it heard (see tellOpen). Everything a plugin adds to NEO
+  // hangs off its entry, so disposal can take it all away.
   const registry = new Map();
   // each listed plugin's stylesheet <link>, by id, put in before its script
   // runs; it leaves again if the plugin is refused, fails or never loads
@@ -289,6 +293,30 @@
     call(run, undefined, (err) => log(pluginId, err));
   }
 
+  // A plugin's status: one quiet line among the counters, in a slot of its
+  // own, made the first time it has something to say. '' hides it.
+  function setStatus(entry, value) {
+    if (typeof value !== 'string') throw new TypeError(`status takes a string, not ${text(value)}`);
+    if (entry.disposed) return;
+    let slot = entry.status;
+    if (!slot) {
+      if (!value) return;
+      slot = entry.status = document.createElement('div');
+      slot.className = 'plugin-status';
+      slot.dataset.plugin = entry.id;
+      document.getElementById('counters').appendChild(slot);
+    }
+    // the text node's own text changes, as app.js's setText does for the
+    // counters: a new node would end the writer's undo run
+    const node = slot.firstChild;
+    if (node && node.nodeType === Node.TEXT_NODE && !node.nextSibling) {
+      if (node.data !== value) node.data = value;
+    } else {
+      slot.textContent = value;
+    }
+    slot.hidden = !value;
+  }
+
   // what activate(neo) receives: API 1
   function apiFor(entry) {
     return Object.freeze({
@@ -306,7 +334,8 @@
       book: readBook,
       chapter: readChapter,
       addPane: (spec) => addPane(entry, spec),
-      addCommand: (commandId, run) => addCommand(entry, commandId, run)
+      addCommand: (commandId, run) => addCommand(entry, commandId, run),
+      status: (value) => setStatus(entry, value)
     });
   }
 
@@ -324,9 +353,11 @@
       pane.tab.remove();
       pane.element.remove();
       // the writer was looking at it: back to the page
-      if (get.currentTab() === pane.name && openedBook()) get.switchTab('manuscript');
+      if (openedBook() && get.currentTab() === pane.name) get.switchTab('manuscript');
     }
     entry.panes.clear();
+    if (entry.status) entry.status.remove();
+    entry.status = null;
     dropStyle(entry.id);
   }
 
@@ -352,7 +383,7 @@
     }
     if (typeof plugin.activate !== 'function') return refuse('no activate function');
     if (registry.has(id)) return refuse('registered already');
-    const entry = { id, listeners: new Map(), panes: new Map(), commands: new Map(), told: 0, disposed: false };
+    const entry = { id, listeners: new Map(), panes: new Map(), commands: new Map(), status: null, told: 0, disposed: false };
     registry.set(id, entry);
     let result;
     try {
