@@ -163,3 +163,23 @@ test('undo of a quiet chapter delete writes the file back', async () => {
     expect((await onDisk(file)).text).toBe(F);
   } finally { await fixture.close(); }
 });
+
+// Enter twice makes a section break and a third splits the chapter. The
+// split's undo saves the chapter, which lines the page's copy, while the
+// break's undo still holds the copy as typed: the two differ only in line
+// breaks, so the second undo must not take the chapter for one changed since.
+test('undoing a break and a split sends nothing to Darlings', async () => {
+  const fixture = await launchProfile();
+  try {
+    await seedBook(fixture.page, F);
+    await typeAtEndOf(fixture.page, 2, '');
+    for (let i = 0; i < 3; i++) await fixture.page.keyboard.press('Enter');
+    expect(await fixture.page.evaluate(() => [book.chapterOrder.length, undoStack.length])).toEqual([2, 2]);
+    for (const left of [1, 0]) {
+      await fixture.page.keyboard.press('Control+z');
+      await expect.poll(() => fixture.page.evaluate(() => undoStack.length)).toBe(left);
+    }
+    await fixture.page.evaluate(() => Promise.all(Object.values(chapterChain)));
+    expect(await fixture.page.evaluate(() => ({ order: book.chapterOrder, darlings }))).toEqual({ order: [CHAPTER], darlings: [] });
+  } finally { await fixture.close(); }
+});
