@@ -29,3 +29,7 @@ pocket/www/dict/
 # working files beside the repo, never part of it
 Claude outputs/
 docs/sessions/
+
+# built TypeScript layer and Playwright output
+/plugins/hoard/
+/test-results/

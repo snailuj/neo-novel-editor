@@ -6,14 +6,18 @@
   "homepage": "https://github.com/hughhowey/neo",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
+    "start": "node tools/build.mjs && electron .",
+    "build": "node tools/build.mjs",
+    "typecheck": "tsc --noEmit",
     "test:spellcheck": "node --test scripts/spellcheck.test.js",
     "test:dashes": "node --test scripts/dashes.test.js",
     "test:words": "electron scripts/words.e2e.js",
     "test:tabs": "electron scripts/tabs.e2e.js",
     "test:caret": "electron scripts/caret.e2e.js",
     "test": "node --test \"scripts/*.test.js\"",
-    "test:e2e": "playwright test",
+    "test:unit": "node --test \"tests/unit/**/*.test.ts\"",
+    "test:e2e": "npm run build && playwright test",
+    "check": "npm run typecheck && npm run lint && npm test && npm run test:unit",
     "test:coverage": "node --test --experimental-test-coverage \"scripts/*.test.js\"",
     "lint": "oxlint",
     "release": "node scripts/release.js",
@@ -25,6 +29,7 @@
     "package:all": "electron-builder --mac --win --linux"
   },
   "build": {
+    "beforeBuild": "tools/before-build.cjs",
     "appId": "com.hughhowey.neo",
     "productName": "NEO",
     "publish": {
@@ -126,12 +131,17 @@
     ],
     "files": [
       "**/*",
+      "plugins/**",
       "!pocket/**",
       "!dist/**",
       "!Backups/**",
       "!*.md",
       "!.github/**",
       "!scripts/**",
+      "!src/**",
+      "!tools/**",
+      "!tests/**",
+      "!schemas/**",
       "!licenses/**",
       "!Claude outputs/**",
       "!dictionaries/**",
@@ -149,7 +159,9 @@
     "@playwright/test": "1.63.0",
     "electron": "43.7.6",
     "electron-builder": "^26.15.3",
-    "oxlint": "^1.86.0"
+    "esbuild": "0.28.2",
+    "oxlint": "^1.86.0",
+    "typescript": "7.0.2"
   },
   "dependencies": {
     "@farscrl/hunspell-wasm": "1.0.1",
