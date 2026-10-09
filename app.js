@@ -2992,7 +2992,17 @@ function wireChapterBody(body, chId) {
     if (!sel.rangeCount) return null;
     const r = sel.getRangeAt(0);
     const c = r.startContainer;
-    const near = c.nodeType === Node.ELEMENT_NODE ? [c.childNodes[r.startOffset], c.childNodes[r.startOffset - 1], c] : [c];
+    let near = [c];
+    if (c.nodeType === Node.ELEMENT_NODE) {
+      // past the line breaks a chapter file kept one paragraph per line
+      // puts between paragraphs
+      const blank = (n) => n && n.nodeType === Node.TEXT_NODE && !/[^\t\n\f\r ]/.test(n.data);
+      let after = c.childNodes[r.startOffset];
+      while (blank(after)) after = after.nextSibling;
+      let before = c.childNodes[r.startOffset - 1];
+      while (blank(before)) before = before.previousSibling;
+      near = [after, before, c];
+    }
     for (const n of near) {
       const el = n && (n.nodeType === Node.ELEMENT_NODE ? n : n.parentElement);
       const g = el && el.closest ? el.closest('p.ghost') : null;

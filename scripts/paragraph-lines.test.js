@@ -202,3 +202,46 @@ test('undo keeps the words typed since in a chapter the action left alone', asyn
   assert.equal(page.chapterHTML.x, paragraphLines(since));
   assert.equal(page.chapterHTML.y, '<p>Elsewhere.</p>\n');
 });
+
+// ghostAtCaret, run on a page that is only paragraphs (a ghost is an
+// outline note shown in gray) and the text nodes between them, with the
+// caret set on the body itself, before the child at `offset`
+function ghostBeside(parts, offset) {
+  const body = { nodeType: 1, childNodes: [], closest: () => null };
+  body.contains = (n) => body.childNodes.includes(n);
+  for (const part of parts) {
+    body.childNodes.push(typeof part === 'string'
+      ? { nodeType: 3, data: part, parentElement: body }
+      : { nodeType: 1, name: part.p, closest(sel) { return sel === 'p.ghost' && this.name === 'ghost' ? this : null; } });
+  }
+  body.childNodes.forEach((n, i) => {
+    n.previousSibling = body.childNodes[i - 1] || null;
+    n.nextSibling = body.childNodes[i + 1] || null;
+  });
+  const caret = { startContainer: body, startOffset: offset };
+  const ctx = vm.createContext({
+    body,
+    Node: { ELEMENT_NODE: 1, TEXT_NODE: 3 },
+    window: { getSelection: () => ({ rangeCount: 1, getRangeAt: () => caret }) }
+  });
+  const from = app.indexOf('  function ghostAtCaret() {');
+  vm.runInContext(app.slice(from, app.indexOf('  // Writing on a ghost replaces it whole', from)), ctx);
+  const found = ctx.ghostAtCaret();
+  return found ? found.name : null;
+}
+const P = { prose: { p: 'prose' }, brk: { p: 'brk' }, ghost: { p: 'ghost' } };
+
+test('a caret on the body finds the ghost after it past a line break between paragraphs', () => {
+  assert.equal(ghostBeside([P.prose, P.brk, P.ghost], 2), 'ghost');
+  assert.equal(ghostBeside([P.prose, '\n', P.brk, '\n', P.ghost, '\n'], 3), 'ghost');
+});
+
+test('a caret on the body finds the ghost before it past a line break between paragraphs', () => {
+  assert.equal(ghostBeside([P.ghost, P.prose], 1), 'ghost');
+  assert.equal(ghostBeside([P.ghost, '\n', P.prose, '\n'], 2), 'ghost');
+});
+
+test('line breaks between paragraphs with no ghost beside them find none', () => {
+  assert.equal(ghostBeside([P.prose, '\n', P.brk, '\n', P.prose, '\n'], 3), null);
+  assert.equal(ghostBeside(['\n'], 0), null);
+});
