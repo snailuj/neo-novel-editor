@@ -53,6 +53,7 @@ function wire(deps) {
   host = deps;
   found = null;
   mains = new Map();
+  failures = new WeakMap();
   // a plugin's window half calls its own main half (neo.invoke in plugins.js)
   host.ipcMain.handle('plugin:invoke', (_e, id, channel, payload) => invoke(id, channel, payload));
   // the window asks once, synchronously, before any of its code runs, and
@@ -186,6 +187,24 @@ function listenersOf(event) {
   return out;
 }
 
+// A listener that fails every time it is called would add a line to
+// neo-errors.log, a file in the synced library written on the main thread,
+// on every save. Its first failure is logged, then one a minute at most,
+// with a count of those left out, as plugins.js does in the window.
+const QUIET_MS = 60000;
+let failures = new WeakMap(); // listener -> { at, untold }
+function logFailure(entry, fn, event, err) {
+  const now = performance.now();
+  const last = failures.get(fn);
+  if (last && now - last.at < QUIET_MS) {
+    last.untold++;
+    return;
+  }
+  failures.set(fn, { at: now, untold: 0 });
+  const more = last && last.untold ? `${last.untold} more failures of this listener since its last line; the latest: ` : '';
+  host.logError(`plugin ${entry.id}: ${event}`, more + textOf(err));
+}
+
 // Calls each listener with the detail, as plugins.js does in the window:
 // one that throws, or whose promise rejects, is logged and the rest still
 // run. The detail is frozen, as every listener is handed the same object.
@@ -195,9 +214,9 @@ function dispatch(event, detail) {
     if (entry.failed) continue;
     try {
       const r = fn(detail);
-      if (r && typeof r.then === 'function') r.then(null, (err) => report(entry, event, err));
+      if (r && typeof r.then === 'function') r.then(null, (err) => logFailure(entry, fn, event, err));
     } catch (err) {
-      report(entry, event, err);
+      logFailure(entry, fn, event, err);
     }
   }
 }

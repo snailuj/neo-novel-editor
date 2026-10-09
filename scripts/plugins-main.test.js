@@ -489,6 +489,41 @@ describe('a plugin\'s main half', { concurrency: 1 }, () => {
     assert.equal(heard.length, 1, 'an unsubscribed listener hears nothing');
     assert.throws(() => first.onAfterWrite('not a function'), TypeError);
   });
+
+  // neo-errors.log sits in the synced library, and each line is written on
+  // the main thread; a chapter is saved every few seconds while the writer
+  // types
+  test('an after-write listener that fails every time is logged once, then at most once a minute with a count', async (t) => {
+    const clock = { now: 0 };
+    t.mock.method(performance, 'now', () => clock.now);
+    const app = withMains({ keeper });
+    const { logs } = wire({ appRoot: app });
+    plugins.activateMains();
+    const { host } = mainOf(app, 'keeper');
+    host.onAfterWrite(() => { throw new Error('throws every time'); });
+    host.onAfterWrite(async () => { throw new Error('rejects every time'); });
+    const writes = async (n) => {
+      for (let i = 0; i < n; i++) plugins.afterWrite('chapter', 'b', 'c');
+      await turn();
+    };
+    await writes(100);
+    assert.equal(logs.length, 2, 'the first failure of each listener');
+    assert.match(logs[0], /^\[plugin keeper: after-write\] Error: throws every time\n\s+at /);
+    assert.match(logs[1], /^\[plugin keeper: after-write\] Error: rejects every time\n\s+at /);
+    clock.now += 59999;
+    await writes(10);
+    assert.equal(logs.length, 2);
+    clock.now += 1;
+    await writes(1);
+    assert.equal(logs.length, 4);
+    assert.match(logs[2], /^\[plugin keeper: after-write\] 109 more failures of this listener since its last line; the latest: Error: throws every time\n\s+at /);
+    assert.match(logs[3], /^\[plugin keeper: after-write\] 109 more failures of this listener since its last line; the latest: Error: rejects every time\n\s+at /);
+    // a minute with none, and the next is logged as a first
+    clock.now += 60000;
+    await writes(1);
+    assert.equal(logs.length, 6);
+    assert.match(logs[4], /^\[plugin keeper: after-write\] Error: throws every time\n/);
+  });
 });
 
 describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
