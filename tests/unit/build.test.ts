@@ -37,9 +37,12 @@ test('packaging builds first', () => {
   const out = path.join(root, 'plugins', 'hoard');
   rmSync(out, { recursive: true, force: true });
   const hook = createRequire(import.meta.url)(path.join(root, pkg.build.beforeBuild));
-  // Resolves to undefined: electron-builder treats `false` as "skip the rebuild".
-  assert.equal(hook(), undefined);
-  assert.ok(existsSync(path.join(out, 'renderer.js')));
+  // electron-builder reads any falsy result as "node_modules is handled externally" and
+  // skips the dependency rebuild, so the hook must return true.
+  assert.equal(hook(), true);
+  for (const file of ['renderer.js', 'main.cjs', 'plugin.json']) {
+    assert.ok(existsSync(path.join(out, file)), `${file} is written`);
+  }
 });
 
 test('clean build', () => {
