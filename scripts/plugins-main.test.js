@@ -1189,4 +1189,17 @@ describe('the window half', () => {
     assert.match(head, /\bapp folder\b/, 'it says where those plugins load from: the app folder');
     assert.match(head, /\bnot packaged\b[^.]*\bNEO_PLUGIN_DIRS\b/, 'and, when NEO is not packaged, the folders in NEO_PLUGIN_DIRS');
   });
+
+  // go and replace find their place through rangeOfPlace, and a highlight
+  // its places through rangesOfPlaces. With rangeOfPlace no more than
+  // rangesOfPlaces for one place, a rule added to either holds for all
+  // three; a second copy of the rules could drift from the first.
+  test('rangeOfPlace is rangesOfPlaces for one place, so go, replace and highlight resolve a place alike', () => {
+    const source = fs.readFileSync(path.join(root, 'plugins.js'), 'utf8');
+    const at = source.indexOf('function rangeOfPlace(');
+    assert.ok(at >= 0, 'plugins.js defines rangeOfPlace');
+    const body = source.slice(at, at + source.slice(at).search(/\r?\n {2}\}\r?\n/));
+    assert.match(body, /\brangesOfPlaces\(\[place\]\)/, body);
+    assert.doesNotMatch(body, /\bpointIn\(|\bbodyOf\(|\bchapterOrder\b|\bcreateRange\(/, 'it finds nothing on the page itself');
+  });
 });

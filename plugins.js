@@ -274,31 +274,21 @@
     return off === 0 ? [p, 0] : null; // a paragraph with no text
   }
 
-  // The Range a place covers in the open book's chapter on the page, or
-  // null when the chapter is not there, nor the paragraph, or the place
-  // runs past the paragraph's end. Every call that takes one place uses it;
-  // rangesOfPlaces finds a highlight's many places by the same rules,
-  // written out again. A new rule goes in pointIn, which both use, or in
-  // both: "highlight and go agree on every place"
-  // (scripts/plugin-edits.e2e.js) fails when they differ.
+  // The Range one place covers, or null where rangesOfPlaces leaves it out.
+  // go and replace take their place through it and a highlight its places
+  // through rangesOfPlaces, so all three follow one set of rules.
   function rangeOfPlace(place) {
-    const book = openedBook();
-    const body = book && book.chapterOrder.includes(place.chId) ? bodyOf(place.chId) : null;
-    const p = body && body.querySelectorAll('p')[place.pIdx];
-    const start = p && pointIn(p, place.off);
-    const end = start && pointIn(p, place.off + place.len);
-    if (!end) return null;
-    const range = document.createRange();
-    range.setStart(...start);
-    range.setEnd(...end);
-    return range;
+    return rangesOfPlaces([place]).ranges[0] || null;
   }
 
-  // The Ranges of many places, by rangeOfPlace's rules (keep the two alike),
-  // with each chapter's paragraphs looked up once for all its places: a
-  // highlight can hold hundreds, and is built again on every rendered.
-  // paras keeps those lookups, by chId, for the caller to share while the
-  // page stays as it is. missed counts the places not on the page.
+  // The one way from places to the page: the Range each place covers in the
+  // open book's chapter on the page. A place is left out when its chapter
+  // is not drawn or not in the book's order, its paragraph is not there, or
+  // either end is refused by pointIn (past the paragraph's end, or inside a
+  // character). Each chapter's paragraphs are looked up once for all its
+  // places: a highlight can hold hundreds, and is built again on every
+  // rendered. paras keeps those lookups, by chId, for the caller to share
+  // while the page stays as it is. missed counts the places left out.
   function rangesOfPlaces(places, paras = new Map()) {
     const book = openedBook();
     const ranges = [];

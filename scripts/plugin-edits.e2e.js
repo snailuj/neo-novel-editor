@@ -655,9 +655,9 @@ test('inside a placeholder', async () => {
 });
 
 // go finds its place through rangeOfPlace and a highlight finds its places
-// through rangesOfPlaces, by the same rules. Each place here is one both
-// take, with the same text, or both leave out, so a rule added to one of
-// them alone fails here.
+// through rangesOfPlaces, which rangeOfPlace wraps. Each place here is one
+// both take, with the same text, or both leave out, so a second set of rules
+// for either fails here.
 test('highlight and go agree on every place', async () => {
   const [one, , three] = book.chapters;
   // A, an emoji of two UTF-16 units, an e with its accent, a space, then x
@@ -700,10 +700,10 @@ test('highlight and go agree on every place', async () => {
   const x = { chId: three, pIdx: 0, off: 5, len: 1 };
   assert.deepEqual(await verdicts(x), both('x'));
   assert.deepEqual(await verdicts(x, true), both(null), 'out of the book\'s order');
-  // half of the emoji: whether a place may split one is pointIn's to say,
-  // for both of them alike
-  const half = await verdicts({ chId: three, pIdx: 0, off: 1, len: 1 });
-  assert.equal(half.go, half.highlight, 'half of the emoji');
+  // half of the emoji: a boundary there would cut a character in two, so
+  // both refuse it
+  assert.deepEqual(await verdicts({ chId: three, pIdx: 0, off: 1, len: 1 }), both(null), 'half of the emoji');
+  assert.deepEqual(await verdicts({ chId: three, pIdx: 0, off: 2, len: 1 }), both(null), 'the other half of the emoji');
   await highlight('agree', []);
 });
 
