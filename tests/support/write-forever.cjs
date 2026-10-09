@@ -6,6 +6,10 @@
 // in turn through its chapter:write (or aux:write, to notes.html) handler until killed.
 // write-kill.test.ts SIGKILLs it mid-write and inspects what is left.
 //
+// It also stops by itself after 30 s (NEO_WRITE_FOREVER_MAX_MS overrides, for the test of
+// that limit). A round needs well under a second, but Windows does not take a child down
+// with a parent that was interrupted, and an orphan would rewrite 4 MiB files for ever.
+//
 // <dir> is a library holding one book folder; in chapter mode that book's chapters/ holds
 // one chapter, and that is the file written. --in-place first replaces writeFileDurable in
 // the vm context with fs.writeFileSync, the truncate-then-write that the durable path
@@ -16,6 +20,7 @@ const path = require('node:path');
 const { loadMain } = require('./main-loader.cjs');
 
 const SIZE = 4 * 1024 * 1024;
+const MAX_RUN_MS = Number(process.env.NEO_WRITE_FOREVER_MAX_MS) || 30000;
 
 // Exactly 4 MiB of ASCII each, differing in every byte of the body, so a file cut short or
 // part-way through a swap equals neither.
@@ -30,6 +35,7 @@ function only(names, what) {
 }
 
 function run(dir, mode, inPlace) {
+  const end = Date.now() + MAX_RUN_MS;
   const neo = loadMain();
   neo.pointAt(dir);
   const bookId = only(fs.readdirSync(dir).filter((name) => name.startsWith('book-')), 'book folder in ' + dir);
@@ -44,7 +50,7 @@ function run(dir, mode, inPlace) {
   const { A, B } = payloads();
   // synchronous, so the line is out before the first write starts
   fs.writeSync(1, 'writing\n');
-  for (;;) {
+  while (Date.now() < end) {
     write(A);
     write(B);
   }
