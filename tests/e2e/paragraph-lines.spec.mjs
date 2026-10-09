@@ -217,3 +217,37 @@ test('a capture with nothing typed is not an edit', async () => {
     await expect(fixture.page.locator('.chapter')).toHaveCount(1);
   } finally { await fixture.close(); }
 });
+
+// A ghost is an outline section note shown in gray on the page, and typing
+// on it replaces it. ghostAtCaret finds it from a caret on the body itself,
+// between paragraphs (a click in the margin, the arrow keys), and a lined
+// file puts a line break node between the *** and the ghost.
+for (const [form, gap] of [['compact', ''], ['lined', '\n']]) {
+  test(`typing at a caret on the body before a ghost writes over it, ${form}`, async () => {
+    const fixture = await launchProfile();
+    try {
+      const note = 'A note on what happens next.';
+      await seedBook(fixture.page, ['<p>First line.</p>', '<p class="scene-break" data-sec-brk="s1">***</p>', `<p class="ghost" data-sec-id="s1">${note}</p>`].join(gap) + gap);
+      const beside = await fixture.page.evaluate(({ chId, note }) => {
+        book.sectionNotes = { [chId]: [{ id: 's1', text: note }] };
+        const body = document.querySelector(`.chapter[data-id="${chId}"] .chapter-body`);
+        body.focus();
+        const at = [...body.childNodes].indexOf(body.querySelector('.scene-break')) + 1; // just after the ***
+        window.getSelection().collapse(body, at);
+        return body.childNodes[at].nodeType === Node.TEXT_NODE ? 'line break' : body.childNodes[at].className;
+      }, { chId: CHAPTER, note });
+      expect(beside).toBe(gap ? 'line break' : 'ghost');
+      await fixture.page.keyboard.type('Word');
+      expect(await fixture.page.evaluate((chId) => {
+        const body = document.querySelector(`.chapter[data-id="${chId}"] .chapter-body`);
+        const p = body.querySelector('[data-sec-id="s1"]');
+        return {
+          written: p.textContent,
+          ghost: p.classList.contains('ghost'),
+          brk: body.querySelector('.scene-break').textContent,
+          loose: [...body.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE && n.data.trim()).map((n) => n.data)
+        };
+      }, CHAPTER)).toEqual({ written: 'Word', ghost: false, brk: '***', loose: [] });
+    } finally { await fixture.close(); }
+  });
+}
