@@ -1,10 +1,14 @@
 // Builds the TypeScript layer into the plugins directory.
 //   node tools/build.mjs [--out <dir>]
+// Generates types and validators from schemas/ first, then checks src/hoard/plugin.json
+// against its schema, so a bad manifest fails the build instead of the plugin host.
 // Writes one JSON line per target: {event: 'build.target', name, ms, bytes}.
 import { build } from 'esbuild';
-import { copyFile, mkdir, stat } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, stat } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { generate } from './gen.mjs';
 import { bundles, copies } from './targets.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -25,7 +29,22 @@ async function timed(name, outfile, work) {
   console.log(JSON.stringify({ event: 'build.target', name, ms, bytes }));
 }
 
+// The manifest is read from disk and checked by the validator gen.mjs just wrote.
+async function checkManifest() {
+  const file = path.join(root, 'src', 'hoard', 'plugin.json');
+  const { validatePluginManifestV1: validate } = createRequire(import.meta.url)(
+    path.join(root, 'src', 'generated', 'validators.cjs'),
+  );
+  if (!validate(JSON.parse(await readFile(file, 'utf8')))) {
+    const why = validate.errors.map((e) => `${e.instancePath || '/'} ${e.message}`).join('; ');
+    throw new Error(`src/hoard/plugin.json is not a valid plugin manifest: ${why}`);
+  }
+}
+
 const out = outputDir(process.argv.slice(2));
+
+await generate({ root });
+await checkManifest();
 
 for (const { name, entry, outfile, options } of bundles) {
   const target = path.join(out, outfile);

@@ -1,0 +1,5 @@
+{
+  "id": "hoard",
+  "apiVersion": 0,
+  "renderer": "renderer.js"
+}

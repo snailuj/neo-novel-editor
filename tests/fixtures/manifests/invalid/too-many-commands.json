@@ -1,0 +1,75 @@
+{
+  "id": "hoard",
+  "apiVersion": 1,
+  "renderer": "renderer.js",
+  "commands": [
+    {
+      "id": "cmd-1",
+      "title": "Command 1"
+    },
+    {
+      "id": "cmd-2",
+      "title": "Command 2"
+    },
+    {
+      "id": "cmd-3",
+      "title": "Command 3"
+    },
+    {
+      "id": "cmd-4",
+      "title": "Command 4"
+    },
+    {
+      "id": "cmd-5",
+      "title": "Command 5"
+    },
+    {
+      "id": "cmd-6",
+      "title": "Command 6"
+    },
+    {
+      "id": "cmd-7",
+      "title": "Command 7"
+    },
+    {
+      "id": "cmd-8",
+      "title": "Command 8"
+    },
+    {
+      "id": "cmd-9",
+      "title": "Command 9"
+    },
+    {
+      "id": "cmd-10",
+      "title": "Command 10"
+    },
+    {
+      "id": "cmd-11",
+      "title": "Command 11"
+    },
+    {
+      "id": "cmd-12",
+      "title": "Command 12"
+    },
+    {
+      "id": "cmd-13",
+      "title": "Command 13"
+    },
+    {
+      "id": "cmd-14",
+      "title": "Command 14"
+    },
+    {
+      "id": "cmd-15",
+      "title": "Command 15"
+    },
+    {
+      "id": "cmd-16",
+      "title": "Command 16"
+    },
+    {
+      "id": "cmd-17",
+      "title": "Command 17"
+    }
+  ]
+}

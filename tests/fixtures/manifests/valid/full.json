@@ -1,0 +1,11 @@
+{
+  "id": "word-count-2",
+  "apiVersion": 2,
+  "renderer": "renderer.js",
+  "main": "main.cjs",
+  "style": "style.css",
+  "commands": [
+    { "id": "count", "title": "Count words" },
+    { "id": "reset", "title": "Reset the counter" }
+  ]
+}

@@ -8,6 +8,8 @@
   "scripts": {
     "start": "node tools/build.mjs && electron .",
     "build": "node tools/build.mjs",
+    "gen": "node tools/gen.mjs",
+    "gen:check": "node tools/gen.mjs --check",
     "typecheck": "tsc --noEmit",
     "test:spellcheck": "node --test scripts/spellcheck.test.js",
     "test:dashes": "node --test scripts/dashes.test.js",
@@ -17,7 +19,7 @@
     "test": "node --test \"scripts/*.test.js\"",
     "test:unit": "node --test \"tests/unit/**/*.test.ts\"",
     "test:e2e": "npm run build && playwright test",
-    "check": "npm run typecheck && npm run lint && npm test && npm run test:unit",
+    "check": "npm run gen:check && npm run typecheck && npm run lint && npm test && npm run test:unit",
     "test:coverage": "node --test --experimental-test-coverage \"scripts/*.test.js\"",
     "lint": "oxlint",
     "release": "node scripts/release.js",
@@ -158,9 +160,11 @@
   "devDependencies": {
     "@playwright/test": "1.63.0",
     "@types/node": "24.13.3",
+    "ajv": "8.20.0",
     "electron": "43.7.6",
     "electron-builder": "^26.15.3",
     "esbuild": "0.28.2",
+    "json-schema-to-typescript": "16.0.0",
     "oxlint": "^1.86.0",
     "typescript": "7.0.2"
   },
