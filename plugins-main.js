@@ -40,7 +40,8 @@ function validManifest(m) {
 }
 
 // { app, ipcMain, logError, appRoot, readSettings, writeSettings,
-// libraryDir }, from wire()
+// libraryDir }, from wire(). readSettings answers {} when there is no
+// settings.json yet and throws when it cannot read or parse the one there.
 let host = null;
 let found = null; // discover()'s answer, kept for the life of the process
 // Each started main half by plugin id: { id, ready, failed, handlers,
@@ -228,12 +229,15 @@ function apiFor(entry, folder) {
       if (!entry.failed) entry.handlers.set(channel, fn);
     },
     // the plugin's own object under plugins[id] in settings.json, beside
-    // NEO's settings and other plugins'
+    // NEO's settings and other plugins'. set writes the whole file back, so
+    // a file it cannot read, or one holding no object, is left as it is and
+    // the plugin gets the error
     settings: Object.freeze({
       get: () => own(host.readSettings().plugins),
       set(obj) {
         if (!isObject(obj)) throw new TypeError('settings.set needs an object');
         const settings = host.readSettings();
+        if (!isObject(settings)) throw new Error('settings.json holds no object, so settings.set leaves it as it is');
         settings.plugins = { ...(isObject(settings.plugins) ? settings.plugins : {}), [id]: obj };
         host.writeSettings(settings);
       }

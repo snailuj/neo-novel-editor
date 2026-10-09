@@ -46,7 +46,13 @@ let LIBRARY_FILE = path.join(LIBRARY_DIR, 'library.json');
 // is found. Everything about the writing stays in the library itself.
 function settingsPath() { return path.join(app.getPath('userData'), 'settings.json'); }
 function readSettings() {
-  try { return JSON.parse(fs.readFileSync(settingsPath(), 'utf8')); } catch { return {}; }
+  try { return readSettingsFile(); } catch { return {}; }
+}
+// {} before there is a settings file; a file that is there but cannot be
+// read or parsed (half synced, or locked by a scan) throws, so a caller that
+// writes it back whole never writes over settings it could not read
+function readSettingsFile() {
+  try { return JSON.parse(fs.readFileSync(settingsPath(), 'utf8')); } catch (err) { if (err.code === 'ENOENT') return {}; throw err; }
 }
 function writeSettings(obj) {
   fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });
@@ -1888,7 +1894,7 @@ ipcMain.handle('log:error', (_e, msg) => logError('renderer', msg));
 
 // plugins (plugins-main.js): plugins:list for the window, a Plugins menu,
 // and each plugin's main half (plugin:invoke, its settings, after-write)
-plugins.wire({ app, ipcMain, logError, appRoot: __dirname, readSettings, writeSettings, libraryDir: () => LIBRARY_DIR });
+plugins.wire({ app, ipcMain, logError, appRoot: __dirname, readSettings: readSettingsFile, writeSettings, libraryDir: () => LIBRARY_DIR });
 
 // One zip of the whole library per day, keeping the last 14. Cheap insurance.
 async function dailyBackup() {

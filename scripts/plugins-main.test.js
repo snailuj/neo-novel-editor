@@ -435,6 +435,18 @@ describe('a plugin\'s main half', { concurrency: 1 }, () => {
     assert.deepEqual(host.settings.get(), { colour: 'green' });
   });
 
+  test('settings.set writes nothing over a settings.json that holds no object', () => {
+    const app = withMains({ keeper });
+    const { saved } = wire({ appRoot: app });
+    plugins.activateMains();
+    const { host } = mainOf(app, 'keeper');
+    for (const settings of [[], null, 'text', 7]) {
+      saved.settings = settings;
+      assert.throws(() => host.settings.set({ colour: 'green' }), Error, String(settings));
+      assert.equal(saved.settings, settings, `${settings} is left as it is`);
+    }
+  });
+
   test('log writes errors and warnings to the error log under the plugin\'s name, the rest to the console, and refuses a level it does not know', (t) => {
     const app = withMains({ keeper });
     const { logs } = wire({ appRoot: app });
@@ -573,6 +585,27 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
     assert.deepEqual(saved.plugins, { other: { kept: true }, probe: { colour: 'green' } });
     // read by main.js, in the vm's realm, so compared as JSON
     assert.equal(JSON.stringify(host.settings.get()), '{"colour":"green"}');
+  });
+
+  // a sync client or an antivirus scan can leave settings.json half there
+  // for a moment; written back whole, it would forget the library folder
+  test('settings.json that will not parse is never written over, and one not there yet is started afresh', () => {
+    const { host } = require(probeMain);
+    const file = path.join(profile, 'userData', 'settings.json');
+    const whole = fs.readFileSync(file, 'utf8');
+    try {
+      const cut = whole.slice(0, -5);
+      fs.writeFileSync(file, cut);
+      // thrown in the vm's realm, so matched by name
+      assert.throws(() => host.settings.set({ colour: 'blue' }), { name: 'SyntaxError' });
+      assert.throws(() => host.settings.get(), { name: 'SyntaxError' });
+      assert.equal(fs.readFileSync(file, 'utf8'), cut, 'settings.json is left as it was');
+      fs.rmSync(file);
+      host.settings.set({ colour: 'blue' });
+      assert.equal(fs.readFileSync(file, 'utf8'), JSON.stringify({ plugins: { probe: { colour: 'blue' } } }, null, 2));
+    } finally {
+      fs.writeFileSync(file, whole);
+    }
   });
 
   test('chapter:write answers before after-write listeners hear of it, and one that throws fails nothing', async () => {
