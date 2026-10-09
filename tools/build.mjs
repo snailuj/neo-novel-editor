@@ -8,7 +8,7 @@ import { copyFile, mkdir, readFile, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { generate } from './gen.mjs';
+import { generate } from './generate.mjs';
 import { bundles, copies } from './targets.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -29,7 +29,7 @@ async function timed(name, outfile, work) {
   console.log(JSON.stringify({ event: 'build.target', name, ms, bytes }));
 }
 
-// The manifest is read from disk and checked by the validator gen.mjs just wrote.
+// The manifest is read from disk and checked by the validator generate.mjs just wrote.
 async function checkManifest() {
   const file = path.join(root, 'src', 'hoard', 'plugin.json');
   const { validatePluginManifestV1: validate } = createRequire(import.meta.url)(

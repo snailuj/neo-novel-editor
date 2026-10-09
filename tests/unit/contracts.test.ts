@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +11,11 @@ const gen = path.join(root, 'tools', 'gen.mjs');
 const fixtures = path.join(root, 'tests', 'fixtures', 'manifests');
 
 function runGen(...args: string[]) {
-  const run = spawnSync(process.execPath, [gen, ...args], { cwd: root, encoding: 'utf8' });
+  return runScript(gen, ...args);
+}
+
+function runScript(script: string, ...args: string[]) {
+  const run = spawnSync(process.execPath, [script, ...args], { cwd: root, encoding: 'utf8' });
   return { status: run.status, output: `${run.stdout}${run.stderr}` };
 }
 
@@ -43,6 +47,28 @@ test('drift is caught', () => {
     const { status, output } = runGen('--check', '--root', tmp);
     assert.equal(status, 1, output);
     assert.match(output, /plugin-manifest-v1\.d\.ts/);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// The CLI once ran only if import.meta.url equalled argv[1]. Node resolves symlinks for
+// the first and not the second, so reaching the script through a link made it exit 0 having
+// checked nothing, and the drift gate passed silently.
+test('check cannot be skipped by reaching the script through a link', () => {
+  const tmp = mkdtempSync(path.join(tmpdir(), 'hoard-gen-'));
+  try {
+    cpSync(path.join(root, 'schemas'), path.join(tmp, 'schemas'), { recursive: true });
+    cpSync(path.join(root, 'src', 'generated'), path.join(tmp, 'src', 'generated'), { recursive: true });
+    appendFileSync(path.join(tmp, 'src', 'generated', 'validators.cjs'), '// hand edit' + String.fromCharCode(10));
+
+    const link = path.join(tmp, 'repo-link');
+    symlinkSync(root, link, 'junction');
+    for (const script of [gen, path.join(link, 'tools', 'gen.mjs')]) {
+      const { status, output } = runScript(script, '--check', '--root', tmp);
+      assert.equal(status, 1, script + ': ' + output);
+      assert.match(output, /validators\.cjs/);
+    }
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

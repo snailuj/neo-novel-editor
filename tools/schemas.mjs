@@ -1,4 +1,4 @@
-// The one walk over schemas/, shared by gen.mjs and build.mjs.
+// The one walk over schemas/, shared by generate.mjs and build.mjs.
 // Every *.json under the schemas directory is a schema, in sorted order. Each gets a
 // type name and a validator name from its file name: hoard-ping-v1.json is HoardPingV1,
 // so validateHoardPingV1 and the type HoardPingV1.
