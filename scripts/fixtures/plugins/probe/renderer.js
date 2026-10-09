@@ -3,8 +3,9 @@
 
 'use strict';
 
-// said counts the Say Hello command; sayFails, when a test sets it, is what
-// the command returns, so the test can make it throw or reject
+// said counts runs of the Say Hello command. When a test sets sayFails, the
+// command calls it and returns its result, so the test can make the command
+// throw or reject.
 window.__probe = { activated: false, events: [], csp: [], neo: null, pane: null, said: 0, sayFails: null };
 document.addEventListener('securitypolicyviolation', (e) => {
   window.__probe.csp.push(`${e.violatedDirective} ${e.blockedURI}`);

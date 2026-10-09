@@ -1,8 +1,8 @@
 // End-to-end tests for the plugin host in the window (plugins.js), on a
 // throwaway library, with the fixture plugins in scripts/fixtures/plugins:
-// probe writes down every event and adds a pane, broken throws while it
-// activates, late registers only when asked, and missing-script has no
-// script at all.
+// probe writes down every event and adds a pane, a command and a status;
+// broken adds the same and throws while it activates; late registers only
+// when asked; and missing-script has no script at all.
 // Run with `npm run test:plugins`.
 
 'use strict';
