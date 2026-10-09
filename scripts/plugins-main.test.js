@@ -316,21 +316,23 @@ describe('the window half', () => {
 
   // plugins.js in a vm, with window.neo.plugins as given and stand-ins for
   // the page: what it would add to the page, and what it logs. reads stands
-  // in for app.js's getters.
+  // in for app.js's getters; clock.now is what performance.now() reads.
   function windowHalf(list, reads = {}) {
     const added = [];
     const logged = [];
+    const clock = { now: 0 };
     const page = { appendChild: (el) => added.push(el) };
     const context = vm.createContext({
       neo: { plugins: list, logError: (line) => logged.push(line) },
       document: { head: page, body: page, addEventListener() {}, createElement: (tag) => ({ tag }) },
       requestAnimationFrame: () => 1,
+      performance: { now: () => clock.now },
       structuredClone
     });
     context.window = context;
     vm.runInContext(fs.readFileSync(path.join(root, 'plugins.js'), 'utf8'), context, { filename: 'plugins.js' });
     const getters = { book: () => null, chapterHTML: () => undefined, currentTab: () => 'manuscript', ...reads };
-    return { NeoPlugins: context.NeoPlugins, attach: () => context.NeoPlugins.attach(getters), added, logged };
+    return { NeoPlugins: context.NeoPlugins, attach: () => context.NeoPlugins.attach(getters), added, logged, clock };
   }
 
   // the host with one listed plugin, p, registered with activate; neo is
@@ -400,6 +402,35 @@ describe('the window half', () => {
       'plugin p: (a value of type object with no text form)',
       'plugin p: Symbol(later)'
     ]);
+  });
+
+  // neo-errors.log sits in the synced library, and a selection listener is
+  // called about once a keystroke
+  test('a listener that fails every time is logged once, then at most once a minute with a count', async () => {
+    const { NeoPlugins, neo, logged, clock } = withPlugin();
+    neo.on('chapter-saved', () => { throw new Error('throws every time'); });
+    neo.on('chapter-saved', async () => { throw new Error('rejects every time'); });
+    const saves = async (n) => {
+      for (let i = 0; i < n; i++) NeoPlugins.emit('chapter-saved', { bookId: 'b', chId: 'c' });
+      await settled();
+    };
+    await saves(100);
+    assert.equal(logged.length, 2, 'the first failure of each listener');
+    assert.match(logged[0], /^plugin p: Error: throws every time\n\s+at /);
+    assert.match(logged[1], /^plugin p: Error: rejects every time\n\s+at /);
+    clock.now += 59999;
+    await saves(10);
+    assert.equal(logged.length, 2);
+    clock.now += 1;
+    await saves(1);
+    assert.equal(logged.length, 4);
+    assert.match(logged[2], /^plugin p: 109 more failures of this listener since its last line; the latest: Error: throws every time\n\s+at /);
+    assert.match(logged[3], /^plugin p: 109 more failures of this listener since its last line; the latest: Error: rejects every time\n\s+at /);
+    // a minute with none, and the next is logged as a first
+    clock.now += 60000;
+    await saves(1);
+    assert.equal(logged.length, 6);
+    assert.match(logged[4], /^plugin p: Error: throws every time\n/);
   });
 
   test('an activate whose promise rejects is logged, and the listeners it added are taken away', async () => {

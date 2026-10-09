@@ -49,6 +49,24 @@
     return out;
   }
 
+  // A listener that fails every time it is called would add a line to
+  // neo-errors.log, a file in the synced library, every frame the caret
+  // moves. Its first failure is logged, then one a minute at most, with a
+  // count of those left out.
+  const QUIET_MS = 60000;
+  const failures = new WeakMap(); // listener -> { at, untold }
+  function logFailure(entry, fn, err) {
+    const now = performance.now();
+    const last = failures.get(fn);
+    if (last && now - last.at < QUIET_MS) {
+      last.untold++;
+      return;
+    }
+    failures.set(fn, { at: now, untold: 0 });
+    const more = last && last.untold ? `${last.untold} more failures of this listener since its last line; the latest: ` : '';
+    log(entry.id, more + text(err));
+  }
+
   // Calls each listener with the detail. One that throws, or whose promise
   // rejects, is logged and the rest still run. The detail is frozen, as
   // every listener is handed the same object.
@@ -60,9 +78,9 @@
       if (entry.disposed) continue;
       try {
         const r = fn(detail);
-        if (r && typeof r.then === 'function') r.then(null, (err) => log(entry.id, err));
+        if (r && typeof r.then === 'function') r.then(null, (err) => logFailure(entry, fn, err));
       } catch (err) {
-        log(entry.id, err);
+        logFailure(entry, fn, err);
       }
     }
   }
