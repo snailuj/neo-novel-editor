@@ -32,18 +32,36 @@ test('blank lines and spaces between paragraphs come down to one line break', ()
 });
 
 // A book in memory, saved through persistChapter to a disk that only notes
-// what it is handed
+// what it is handed, and undone by structuralUndo; the page's drawing is
+// left out.
 const SLICES = [
-  ['const diskKnown = {};', '// Another device\'s version of a chapter']
+  ['const diskKnown = {};', '// Another device\'s version of a chapter'],
+  ['function mergeSidecar(', 'function writeSidecar('],
+  ['function wordsBeyond(', 'let refreshing = false;'],
+  ['function sealUndo(', '// after undoing a double-Enter break']
 ];
 function bookInMemory(chapters) {
   const writes = [];
+  const none = () => {};
   const page = vm.createContext({
     window: { neo: { writeChapter: async (bookId, chId, html) => { writes.push({ chId, html }); return true; } } },
-    book: { id: 'b', chapterOrder: Object.keys(chapters) },
+    book: { id: 'b', chapterOrder: Object.keys(chapters), chapterKinds: {}, chapterTitles: {}, chapterNotes: {}, sectionNotes: {}, looseCards: [], sceneNotes: {} },
     chapterHTML: { ...chapters },
     savedHTML: { ...chapters },
-    writing: {}
+    writing: {},
+    darlings: [],
+    stickies: [],
+    undoStack: [],
+    currentTab: 'manuscript',
+    currentChapterId: null,
+    setTimeout,
+    document: { createElement: () => ({ children: [] }) },
+    t: (text) => text,
+    captureCaret: () => null,
+    saveMeta: async () => {},
+    writeSidecar: async () => {},
+    maybeDailySnapshot: none, // snapshotStructure's day snapshot (SNAPSHOTS) is not saving's
+    restoreCaret: none, renderChapters: none, renderStickies: none, updateCounters: none, rejoinAtCaret: none, resetNativeUndo: none
   });
   for (const [from, to] of SLICES) vm.runInContext(app.slice(app.indexOf(from), app.indexOf(to)), page);
   return { page, writes };
@@ -86,4 +104,41 @@ test('a write the same as the last one still goes to disk', async () => {
   const { page, writes } = bookInMemory({ x: F });
   await page.persistChapter('x', F);
   assert.deepEqual(writes, [{ chId: 'x', html: F }]);
+});
+
+// Enter twice at a chapter's end makes a section break and a third splits
+// the chapter. Undoing the split saves the chapter, which lines the page's
+// copy, while the break's undo holds the copy as typed.
+test('undoing a section break after the chapter split it led to sends nothing to Darlings', async () => {
+  const { page } = bookInMemory({ x: F });
+  page.snapshotStructure('section break');
+  const broken = '<p>First line.</p>\n<p>Second line.</p>\n<p>Third line.</p><p class="scene-break">***</p><p><br></p>\n';
+  page.chapterHTML.x = broken;
+  page.snapshotStructure('new chapter');
+  page.chapterHTML.x = '<p>First line.</p>\n<p>Second line.</p>\n<p>Third line.</p><p class="scene-break">***</p>\n';
+  page.chapterHTML.y = '<p><br></p>';
+  page.book.chapterOrder.push('y');
+  await page.structuralUndo();
+  assert.equal(page.chapterHTML.x, paragraphLines(broken));
+  await page.structuralUndo();
+  assert.equal(JSON.stringify(page.darlings), '[]');
+  assert.equal(page.chapterHTML.x, F);
+});
+
+// A save that lands after an action, before the first edit seals its undo,
+// lines the page's copy of a chapter the action did not touch.
+test('undo keeps the words typed since in a chapter the action left alone', async () => {
+  const { page } = bookInMemory({ x: F, y: '<p>Elsewhere.</p>\n' });
+  const typed = F + '<p>Fourth.</p>';
+  page.chapterHTML.x = typed;
+  page.snapshotStructure('move');
+  page.chapterHTML.y = '<p>Moved.</p>\n<p>Elsewhere.</p>\n';
+  await page.persistChapter('x');
+  page.sealUndo(page.undoStack[0]);
+  const since = paragraphLines(typed) + '<p>Fifth.</p>';
+  page.chapterHTML.x = since;
+  await page.structuralUndo();
+  assert.equal(JSON.stringify(page.darlings), '[]');
+  assert.equal(page.chapterHTML.x, paragraphLines(since));
+  assert.equal(page.chapterHTML.y, '<p>Elsewhere.</p>\n');
 });

@@ -12375,12 +12375,15 @@ async function structuralUndo() {
   // the undo never takes away writing that came after it.
   const restored = { ...snap.chapterHTML };
   const displaced = [];
+  // a save sets the page's copy one paragraph per line (persistChapter), so
+  // copies taken either side of it differ in line breaks alone
+  const same = (a, b) => a === b || (a !== undefined && b !== undefined && paragraphLines(a) === paragraphLines(b));
   for (const chId of new Set([...Object.keys(chapterHTML), ...Object.keys(after.chapterHTML)])) {
     const cur = chapterHTML[chId];
     const was = after.chapterHTML[chId];
-    if (cur === undefined || cur === was) continue;
+    if (cur === undefined || same(cur, was)) continue;
     const textOf = (h) => String(h || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').trim();
-    if (snap.chapterHTML[chId] !== undefined && snap.chapterHTML[chId] === was) {
+    if (snap.chapterHTML[chId] !== undefined && same(snap.chapterHTML[chId], was)) {
       restored[chId] = cur; // the action left this chapter alone
     } else if (textOf(cur) && wordsBeyond(cur, restored[chId] || '')) {
       displaced.push({ chId, html: cur });
