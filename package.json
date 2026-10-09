@@ -13,6 +13,7 @@
     "test:tabs": "electron scripts/tabs.e2e.js",
     "test:caret": "electron scripts/caret.e2e.js",
     "test": "node --test \"scripts/*.test.js\"",
+    "test:e2e": "playwright test",
     "test:coverage": "node --test --experimental-test-coverage \"scripts/*.test.js\"",
     "lint": "oxlint",
     "release": "node scripts/release.js",
@@ -145,7 +146,8 @@
   "author": "Hugh Howey",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^43.0.0",
+    "@playwright/test": "1.63.0",
+    "electron": "43.7.6",
     "electron-builder": "^26.15.3",
     "oxlint": "^1.86.0"
   },
@@ -171,6 +173,6 @@
     "koffi": "2.16.3"
   },
   "allowScripts": {
-    "electron@33.4.11": true
+    "electron@43.7.6": true
   }
 }
