@@ -7,7 +7,7 @@
 
 'use strict';
 
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, Menu } = require('electron');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
@@ -407,6 +407,61 @@ test('pane', async () => {
   assert.equal(await js(`document.querySelectorAll('.tab[data-tab^="plugin:probe:"]').length`), 1);
 });
 
+// a command in the Plugins menu, clicked as the writer would
+async function menuCommand(title) {
+  const plugins = Menu.getApplicationMenu().items.find((item) => item.label === 'Plugins');
+  plugins.submenu.items.find((item) => item.label === title).click();
+  await tick(200);
+}
+const said = () => js('window.__probe.said');
+// what addCommand does with these arguments: 'bound', or the error's name and message
+const bind = (id, fn = '() => {}') => js(`(() => {
+  try { window.__probe.neo.addCommand(${str(id)}, ${fn}); return 'bound'; } catch (err) { return err.name + ': ' + err.message; }
+})()`);
+
+test('command', async () => {
+  const before = await said();
+  await menuCommand('Say Hello');
+  assert.equal(await said(), before + 1);
+});
+
+test('undeclared', async () => {
+  assert.match(await bind('nope'), /^TypeError: .*\bnope\b/);
+  // a declared command with no function to run is refused too
+  assert.match(await bind('hello', 'null'), /^TypeError: .*function/);
+});
+
+test('already bound', async () => {
+  await js('window.__again = 0');
+  assert.match(await bind('hello', '() => { window.__again++; }'), /^TypeError: .*\bhello\b/);
+  const before = await said();
+  await menuCommand('Say Hello');
+  assert.equal(await said(), before + 1, 'the first handler still runs');
+  assert.equal(await js('window.__again'), 0);
+});
+
+test('throwing command', async () => {
+  await js(`document.getElementById('hint').textContent = ''`);
+  try {
+    await js(`void (window.__probe.sayFails = () => { throw new Error('a command throws on purpose'); })`);
+    await menuCommand('Say Hello');
+    await js(`void (window.__probe.sayFails = async () => { throw new Error('a command rejects on purpose'); })`);
+    await menuCommand('Say Hello');
+  } finally {
+    await js('window.__probe.sayFails = null');
+  }
+  const log = await logWith('a command rejects on purpose');
+  assert.match(log, /plugin probe: Error: a command throws on purpose\r?\n\s+at /);
+  assert.match(log, /plugin probe: Error: a command rejects on purpose\r?\n\s+at /);
+  assert.doesNotMatch(log, /Unhandled: .*on purpose/);
+  assert.equal(await js(`document.getElementById('hint').textContent`), '', 'nothing was shown to the writer');
+  // writing goes on
+  await caretAtEnd(owls.chapters[0]);
+  await type('Cat');
+  await tick(1500);
+  assert.match(chapterFile(owls.id, owls.chapters[0]), /Cat/);
+});
+
 test('broken plugin', async () => {
   assert.equal(hintAtLaunch, '', 'nothing was shown to the writer');
   const log = await logWith('plugin broken:');
@@ -422,6 +477,10 @@ test('broken plugin', async () => {
   // nor is the pane it added before it threw anywhere to be seen
   assert.equal(await js(`document.querySelector('.tab[data-tab^="plugin:broken:"]')`), null);
   assert.deepEqual(await js(`[...document.querySelectorAll('.plugin-pane')].map((el) => el === window.__probe.pane.element)`), [true]);
+  // and its command, still in the menu from its plugin.json, runs nothing
+  await menuCommand('Fix Broken');
+  assert.equal(await js('window.__brokenFixed'), 0);
+  assert.match(await logWith('plugin broken: the Plugins menu'), /plugin broken: the Plugins menu asked for fix, and nothing is bound to it/);
 });
 
 test('a pane whose plugin fails while it shows gives way to the manuscript', async () => {

@@ -3,7 +3,9 @@
 
 'use strict';
 
-window.__probe = { activated: false, events: [], csp: [], neo: null, pane: null };
+// said counts the Say Hello command; sayFails, when a test sets it, is what
+// the command returns, so the test can make it throw or reject
+window.__probe = { activated: false, events: [], csp: [], neo: null, pane: null, said: 0, sayFails: null };
 document.addEventListener('securitypolicyviolation', (e) => {
   window.__probe.csp.push(`${e.violatedDirective} ${e.blockedURI}`);
 });
@@ -19,5 +21,9 @@ NeoPlugins.register({
     }
     window.__probe.pane = neo.addPane({ id: 'pane', title: 'Probe Pane' });
     window.__probe.pane.element.textContent = 'What the probe shows.';
+    neo.addCommand('hello', () => {
+      window.__probe.said++;
+      if (window.__probe.sayFails) return window.__probe.sayFails();
+    });
   }
 });

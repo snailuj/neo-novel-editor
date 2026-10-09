@@ -1,5 +1,8 @@
 {
   "id": "broken",
   "apiVersion": 1,
-  "renderer": "renderer.js"
+  "renderer": "renderer.js",
+  "commands": [
+    { "id": "fix", "title": "Fix Broken" }
+  ]
 }

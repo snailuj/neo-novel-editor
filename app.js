@@ -16056,6 +16056,8 @@ window.neo.onMenu(async (msg) => {
   // (styles.css); the window says when it goes in and out, whatever is open
   if (msg.type === 'fullScreen') { document.body.classList.toggle('full-screen', !!msg.value); return; }
   if ($('#keyboard-shortcuts') && msg.type !== 'help') return;
+  // a command in the Plugins menu (plugins-main.js) goes to its plugin
+  if (msg.type === 'plugin-command') { if (window.NeoPlugins) NeoPlugins.runCommand(msg.plugin, msg.command); return; }
   // a window the menu opens (⌘, for Goals, say) never stacks on one that's
   // already open: pressing it again used to pile up overlays
   const WINDOWS = ['stats', 'about', 'emailSettings', 'coverArt', 'reshelve', 'checkUpdate'];

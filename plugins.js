@@ -95,6 +95,17 @@
     log(entry.id, more + text(err));
   }
 
+  // Calls a plugin's function. What it throws, or what its promise rejects
+  // with, goes to failed and never reaches NEO.
+  function call(fn, arg, failed) {
+    try {
+      const r = fn(arg);
+      if (r && typeof r.then === 'function') r.then(null, failed);
+    } catch (err) {
+      failed(err);
+    }
+  }
+
   // Calls each listener with the detail. One that throws, or whose promise
   // rejects, is logged and the rest still run. The detail is frozen, as
   // every listener is handed the same object.
@@ -103,13 +114,7 @@
     if (detail.place) Object.freeze(detail.place);
     Object.freeze(detail);
     for (const { entry, fn } of listeners) {
-      if (entry.disposed) continue;
-      try {
-        const r = fn(detail);
-        if (r && typeof r.then === 'function') r.then(null, (err) => logFailure(entry, fn, err));
-      } catch (err) {
-        logFailure(entry, fn, err);
-      }
+      if (!entry.disposed) call(fn, detail, (err) => logFailure(entry, fn, err));
     }
   }
 
@@ -258,6 +263,32 @@
     return true;
   }
 
+  // Commands: the Plugins menu (plugins-main.js) lists those each plugin.json
+  // declares, and the plugin binds one handler to each
+  function addCommand(entry, commandId, run) {
+    const manifest = listed().find((m) => m.id === entry.id);
+    const commands = manifest && Array.isArray(manifest.commands) ? manifest.commands : [];
+    if (!commands.some((c) => c && c.id === commandId)) {
+      throw new TypeError(`the plugin.json of ${entry.id} declares no command ${text(commandId)}`);
+    }
+    if (typeof run !== 'function') throw new TypeError(`addCommand('${commandId}') needs a function`);
+    if (entry.disposed) return;
+    if (entry.commands.has(commandId)) throw new TypeError(`command ${commandId} is bound already`);
+    entry.commands.set(commandId, run);
+  }
+
+  // onMenu's hook: a click in the Plugins menu. A handler that throws or
+  // rejects is logged, every time, since the writer asked for each run.
+  function runCommand(pluginId, commandId) {
+    const entry = registry.get(pluginId);
+    const run = entry && entry.commands.get(commandId);
+    if (!run) {
+      log(pluginId, `the Plugins menu asked for ${text(commandId)}, and nothing is bound to it`);
+      return;
+    }
+    call(run, undefined, (err) => log(pluginId, err));
+  }
+
   // what activate(neo) receives: API 1
   function apiFor(entry) {
     return Object.freeze({
@@ -274,7 +305,8 @@
       },
       book: readBook,
       chapter: readChapter,
-      addPane: (spec) => addPane(entry, spec)
+      addPane: (spec) => addPane(entry, spec),
+      addCommand: (commandId, run) => addCommand(entry, commandId, run)
     });
   }
 
@@ -287,6 +319,7 @@
   function dispose(entry) {
     entry.disposed = true;
     entry.listeners.clear();
+    entry.commands.clear();
     for (const pane of entry.panes.values()) {
       pane.tab.remove();
       pane.element.remove();
@@ -319,7 +352,7 @@
     }
     if (typeof plugin.activate !== 'function') return refuse('no activate function');
     if (registry.has(id)) return refuse('registered already');
-    const entry = { id, listeners: new Map(), panes: new Map(), told: 0, disposed: false };
+    const entry = { id, listeners: new Map(), panes: new Map(), commands: new Map(), told: 0, disposed: false };
     registry.set(id, entry);
     let result;
     try {
@@ -370,5 +403,5 @@
     }
   }
 
-  window.NeoPlugins = Object.freeze({ apiVersions: API_VERSIONS, register, emit, attach, showTab });
+  window.NeoPlugins = Object.freeze({ apiVersions: API_VERSIONS, register, emit, attach, showTab, runCommand });
 })();
