@@ -3,6 +3,7 @@
   "apiVersion": 2,
   "renderer": "renderer.js",
   "main": "main.js",
+  "style": "style.css",
   "commands": [
     { "id": "hello", "title": "Say Hello" }
   ]

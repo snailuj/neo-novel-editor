@@ -1,11 +1,12 @@
 // End-to-end tests for API 2 of the plugin host (plugins.js): where the
-// writer is, going to a place and replacing the text there, on a throwaway
-// library. A place is { chId, pIdx, off, len, scroll? }, counted as
-// captureCaret counts: pIdx among the chapter's paragraphs on the page, off
-// and len in UTF-16 units across any inline elements. The fixture plugins
-// are those of scripts/fixtures/plugins: the probe, written for API 2,
-// keeps what it was handed as window.__probe.neo, and old-api is written
-// for API 1.
+// writer is, going to a place, replacing the text there and highlighting
+// places, on a throwaway library. A place is { chId, pIdx, off, len,
+// scroll? }, counted as captureCaret counts: pIdx among the chapter's
+// paragraphs on the page, off and len in UTF-16 units across any inline
+// elements. The fixture plugins are those of scripts/fixtures/plugins: the
+// probe, written for API 2, keeps what it was handed as window.__probe.neo;
+// old-api is written for API 1; and fleeting, written for API 2, registers
+// when asked, highlights, and fails.
 // Run with `npm run test:plugin-edits`.
 
 'use strict';
@@ -128,6 +129,21 @@ const undoKey = () => {
   const modifiers = [process.platform === 'darwin' ? 'meta' : 'control'];
   for (const type of ['keyDown', 'keyUp']) wc.sendInputEvent({ type, keyCode: 'z', modifiers });
 };
+
+// the probe's highlight call
+const highlight = (name, places) => js(`window.__probe.neo.highlight(${str(name)}, ${str(places)})`);
+// what CSS.highlights holds under a key: each range's text, as captureCaret
+// counts it, and whether the range lies in a chapter on the page; null when
+// the key holds nothing
+const marked = (key) => js(`(() => {
+  const h = CSS.highlights.get(${str(key)});
+  const inChapter = (node) => node.isConnected && !!(node.nodeType === Node.TEXT_NODE ? node.parentElement : node).closest('.chapter-body');
+  return h ? [...h].map((r) => ({ text: r.toString(), onPage: inChapter(r.startContainer) && inChapter(r.endContainer) })) : null;
+})()`);
+// the keys CSS.highlights holds for a plugin
+const keysOf = (id) => js(`[...CSS.highlights.keys()].filter((key) => key.startsWith(${str(`plugin-${id}-`)})).sort()`);
+// every chapter save NEO has to make, made
+const saved = () => js(`(async () => { flushAllSaves(); await Promise.allSettled(Object.values(chapterChain)); })()`);
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -537,7 +553,121 @@ test('bad input', async () => {
 test('old API', async () => {
   assert.equal(await js('window.__oldApi.activated'), true);
   assert.deepEqual(await js('[...NeoPlugins.apiVersions]'), [1, 2]);
-  assert.deepEqual(await js('[typeof window.__oldApi.neo.where, typeof window.__oldApi.neo.go, typeof window.__oldApi.neo.replace]'), ['undefined', 'undefined', 'undefined']);
+  assert.deepEqual(await js('[typeof window.__oldApi.neo.where, typeof window.__oldApi.neo.go, typeof window.__oldApi.neo.replace, typeof window.__oldApi.neo.highlight]'), ['undefined', 'undefined', 'undefined', 'undefined']);
+});
+
+// A highlight is drawn with the CSS Highlight API, which marks text without
+// touching the page: nothing reaches the chapter's HTML, its file or the
+// undo history.
+test('marks without writing', async () => {
+  const [one] = book.chapters;
+  // what earlier tests left to save is saved first
+  await saved();
+  const file = path.join(LIBRARY, book.id, 'chapters', `${one}.html`);
+  const state = async () => ({
+    ...(await js(`({
+      held: chapterHTML[${str(one)}],
+      page: document.querySelector('.chapter[data-id="${one}"] .chapter-body').innerHTML,
+      undo: undoStack.length
+    })`)),
+    mtime: fs.statSync(file).mtimeMs
+  });
+  const before = await state();
+  await highlight('claims', [{ chId: one, pIdx: 0, off: 4, len: 9 }]);
+  assert.deepEqual(await marked('plugin-probe-claims'), [{ text: 'paragraph', onPage: true }]);
+  // the probe's own stylesheet, linked once, styles it by that name
+  assert.deepEqual(await js(`[...document.styleSheets]
+    .filter((s) => (s.href || '').endsWith('/probe/style.css'))
+    .map((s) => [...s.cssRules].map((r) => r.selectorText))`), [['::highlight(plugin-probe-claims)']]);
+  await saved();
+  assert.deepEqual(await state(), before, 'the page, NEO\'s copy, the undo history and the file are as they were');
+});
+
+// Drawing the chapters again ends every Range into them; the host builds
+// them again from the places it keeps. A place no longer on the page is
+// left out, and counted on the console.
+test('survives re-render', async () => {
+  const [one, two] = book.chapters;
+  await highlight('claims', [
+    { chId: one, pIdx: 0, off: 4, len: 9 },
+    { chId: two, pIdx: 1, off: 0, len: 6 },
+    { chId: one, pIdx: 999, off: 0, len: 1 }
+  ]);
+  const both = [{ text: 'paragraph', onPage: true }, { text: 'Second', onPage: true }];
+  assert.deepEqual(await marked('plugin-probe-claims'), both);
+  const debug = await js(`(() => {
+    const lines = [];
+    const real = console.debug;
+    console.debug = (...args) => lines.push(args.join(' '));
+    try { renderChapters(); } finally { console.debug = real; }
+    return lines.filter((line) => line.startsWith('plugin probe: '));
+  })()`);
+  assert.deepEqual(await marked('plugin-probe-claims'), both);
+  assert.equal(debug.length, 1, debug.join('\n'));
+  assert.match(debug[0], /\bclaims\b.*\b1 of 3 places\b/);
+});
+
+test('clears', async () => {
+  const [one] = book.chapters;
+  const place = { chId: one, pIdx: 0, off: 4, len: 9 };
+  await highlight('claims', [place]);
+  await highlight('others', [place]);
+  await highlight('claims', []);
+  assert.deepEqual(await keysOf('probe'), ['plugin-probe-others']);
+  // a cleared name stays cleared when the chapters are drawn again
+  await js('renderChapters()');
+  assert.deepEqual(await keysOf('probe'), ['plugin-probe-others']);
+  // a plugin that marks while it activates and then fails: disposal takes
+  // every highlight it made, and no other plugin's
+  await js(`window.__registerFleeting(${str([place])})`);
+  assert.deepEqual(await keysOf('fleeting'), ['plugin-fleeting-one', 'plugin-fleeting-two']);
+  await js('window.__fleeting.fail()');
+  await tick();
+  assert.deepEqual(await keysOf('fleeting'), []);
+  assert.deepEqual(await marked('plugin-probe-others'), [{ text: 'paragraph', onPage: true }]);
+  // once disposed, it marks nothing
+  await js(`window.__fleeting.neo.highlight('three', ${str([place])})`);
+  assert.deepEqual(await keysOf('fleeting'), []);
+  await highlight('others', []);
+  assert.deepEqual(await keysOf('probe'), []);
+});
+
+// Review focus 5: a placeholder's flag is text on the page, one UTF-16
+// unit, and captureCaret counts it; a place across it marks what it counts.
+test('inside a placeholder', async () => {
+  const three = book.chapters[2];
+  await setChapter(three, '<p>Fix <span class="ph-mark" data-sid="s-probe" contenteditable="false">⚑</span> this later.</p>');
+  await highlight('claims', [{ chId: three, pIdx: 0, off: 4, len: 6 }]);
+  assert.deepEqual(await marked('plugin-probe-claims'), [{ text: '⚑ this', onPage: true }]);
+  // the caret after "this", in the text after the flag, is where the place ends
+  await js(`(() => {
+    const p = document.querySelector('.chapter[data-id="${three}"] .chapter-body p');
+    p.closest('.chapter-body').focus();
+    const r = document.createRange();
+    r.setStart(p.lastChild, 5);
+    getSelection().removeAllRanges();
+    getSelection().addRange(r);
+  })()`);
+  await tick(100);
+  assert.deepEqual(at(await where()), { chId: three, pIdx: 0, off: 10, len: 0 });
+  assert.equal((await js(`window.__probe.neo.chapter(${str(three)}).paragraphs[0]`)).slice(4, 10), '⚑ this');
+  await highlight('claims', []);
+});
+
+// A place names no book, so a highlight holds for the open book alone: it
+// goes when the book closes, and on the shelf there is nothing to mark.
+test('a book closing clears them', async () => {
+  const [one] = book.chapters;
+  const place = { chId: one, pIdx: 0, off: 4, len: 9 };
+  await highlight('claims', [place]);
+  await js('backToShelf()');
+  await tick(300);
+  assert.deepEqual(await keysOf('probe'), []);
+  await highlight('claims', [place]);
+  assert.deepEqual(await keysOf('probe'), []);
+  await js(`openBook(${str(book.id)})`);
+  await tick(500);
+  assert.deepEqual(await keysOf('probe'), [], 'the book opened again shows none of them');
 });
 
 /* ---------- runner ---------- */

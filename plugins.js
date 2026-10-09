@@ -14,6 +14,8 @@
 //   go(place)                 the writer taken there
 //   replace(place, expectedText, newText)
 //                             the text at a place rewritten, as if typed
+//   highlight(name, places)   places marked on the page under a name of its
+//                             own, kept until it is cleared (see highlight)
 // None of them writes a file: replace edits the page as typing does, and a
 // chapter reaches the disk through persistChapter alone. That is no wall.
 // A plugin's script runs in NEO's page, where window.neo, NEO's own way to
@@ -33,11 +35,12 @@
   const EVENTS = ['book-open', 'book-close', 'chapter-change', 'chapter-saved', 'selection', 'rendered'];
 
   // One entry per plugin that registered: { id, listeners, panes, commands,
-  // status, told, disposed }. listeners maps an event name to a Set of
-  // functions, panes a pane id to its tab and element, commands a command
-  // id to its handler; status is its slot among the counters, and told the
-  // last opening it heard (see tellOpen). Everything a plugin adds to NEO
-  // hangs off its entry, so disposal can take it all away.
+  // highlights, status, told, disposed }. listeners maps an event name to a
+  // Set of functions, panes a pane id to its tab and element, commands a
+  // command id to its handler, highlights a highlight's name to its places;
+  // status is its slot among the counters, and told the last opening it
+  // heard (see tellOpen). Everything a plugin adds to NEO hangs off its
+  // entry, so disposal can take it all away.
   const registry = new Map();
   // each listed plugin's stylesheet <link>, by id, put in before its script
   // runs; it leaves again if the plugin is refused, fails or never loads
@@ -194,9 +197,16 @@
       tellOpen(registry.values(), detail);
       return;
     }
+    // the chapters were drawn anew, and every Range into them ended: the
+    // highlights are built again before the plugins hear of it
+    if (event === 'rendered') repaint();
     dispatch(listenersOf(event), detail);
-    // its listeners could still read the closing book
-    if (event === 'book-close') openId = null;
+    // its listeners could still read the closing book; a place names no
+    // book, so the highlights go with it
+    if (event === 'book-close') {
+      openId = null;
+      for (const entry of registry.values()) unpaintAll(entry);
+    }
   }
 
   // A place is { chId, pIdx, off, len, scroll? }, counted as captureCaret
@@ -279,6 +289,35 @@
     range.setStart(...start);
     range.setEnd(...end);
     return range;
+  }
+
+  // The Ranges of many places, each found as rangeOfPlace finds one, but
+  // with each chapter's paragraphs looked up once for all its places: a
+  // highlight can hold hundreds, and is built again on every rendered.
+  // paras keeps those lookups, by chId, for the caller to share while the
+  // page stays as it is. missed counts the places not on the page.
+  function rangesOfPlaces(places, paras = new Map()) {
+    const book = openedBook();
+    const ranges = [];
+    let missed = 0;
+    for (const place of places) {
+      if (!paras.has(place.chId)) {
+        const body = book && book.chapterOrder.includes(place.chId) ? bodyOf(place.chId) : null;
+        paras.set(place.chId, body ? body.querySelectorAll('p') : []);
+      }
+      const p = paras.get(place.chId)[place.pIdx];
+      const start = p && pointIn(p, place.off);
+      const end = start && pointIn(p, place.off + place.len);
+      if (!end) {
+        missed++;
+        continue;
+      }
+      const range = document.createRange();
+      range.setStart(...start);
+      range.setEnd(...end);
+      ranges.push(range);
+    }
+    return { ranges, missed };
   }
 
   // The writer taken to a place: the manuscript, the place selected, and
@@ -435,6 +474,84 @@
     return change ? { ok: true } : refused('blocked');
   }
 
+  // Highlights. A plugin marks places under a name of its own, which the
+  // page's CSS highlights hold as plugin-<id>-<name>, and the plugin's own
+  // stylesheet styles with ::highlight(plugin-<id>-<name>). The CSS
+  // Highlight API marks text without touching the page, so nothing reaches
+  // the chapter's HTML, its file or the writer's undo. The host keeps the
+  // places: drawing the chapters anew ends every Range into them, so on each
+  // rendered they are built again (see emit). Between drawings the Ranges
+  // move with the writer's typing, but the places kept do not.
+  const HIGHLIGHT_NAME = /^[a-z][a-z0-9-]{0,31}$/;
+  const keyOf = (entry, name) => `plugin-${entry.id}-${name}`;
+  // Each key in use, by the plugin using it. Plugin ab's c-d and plugin
+  // ab-c's d are one key, plugin-ab-c-d: it is the first one's until it
+  // clears it.
+  const keyHolders = new Map(); // key -> entry
+
+  // the page's CSS highlights; null where there is no CSS Highlight API
+  function cssHighlights() {
+    return window.CSS && CSS.highlights && window.Highlight ? CSS.highlights : null;
+  }
+
+  // One of a plugin's highlights built from its places. A place not on the
+  // page is left out, and counted on the console rather than in
+  // neo-errors.log, a file in the synced library: this runs on every
+  // rendered. paras is rangesOfPlaces' own.
+  function paint(entry, name, paras) {
+    const store = cssHighlights();
+    const places = entry.highlights.get(name);
+    if (!store || !places) return;
+    const { ranges, missed } = rangesOfPlaces(places, paras);
+    if (missed) console.debug(`plugin ${entry.id}: highlight ${name}: ${missed} of ${places.length} places are not on the page, so they are left out`);
+    const marks = new Highlight();
+    for (const range of ranges) marks.add(range);
+    store.set(keyOf(entry, name), marks);
+  }
+
+  // every plugin's highlights built again, with each chapter's paragraphs
+  // looked up once
+  function repaint() {
+    const paras = new Map();
+    for (const entry of registry.values()) {
+      for (const name of entry.highlights.keys()) paint(entry, name, paras);
+    }
+  }
+
+  function unpaint(entry, name) {
+    const key = keyOf(entry, name);
+    entry.highlights.delete(name);
+    if (keyHolders.get(key) === entry) keyHolders.delete(key);
+    const store = cssHighlights();
+    if (store) store.delete(key);
+  }
+
+  function unpaintAll(entry) {
+    for (const name of [...entry.highlights.keys()]) unpaint(entry, name);
+  }
+
+  // highlight(name, places): the places marked under the name, in place of
+  // what it marked before; an empty list clears it. Only the open book's
+  // chapters can be marked, so with no book open nothing is kept.
+  function highlight(entry, name, places) {
+    if (typeof name !== 'string' || !HIGHLIGHT_NAME.test(name)) throw new TypeError(`a highlight's name is a lower-case name such as "claims", not ${shown(name)}`);
+    if (!Array.isArray(places)) throw new TypeError(`highlight('${name}') takes a list of places, not ${shown(places)}`);
+    const bad = places.findIndex((place) => !validPlace(place));
+    if (bad >= 0) throw new TypeError(`highlight('${name}') takes a list of places, and item ${bad} is not a place, { chId, pIdx, off, len, scroll? } with whole numbers: ${shown(places[bad])}`);
+    const key = keyOf(entry, name);
+    const holder = keyHolders.get(key);
+    if (holder && holder !== entry) throw new TypeError(`the highlight ${key} is plugin ${holder.id}'s; plugin ${entry.id} needs another name`);
+    if (entry.disposed) return;
+    if (!places.length || !openedBook()) {
+      unpaint(entry, name);
+      return;
+    }
+    // copies, so the plugin changing its own objects later changes nothing
+    entry.highlights.set(name, places.map(({ chId, pIdx, off, len }) => ({ chId, pIdx, off, len })));
+    keyHolders.set(key, entry);
+    paint(entry, name, new Map());
+  }
+
   // the open book, a copy; null on the shelf and while a shelf export
   // borrows the book
   function readBook() {
@@ -561,7 +678,8 @@
     slot.hidden = !value;
   }
 
-  // what activate(neo) receives: API 1, and where, go and replace from API 2 on
+  // what activate(neo) receives: API 1, and where, go, replace and
+  // highlight from API 2 on
   function apiFor(entry, apiVersion) {
     const api = {
       // a call to this plugin's own main half (plugins-main.js), answered
@@ -595,6 +713,8 @@
       // a plugin that failed to activate moves the writer nowhere
       api.go = (place) => go(place, entry);
       api.replace = (place, expectedText, newText) => replace(entry, place, expectedText, newText);
+      // nor marks anything
+      api.highlight = (name, places) => highlight(entry, name, places);
     }
     return Object.freeze(api);
   }
@@ -609,6 +729,7 @@
     entry.disposed = true;
     entry.listeners.clear();
     entry.commands.clear();
+    unpaintAll(entry);
     for (const pane of entry.panes.values()) {
       pane.tab.remove();
       pane.element.remove();
@@ -652,7 +773,7 @@
     }
     if (typeof plugin.activate !== 'function') return refuse('no activate function');
     if (registry.has(id)) return refuse('registered already');
-    const entry = { id, listeners: new Map(), panes: new Map(), commands: new Map(), status: null, told: 0, disposed: false };
+    const entry = { id, listeners: new Map(), panes: new Map(), commands: new Map(), highlights: new Map(), status: null, told: 0, disposed: false };
     registry.set(id, entry);
     let result;
     try {

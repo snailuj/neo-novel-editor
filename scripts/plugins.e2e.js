@@ -2,8 +2,9 @@
 // throwaway library, with the fixture plugins in scripts/fixtures/plugins:
 // probe writes down every event and adds a pane, a command and a status;
 // broken adds the same and throws while it activates; late registers only
-// when asked; missing-script has no script at all; and old-api, written for
-// API 1, adds nothing (scripts/plugin-edits.e2e.js reads what it was handed).
+// when asked; missing-script has no script at all; old-api, written for
+// API 1, adds nothing (scripts/plugin-edits.e2e.js reads what it was handed);
+// and fleeting registers only when scripts/plugin-edits.e2e.js asks.
 // Run with `npm run test:plugins`.
 
 'use strict';

@@ -1,0 +1,6 @@
+/* The probe's stylesheet: how it shows the passages it highlights as
+   claims (scripts/plugin-edits.e2e.js). */
+
+::highlight(plugin-probe-claims) {
+  background-color: rgba(255, 196, 0, 0.35);
+}

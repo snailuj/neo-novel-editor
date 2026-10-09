@@ -82,7 +82,7 @@ describe('plugin discovery', { concurrency: 1 }, () => {
     const probe = find('probe');
     assert.ok(probe, 'probe is listed');
     assert.equal(probe.rendererUrl, 'scripts/fixtures/plugins/probe/renderer.js');
-    assert.equal(probe.styleUrl, null);
+    assert.equal(probe.styleUrl, 'scripts/fixtures/plugins/probe/style.css');
     assert.equal(probe.mainPath, path.join(root, fixtures, 'probe', 'main.js'));
   });
 
@@ -1088,13 +1088,49 @@ describe('the window half', () => {
     return { ...host, neo };
   }
 
-  test('API 2 adds where, go and replace; a plugin written for API 1 is handed none of them', () => {
+  test('API 2 adds where, go, replace and highlight; a plugin written for API 1 is handed none of them', () => {
     const { NeoPlugins, neo } = bothApis();
     assert.deepEqual([...NeoPlugins.apiVersions], [1, 2]);
-    assert.deepEqual(Object.keys(neo.api2).filter((name) => !(name in neo.api1)), ['where', 'go', 'replace']);
+    assert.deepEqual(Object.keys(neo.api2).filter((name) => !(name in neo.api1)), ['where', 'go', 'replace', 'highlight']);
     assert.equal(neo.api1.where, undefined);
     assert.equal(neo.api1.go, undefined);
     assert.equal(neo.api1.replace, undefined);
+    assert.equal(neo.api1.highlight, undefined);
+  });
+
+  test('highlight throws for a name, a list or a place that is not one', () => {
+    const { neo } = bothApis();
+    const place = { chId: 'c1', pIdx: 0, off: 0, len: 1 };
+    for (const name of [undefined, 7, '', 'Claims', '9lives', 'a b', 'a:b', 'x'.repeat(33)]) {
+      assert.throws(() => neo.api2.highlight(name, [place]), { name: 'TypeError', message: /\bname\b/ }, String(name));
+    }
+    for (const places of [undefined, null, place, 'c1', { length: 0 }]) {
+      assert.throws(() => neo.api2.highlight('claims', places), { name: 'TypeError', message: /\blist of places\b/ }, String(places));
+    }
+    assert.throws(() => neo.api2.highlight('claims', [place, { ...place, len: -1 }]), { name: 'TypeError', message: /\bitem 1 is not a place\b.*"len":-1/ });
+    for (const name of ['claims', 'a', 'x'.repeat(32), 'a-1']) {
+      assert.doesNotThrow(() => neo.api2.highlight(name, [place, { ...place, scroll: 40 }]), name);
+      assert.doesNotThrow(() => neo.api2.highlight(name, []), name);
+    }
+  });
+
+  // Plugin ab's highlight c-d and plugin ab-c's d would both be
+  // plugin-ab-c-d: the second to ask is refused, so neither clears or
+  // disposes of the other's marks.
+  test('a highlight\'s key belongs to the plugin that holds it until that plugin clears it', () => {
+    const book = { id: 'owls', chapterOrder: ['c1'] };
+    const host = windowHalf(['ab', 'ab-c'].map((id) => ({ id, apiVersion: 2, rendererUrl: `plugins/${id}/renderer.js`, styleUrl: null })), { book: () => book });
+    host.attach();
+    host.NeoPlugins.emit('book-open', { bookId: 'owls' });
+    const neo = {};
+    for (const id of ['ab', 'ab-c']) host.NeoPlugins.register({ id, apiVersion: 2, activate(api) { neo[id] = api; } });
+    const places = [{ chId: 'c1', pIdx: 0, off: 0, len: 1 }];
+    neo.ab.highlight('c-d', places);
+    assert.throws(() => neo['ab-c'].highlight('d', places), { name: 'TypeError', message: /plugin-ab-c-d\b.*\bab\b/ });
+    neo.ab.highlight('c-d', places);
+    neo.ab.highlight('c-d', []);
+    assert.doesNotThrow(() => neo['ab-c'].highlight('d', places));
+    assert.throws(() => neo.ab.highlight('c-d', places), { name: 'TypeError', message: /plugin-ab-c-d\b.*\bab-c\b/ });
   });
 
   test('a place is captureCaret\'s shape with len, scroll optional, its numbers whole and never negative', () => {
