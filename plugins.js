@@ -207,6 +207,57 @@
     return { id: chId, html, paragraphs: [...inert.content.querySelectorAll('p')].map((p) => p.textContent) };
   }
 
+  // A pane is a plugin's own tab beside Notes, Outline and Darlings, named
+  // plugin:<plugin>:<pane>, with an element on the same paper as theirs for
+  // the plugin to fill. switchTab asks showTab first, so NEO never reads or
+  // writes a file for a pane.
+  const PANE_ID = /^[a-z][a-z0-9-]{0,31}$/;
+  function addPane(entry, spec) {
+    const { id, title } = spec || {};
+    if (typeof id !== 'string' || !PANE_ID.test(id)) throw new TypeError(`a pane's id is a lower-case name such as "notes-index", not ${text(id)}`);
+    if (typeof title !== 'string' || !title.trim()) throw new TypeError(`pane ${id} needs a title`);
+    if (entry.panes.has(id)) throw new TypeError(`pane ${id} is added already`);
+    const element = document.createElement('div');
+    if (entry.disposed) return Object.freeze({ element });
+    const name = `plugin:${entry.id}:${id}`;
+    const tab = document.createElement('div');
+    tab.className = 'tab';
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', 'false');
+    tab.tabIndex = 0;
+    tab.dataset.tab = name;
+    tab.textContent = title;
+    tab.addEventListener('click', () => get.switchTab(name));
+    // Enter or Space opens it, as they open NEO's own tabs
+    tab.addEventListener('keydown', (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || (e.key !== 'Enter' && e.key !== ' ')) return;
+      e.preventDefault();
+      tab.click();
+    });
+    element.className = 'plugin-pane';
+    element.hidden = true;
+    document.getElementById('tabs').appendChild(tab);
+    document.getElementById('aux-paper').appendChild(element);
+    entry.panes.set(id, { name, title, tab, element });
+    return Object.freeze({ element });
+  }
+
+  // switchTab's hook, on every switch away from the manuscript: every pane
+  // is hidden but the one named, which is shown under its title. False when
+  // the tab is not a pane, for switchTab to go on with its own.
+  function showTab(name) {
+    let shown = null;
+    for (const entry of registry.values()) {
+      for (const pane of entry.panes.values()) {
+        pane.element.hidden = pane.name !== name;
+        if (pane.name === name) shown = pane;
+      }
+    }
+    if (!shown) return false;
+    document.getElementById('aux-title').textContent = shown.title;
+    return true;
+  }
+
   // what activate(neo) receives: API 1
   function apiFor(entry) {
     return Object.freeze({
@@ -222,7 +273,8 @@
         };
       },
       book: readBook,
-      chapter: readChapter
+      chapter: readChapter,
+      addPane: (spec) => addPane(entry, spec)
     });
   }
 
@@ -235,6 +287,13 @@
   function dispose(entry) {
     entry.disposed = true;
     entry.listeners.clear();
+    for (const pane of entry.panes.values()) {
+      pane.tab.remove();
+      pane.element.remove();
+      // the writer was looking at it: back to the page
+      if (get.currentTab() === pane.name && openedBook()) get.switchTab('manuscript');
+    }
+    entry.panes.clear();
     dropStyle(entry.id);
   }
 
@@ -260,7 +319,7 @@
     }
     if (typeof plugin.activate !== 'function') return refuse('no activate function');
     if (registry.has(id)) return refuse('registered already');
-    const entry = { id, listeners: new Map(), told: 0, disposed: false };
+    const entry = { id, listeners: new Map(), panes: new Map(), told: 0, disposed: false };
     registry.set(id, entry);
     let result;
     try {
@@ -311,5 +370,5 @@
     }
   }
 
-  window.NeoPlugins = Object.freeze({ apiVersions: API_VERSIONS, register, emit, attach });
+  window.NeoPlugins = Object.freeze({ apiVersions: API_VERSIONS, register, emit, attach, showTab });
 })();

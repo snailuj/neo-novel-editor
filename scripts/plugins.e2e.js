@@ -1,7 +1,8 @@
 // End-to-end tests for the plugin host in the window (plugins.js), on a
 // throwaway library, with the fixture plugins in scripts/fixtures/plugins:
-// probe writes down every event, broken throws while it activates, late
-// registers only when asked, and missing-script has no script at all.
+// probe writes down every event and adds a pane, broken throws while it
+// activates, late registers only when asked, and missing-script has no
+// script at all.
 // Run with `npm run test:plugins`.
 
 'use strict';
@@ -344,6 +345,68 @@ test('a shelf export tells the plugins nothing; the save flushed on the way to t
   await tick(300);
 });
 
+// what the writer sees of the probe's pane, and of the tabs around it
+const paneView = () => js(`(() => {
+  const tab = document.querySelector('.tab[data-tab="plugin:probe:pane"]');
+  const pane = window.__probe.pane.element;
+  const editor = document.getElementById('aux-editor');
+  return {
+    tab: tab && tab.textContent,
+    active: !!tab && tab.classList.contains('active') && tab.getAttribute('aria-selected') === 'true',
+    pane: pane.checkVisibility() ? pane.textContent : null,
+    title: document.getElementById('aux-title').checkVisibility() ? document.getElementById('aux-title').textContent : null,
+    notes: editor.checkVisibility() ? editor.textContent : null,
+    manuscript: document.getElementById('paper').checkVisibility()
+  };
+})()`);
+const clickTab = async (name, ms = 300) => {
+  await js(`document.querySelector('.tab[data-tab="${name}"]').click()`);
+  await tick(ms);
+};
+
+// a snapshot shown on Darlings (SNAPSHOTS in app.js) goes when another tab
+// opens, a pane included, as it does for NEO's own tabs
+test('a pane hides a snapshot shown on Darlings', async () => {
+  const name = await js(`takeSnapshot('k').then((r) => r.snap.name)`);
+  await clickTab('darlings');
+  await js(`showSnapshot(${str(name)})`);
+  assert.equal(await js(`document.getElementById('snap-view').checkVisibility()`), true);
+  await clickTab('plugin:probe:pane');
+  assert.deepEqual(await js(`({ shown: snapShown, view: document.getElementById('snap-view').checkVisibility() })`), { shown: null, view: false });
+  await clickTab('manuscript');
+});
+
+test('pane', async () => {
+  await js(`window.neo.writeAux(${str(owls.id)}, 'notes', '<p>Notes about owls.</p>')`);
+  await clickTab('plugin:probe:pane');
+  assert.equal(await js('currentTab'), 'plugin:probe:pane');
+  assert.deepEqual(await paneView(), {
+    tab: 'Probe Pane', active: true, pane: 'What the probe shows.', title: 'Probe Pane', notes: null, manuscript: false
+  });
+  assert.equal(await js(`window.__probe.pane.element.parentElement.id`), 'aux-paper');
+  // Notes hides the pane and shows its own title and text
+  await clickTab('notes', 600);
+  assert.deepEqual(await paneView(), {
+    tab: 'Probe Pane', active: false, pane: null, title: 'Notes', notes: 'Notes about owls.', manuscript: false
+  });
+  // and so does the manuscript
+  await clickTab('plugin:probe:pane');
+  assert.equal((await paneView()).pane, 'What the probe shows.');
+  await clickTab('manuscript');
+  assert.deepEqual(await paneView(), {
+    tab: 'Probe Pane', active: false, pane: null, title: null, notes: null, manuscript: true
+  });
+  // NEO never read or wrote a file for the pane
+  await js('flushAllSaves()');
+  await tick(300);
+  assert.deepEqual(fs.readdirSync(path.join(LIBRARY, owls.id)).filter((name) => /^plugin/i.test(name)), []);
+  // an id that is not a lower-case name, no title, or an id used already
+  const refused = await js(`[{ id: 'Bad', title: 'Bad' }, { id: 'a:b', title: 'Colon' }, { id: 'untitled' }, { id: 'pane', title: 'Again' }, null]
+    .map((spec) => { try { window.__probe.neo.addPane(spec); return 'added'; } catch (err) { return err.name; } })`);
+  assert.deepEqual(refused, ['TypeError', 'TypeError', 'TypeError', 'TypeError', 'TypeError']);
+  assert.equal(await js(`document.querySelectorAll('.tab[data-tab^="plugin:probe:"]').length`), 1);
+});
+
 test('broken plugin', async () => {
   assert.equal(hintAtLaunch, '', 'nothing was shown to the writer');
   const log = await logWith('plugin broken:');
@@ -356,6 +419,26 @@ test('broken plugin', async () => {
   assert.deepEqual((await heard('chapter-saved')).pop(), ['chapter-saved', { bookId: owls.id, chId: owls.chapters[0] }]);
   assert.match(chapterFile(owls.id, owls.chapters[0]), /Fox/);
   assert.equal(await js('window.__brokenHeard'), 0);
+  // nor is the pane it added before it threw anywhere to be seen
+  assert.equal(await js(`document.querySelector('.tab[data-tab^="plugin:broken:"]')`), null);
+  assert.deepEqual(await js(`[...document.querySelectorAll('.plugin-pane')].map((el) => el === window.__probe.pane.element)`), [true]);
+});
+
+test('a pane whose plugin fails while it shows gives way to the manuscript', async () => {
+  // missing-script is listed, but its script never loaded: its id is free
+  await js(`NeoPlugins.register({ id: 'missing-script', apiVersion: 1, async activate(neo) {
+    neo.addPane({ id: 'later', title: 'Fails Later' });
+    await new Promise((resolve, reject) => { window.__failLater = reject; });
+  } })`);
+  await clickTab('plugin:missing-script:later');
+  assert.equal(await js('currentTab'), 'plugin:missing-script:later');
+  await js(`window.__failLater(new Error('fails while its pane shows'))`);
+  await tick(300);
+  assert.match(await logWith('fails while its pane shows'), /plugin missing-script: Error: fails while its pane shows/);
+  assert.equal(await js('currentTab'), 'manuscript');
+  assert.equal(await js(`document.querySelector('.tab[data-tab="plugin:missing-script:later"]')`), null);
+  assert.equal(await js(`document.querySelector('.tab[data-tab="manuscript"]').classList.contains('active')`), true);
+  assert.equal((await paneView()).manuscript, true);
 });
 
 test('listeners that throw or reject', async () => {

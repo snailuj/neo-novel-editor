@@ -3,7 +3,7 @@
 
 'use strict';
 
-window.__probe = { activated: false, events: [], csp: [], neo: null };
+window.__probe = { activated: false, events: [], csp: [], neo: null, pane: null };
 document.addEventListener('securitypolicyviolation', (e) => {
   window.__probe.csp.push(`${e.violatedDirective} ${e.blockedURI}`);
 });
@@ -17,5 +17,7 @@ NeoPlugins.register({
     for (const name of ['book-open', 'book-close', 'chapter-change', 'chapter-saved', 'selection', 'rendered']) {
       neo.on(name, (detail) => window.__probe.events.push([name, detail]));
     }
+    window.__probe.pane = neo.addPane({ id: 'pane', title: 'Probe Pane' });
+    window.__probe.pane.element.textContent = 'What the probe shows.';
   }
 });

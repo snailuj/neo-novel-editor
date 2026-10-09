@@ -7885,6 +7885,8 @@ function switchTab(name) {
   snapShown = null;
   if (window.CSS && CSS.highlights) CSS.highlights.delete('neo-snap-gone');
   if ($('#snap-view')) { $('#snap-view').hidden = true; $('#snap-view').innerHTML = ''; }
+  // a plugin's pane (plugins.js) shows its own element; any other hides them all
+  if (window.NeoPlugins && NeoPlugins.showTab(name)) { returnTo(); findHere(); return; }
   if (name === 'darlings') {
     $('#aux-title').textContent = t('Darlings');
     dList.hidden = false;
