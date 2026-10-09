@@ -158,6 +158,18 @@ test('a capture of the page with nothing typed leaves another device\'s change t
   assert.deepEqual(writes, []);
 });
 
+// another device's book.json keeps only the chapters it has, plus those
+// holding words this device has not saved yet
+test('a capture of the page with nothing typed lets another device remove the chapter', async () => {
+  const { page } = bookInMemory({ x: F, y: F });
+  page.chapterHTML.y = ENTERED;
+  await page.persistChapter('y');
+  page.chapterHTML.y = ENTERED;
+  page.window.neo.readBookMeta = async () => ({ ...JSON.parse(JSON.stringify(page.book)), chapterOrder: ['x'] });
+  await page.refreshFromDisk();
+  assert.deepEqual([...page.book.chapterOrder], ['x']);
+});
+
 // structural undo hands back chapters whose files the action deleted, and
 // savedHTML still holds their last write
 test('a write the same as the last one still goes to disk', async () => {
