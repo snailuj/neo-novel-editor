@@ -76,6 +76,9 @@ interface NeoApi {
   /**
    * Calls the plugin's own main half: resolves with what its handler for the channel
    * returns, and rejects with its error. A channel matches ^[a-z][a-z0-9.-]{0,63}$.
+   * The plugin's id is filled in for it, which prevents mistakes but is no wall: every
+   * plugin's script runs in NEO's page, and any of them can reach any main half.
+   * Rejects without calling when the plugin is not active (its activate failed).
    */
   invoke(channel: string, payload?: unknown): Promise<unknown>;
 }
@@ -112,9 +115,13 @@ interface NeoMainHost {
   /**
    * Answers neo.invoke(channel, payload) from this plugin's window half. Throws
    * TypeError for a name that is no channel or a channel that has a handler already.
+   * Any script in NEO's page can reach the handler, not only this plugin's window half.
    */
   handle(channel: string, fn: (payload: unknown) => unknown): void;
-  /** The plugin's own object under plugins[id] in NEO's settings.json. */
+  /**
+   * The plugin's own object under plugins[id] in NEO's settings.json. Both throw when
+   * settings.json is there but cannot be read or parsed; set then writes nothing.
+   */
   readonly settings: {
     get(): Record<string, unknown>;
     set(settings: Record<string, unknown>): void;
