@@ -154,7 +154,12 @@ function menuItems(send, label = 'Plugins') {
 }
 
 // A plugin's main half: what its activate(host) receives, the IPC it
-// answers, and the events it hears. A plugin reaches only its own half.
+// answers, and the events it hears. plugin:invoke routes on the id the
+// window sends, and nothing checks that the caller is that plugin: every
+// plugin's script runs in the page beside NEO's own, and any of them can
+// call window.neo.pluginInvoke with another plugin's id. The id keeps a
+// plugin from reaching another's half by mistake, not on purpose, so every
+// installed plugin is trusted with every main half.
 
 const CHANNEL = /^[a-z][a-z0-9.-]{0,63}$/;
 const LOG_LEVELS = ['error', 'warn', 'info', 'debug'];

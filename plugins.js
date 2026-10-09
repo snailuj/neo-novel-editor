@@ -321,8 +321,10 @@
   function apiFor(entry) {
     return Object.freeze({
       // a call to this plugin's own main half (plugins-main.js), answered
-      // by the handler it took for the channel. The id is the caller's, so
-      // no plugin reaches another's half.
+      // by the handler it took for the channel. The id filled in here keeps
+      // a plugin from reaching another's half by mistake. It is no wall:
+      // every plugin's script runs in this page and can call
+      // window.neo.pluginInvoke with any id.
       async invoke(channel, payload) {
         if (entry.disposed) throw new Error(`plugin ${entry.id} is not active, so it cannot invoke ${channel}`);
         return window.neo.pluginInvoke(entry.id, channel, payload);
