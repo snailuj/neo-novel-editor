@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "What highlight(name, places) takes, version 1, as one object: the highlight's name, kept as plugin-<id>-<name> among the page's CSS highlights, and the places it marks. An empty list clears it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "places"],
+  "properties": {
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$" },
+    "places": { "type": "array", "items": { "$ref": "place-v1.json" } }
+  }
+}

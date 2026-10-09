@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "A place in the open book, version 1, as where() gives it, go(place) takes it and the selection event sends it. It is counted as captureCaret counts: pIdx indexes the chapter's paragraphs on the page, off and len are UTF-16 units of their text across any inline elements, and a place lies inside one paragraph. scroll, when given, is the page's scrollTop.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["chId", "pIdx", "off", "len"],
+  "properties": {
+    "chId": { "type": "string", "minLength": 1 },
+    "pIdx": { "type": "integer", "minimum": 0 },
+    "off": { "type": "integer", "minimum": 0 },
+    "len": { "type": "integer", "minimum": 0 },
+    "scroll": { "type": "number", "minimum": 0 }
+  }
+}
