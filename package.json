@@ -16,6 +16,7 @@
     "test:words": "electron scripts/words.e2e.js",
     "test:tabs": "electron scripts/tabs.e2e.js",
     "test:caret": "electron scripts/caret.e2e.js",
+    "test:plugins": "electron scripts/plugins.e2e.js",
     "test": "node --test \"scripts/*.test.js\"",
     "test:unit": "node --test \"tests/unit/**/*.test.ts\"",
     "test:e2e": "npm run build && playwright test",

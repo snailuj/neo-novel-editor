@@ -290,3 +290,67 @@ describe('the Plugins menu', { concurrency: 1 }, () => {
     }
   });
 });
+
+describe('the window half', () => {
+  // Pocket runs app.js without plugins.js, so each call app.js makes into the
+  // plugin host stands behind a check that the host is there
+  const unguarded = (source) => source.split(/\r?\n/).flatMap((line, i) => [...line.matchAll(/\bNeoPlugins\./g)]
+    .filter((m) => !/\bif \(window\.NeoPlugins(\)| &&)/.test(line.slice(0, m.index)))
+    .map(() => `app.js:${i + 1}: ${line.trim()}`));
+
+  test('hooks are guarded: every NeoPlugins call in app.js sits behind window.NeoPlugins', () => {
+    const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
+    assert.ok((app.match(/\bNeoPlugins\./g) || []).length >= 7, 'app.js calls the plugin host from its hooks');
+    assert.deepEqual(unguarded(app), []);
+  });
+
+  test('the guard check finds a call left unguarded', () => {
+    const source = [
+      'if (window.NeoPlugins) NeoPlugins.emit("a");',
+      'NeoPlugins.emit("b");',
+      'window.NeoPlugins.emit("c");',
+      'if (!window.NeoPlugins) NeoPlugins.emit("d");'
+    ].join('\n');
+    assert.deepEqual(unguarded(source).map((line) => line.split(': ')[0]), ['app.js:2', 'app.js:3', 'app.js:4']);
+  });
+
+  // plugins.js in a vm, with window.neo.plugins as given and stand-ins for
+  // the page: what it would add to the page, and what it logs
+  function windowHalf(list) {
+    const added = [];
+    const logged = [];
+    const page = { appendChild: (el) => added.push(el) };
+    const context = vm.createContext({
+      neo: { plugins: list, logError: (line) => logged.push(line) },
+      document: { head: page, body: page, addEventListener() {}, createElement: (tag) => ({ tag }) },
+      requestAnimationFrame: () => 1
+    });
+    context.window = context;
+    vm.runInContext(fs.readFileSync(path.join(root, 'plugins.js'), 'utf8'), context, { filename: 'plugins.js' });
+    const reads = { book: () => null, chapterHTML: () => undefined, currentTab: () => 'manuscript' };
+    return { NeoPlugins: context.NeoPlugins, attach: () => context.NeoPlugins.attach(reads), added, logged };
+  }
+
+  test('no list, one that is not an array, or an empty one: no plugins, and nothing breaks', () => {
+    for (const list of [undefined, null, {}, 'probe', []]) {
+      const host = windowHalf(list);
+      host.attach();
+      assert.deepEqual(host.added, [], String(list));
+      let activated = false;
+      host.NeoPlugins.register({ id: 'probe', apiVersion: 1, activate() { activated = true; } });
+      assert.equal(activated, false, String(list));
+      assert.match(host.logged[0], /^plugin probe: .*not activated/, String(list));
+    }
+  });
+
+  test('a listed plugin written for an API this NEO does not know is refused', () => {
+    const host = windowHalf([{ id: 'ahead', apiVersion: 3, rendererUrl: 'plugins/ahead/renderer.js', styleUrl: null }]);
+    host.attach();
+    assert.deepEqual(host.added.map((el) => [el.tag, el.src]), [['script', 'plugins/ahead/renderer.js']]);
+    let activated = false;
+    host.NeoPlugins.register({ id: 'ahead', apiVersion: 3, activate() { activated = true; } });
+    assert.equal(activated, false);
+    assert.equal(host.logged.length, 1);
+    assert.match(host.logged[0], /^plugin ahead: apiVersion 3\b.*knows 1\b.*not activated/);
+  });
+});

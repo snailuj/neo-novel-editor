@@ -2500,6 +2500,8 @@ async function openBook(bookId) {
   const sideDarlings = await window.neo.readJSON(bookId, 'darlings', []);
   if (gen !== openGeneration) return;
   tabPlaces = {}; // a fresh book starts with fresh places
+  // the open book closes first; a book a shelf export borrowed meanwhile was never open
+  if (window.NeoPlugins && book && !shelfExport) NeoPlugins.emit('book-close', { bookId: book.id });
   book = meta;
   showWindowTitle();
   snapShown = null;
@@ -2516,6 +2518,7 @@ async function openBook(bookId) {
   darlings = sideDarlings;
   sidecarBase[bookId + '/stickies'] = JSON.stringify(stickies);
   sidecarBase[bookId + '/darlings'] = JSON.stringify(darlings);
+  if (window.NeoPlugins) NeoPlugins.emit('book-open', { bookId });
 
   $('#bookshelf-view').hidden = true;
   $('#editor-view').hidden = false;
@@ -2703,6 +2706,7 @@ function renderChapters() {
     if (document.fonts) document.fonts.load('1em "Courier Prime"').then(() => spSchedule(0)).catch(() => {});
   }
   renderNav();
+  if (window.NeoPlugins) NeoPlugins.emit('rendered', { bookId: book.id });
 }
 
 async function deleteChapterToDarlings(chId, quiet = false) {
@@ -11207,6 +11211,7 @@ function persistChapter(chId, html) {
     }
     if (r && typeof r.conflict === 'string') throw new Error('chapter keeps changing on disk');
     knowDisk(bookId, chId, html);
+    if (window.NeoPlugins) NeoPlugins.emit('chapter-saved', { bookId, chId });
     return r;
   };
   const p = (chapterChain[key] || Promise.resolve()).catch(() => {}).then(run);
@@ -11265,6 +11270,7 @@ function scheduleChapterSave(chId) {
   maybeDailySnapshot(); // SNAPSHOTS: the first change of the day keeps the day's start
   clearTimeout(saveTimers[chId]);
   const bookId = book && book.id;
+  if (window.NeoPlugins && bookId) NeoPlugins.emit('chapter-change', { bookId, chId });
   saveTimers[chId] = setTimeout(() => {
     if (!book) return; // the book closed before the timer fired; flushAllSaves already wrote it
     // another book is open, or the chapter was deleted or merged into the one
@@ -12202,6 +12208,7 @@ setInterval(() => { if (book) flushAllSaves('tick'); }, 20000);
 async function backToShelf() {
   if (reading) stopReadAloud(false);
   flushAllSaves();
+  if (window.NeoPlugins && book) NeoPlugins.emit('book-close', { bookId: book.id });
   tabPlaces = {};
   book = null;
   showWindowTitle();
@@ -16402,3 +16409,8 @@ loadLibrary().then(() => {
   focusLevel = FOCUS_LEVELS.includes(library.focus) ? library.focus : 'off';
   applyFocus();
 });
+
+// Plugins (plugins.js) come last, once all of NEO is defined. Getters,
+// because book, chapterHTML and currentTab are reassigned; a shelf export
+// borrows book for a moment, and no plugin should see that book as open.
+if (window.NeoPlugins) NeoPlugins.attach({ book: () => (shelfExport ? null : book), chapterHTML: (id) => chapterHTML[id], currentTab: () => currentTab, switchTab, captureCaret, restoreCaret });
