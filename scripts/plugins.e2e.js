@@ -316,6 +316,42 @@ test('broken plugin', async () => {
   assert.equal(await js('window.__brokenHeard'), 0);
 });
 
+test('listeners that throw or reject', async () => {
+  const chId = owls.chapters[0];
+  // the probe adds listeners as any plugin might: one throws, the next
+  // one's promise rejects, and one comes after them. chapter-saved goes out
+  // from inside the save itself.
+  await js(`(() => {
+    const neo = window.__probe.neo;
+    window.__calls = [];
+    window.__off = [
+      neo.on('chapter-saved', () => { window.__calls.push('throws'); throw new Error('a listener throws on purpose'); }),
+      neo.on('chapter-saved', async () => { window.__calls.push('rejects'); throw new Error('a listener rejects on purpose'); }),
+      neo.on('chapter-saved', () => { window.__calls.push('after'); })
+    ];
+    document.getElementById('hint').textContent = '';
+  })()`);
+  await caretAtEnd(chId);
+  await type('Elk');
+  await tick(1500);
+  assert.match(chapterFile(owls.id, chId), /Elk/);
+  assert.deepEqual((await js('window.__calls')).slice(0, 3), ['throws', 'rejects', 'after']);
+  const log = await logWith('a listener rejects on purpose');
+  assert.match(log, /plugin probe: Error: a listener throws on purpose\r?\n\s+at /);
+  assert.match(log, /plugin probe: Error: a listener rejects on purpose\r?\n\s+at /);
+  // nothing reached NEO's own net for errors, which would tell the writer
+  assert.doesNotMatch(log, /Unhandled: .*on purpose/);
+  assert.equal(await js(`document.getElementById('hint').textContent`), '', 'nothing was shown to the writer');
+  // unsubscribed, they are not called again
+  await js('window.__off.forEach((off) => off())');
+  const calls = (await js('window.__calls')).length;
+  await caretAtEnd(chId);
+  await type('Yak');
+  await tick(1500);
+  assert.match(chapterFile(owls.id, chId), /Yak/);
+  assert.equal((await js('window.__calls')).length, calls);
+});
+
 test('CSP', async () => {
   const refused = () => consoleLines.filter((line) => /Content Security Policy/i.test(line));
   assert.deepEqual(refused(), []);

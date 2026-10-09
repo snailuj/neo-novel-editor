@@ -315,21 +315,35 @@ describe('the window half', () => {
   });
 
   // plugins.js in a vm, with window.neo.plugins as given and stand-ins for
-  // the page: what it would add to the page, and what it logs
-  function windowHalf(list) {
+  // the page: what it would add to the page, and what it logs. reads stands
+  // in for app.js's getters.
+  function windowHalf(list, reads = {}) {
     const added = [];
     const logged = [];
     const page = { appendChild: (el) => added.push(el) };
     const context = vm.createContext({
       neo: { plugins: list, logError: (line) => logged.push(line) },
       document: { head: page, body: page, addEventListener() {}, createElement: (tag) => ({ tag }) },
-      requestAnimationFrame: () => 1
+      requestAnimationFrame: () => 1,
+      structuredClone
     });
     context.window = context;
     vm.runInContext(fs.readFileSync(path.join(root, 'plugins.js'), 'utf8'), context, { filename: 'plugins.js' });
-    const reads = { book: () => null, chapterHTML: () => undefined, currentTab: () => 'manuscript' };
-    return { NeoPlugins: context.NeoPlugins, attach: () => context.NeoPlugins.attach(reads), added, logged };
+    const getters = { book: () => null, chapterHTML: () => undefined, currentTab: () => 'manuscript', ...reads };
+    return { NeoPlugins: context.NeoPlugins, attach: () => context.NeoPlugins.attach(getters), added, logged };
   }
+
+  // the host with one listed plugin, p, registered with activate; neo is
+  // the API p was handed
+  function withPlugin(activate = () => {}, reads = {}) {
+    const host = windowHalf([{ id: 'p', apiVersion: 1, rendererUrl: 'plugins/p/renderer.js', styleUrl: null }], reads);
+    host.attach();
+    let neo = null;
+    host.NeoPlugins.register({ id: 'p', apiVersion: 1, activate(api) { neo = api; return activate(api); } });
+    return { ...host, neo };
+  }
+  // a rejected promise's handlers have run
+  const settled = () => new Promise((resolve) => setImmediate(resolve));
 
   test('no list, one that is not an array, or an empty one: no plugins, and nothing breaks', () => {
     for (const list of [undefined, null, {}, 'probe', []]) {
@@ -352,5 +366,48 @@ describe('the window half', () => {
     assert.equal(activated, false);
     assert.equal(host.logged.length, 1);
     assert.match(host.logged[0], /^plugin ahead: apiVersion 3\b.*knows 1\b.*not activated/);
+  });
+
+  test('a listener that throws, or whose promise rejects, is logged with its stack, and the rest still run', async () => {
+    const { NeoPlugins, neo, logged } = withPlugin();
+    const calls = [];
+    neo.on('chapter-saved', () => { calls.push('throws'); throw new Error('thrown on purpose'); });
+    neo.on('chapter-saved', async () => { calls.push('rejects'); throw new Error('rejected on purpose'); });
+    neo.on('chapter-saved', () => calls.push('after'));
+    NeoPlugins.emit('chapter-saved', { bookId: 'b', chId: 'c' });
+    assert.deepEqual(calls, ['throws', 'rejects', 'after']);
+    await settled();
+    assert.equal(logged.length, 2, logged.join('\n'));
+    assert.match(logged[0], /^plugin p: Error: thrown on purpose\n\s+at /);
+    assert.match(logged[1], /^plugin p: Error: rejected on purpose\n\s+at /);
+  });
+
+  test('an activate whose promise rejects is logged, and the listeners it added are taken away', async () => {
+    let heard = 0;
+    const { NeoPlugins, neo, logged } = withPlugin(async (api) => {
+      api.on('book-open', () => heard++);
+      await null;
+      throw new Error('activate rejected on purpose');
+    });
+    await settled();
+    assert.equal(logged.length, 1, logged.join('\n'));
+    assert.match(logged[0], /^plugin p: Error: activate rejected on purpose\n\s+at /);
+    NeoPlugins.emit('book-open', { bookId: 'b' });
+    // nor is a listener added afterwards kept
+    neo.on('book-open', () => heard++);
+    NeoPlugins.emit('book-open', { bookId: 'b' });
+    assert.equal(heard, 0);
+  });
+
+  test('on refuses an event it does not know and a listener that is not a function, and its unsubscribe works', () => {
+    const { NeoPlugins, neo } = withPlugin();
+    assert.throws(() => neo.on('book-opened', () => {}), { name: 'TypeError', message: /book-opened/ });
+    assert.throws(() => neo.on('book-open', 'not a function'), { name: 'TypeError' });
+    const heard = [];
+    const off = neo.on('book-open', (detail) => heard.push(detail.bookId));
+    NeoPlugins.emit('book-open', { bookId: 'one' });
+    off();
+    NeoPlugins.emit('book-open', { bookId: 'two' });
+    assert.deepEqual(heard, ['one']);
   });
 });
