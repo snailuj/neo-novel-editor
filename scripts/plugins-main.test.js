@@ -170,6 +170,12 @@ describe('the Plugins menu', { concurrency: 1 }, () => {
     assert.deepEqual(sent, [{ type: 'plugin-command', plugin: 'probe', command: 'hello' }]);
   });
 
+  test('a label passed in names the menu, so main.js can translate it', () => {
+    wire({ dirs: fixtures });
+    const items = plugins.menuItems(() => {}, 'Modules');
+    assert.equal(items[0].label, 'Modules');
+  });
+
   test('no Plugins menu when no plugin has commands', () => {
     const app = appFolder({ 'plugins/quiet': plugin('quiet') });
     wire({ appRoot: app });
@@ -215,5 +221,15 @@ describe('the Plugins menu', { concurrency: 1 }, () => {
     vm.runInContext('buildMenu()', context);
     const labels = template.map((item) => item.label);
     assert.equal(labels.indexOf('Plugins'), labels.indexOf('Window') - 1);
+
+    // the label goes through t(), like the menus around it
+    vm.runInContext('NeoI18n.setLocale("fr", { Plugins: "Modules", Window: "Fenêtre" }, {})', context);
+    try {
+      vm.runInContext('buildMenu()', context);
+      const french = template.map((item) => item.label);
+      assert.equal(french.indexOf('Modules'), french.indexOf('Fenêtre') - 1);
+    } finally {
+      vm.runInContext('NeoI18n.setLocale("en", {}, {})', context);
+    }
   });
 });

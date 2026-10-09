@@ -108,15 +108,16 @@ function discover() {
 }
 
 // the Plugins menu, or nothing when no plugin declares a command; a click
-// goes to the window as { type: 'plugin-command', plugin, command }
-function menuItems(send) {
+// goes to the window as { type: 'plugin-command', plugin, command }. main.js
+// passes the label through t(), since scripts/i18n.js does not scan this file
+function menuItems(send, label = 'Plugins') {
   const submenu = [];
   for (const m of discover()) {
     for (const c of m.commands || []) {
       submenu.push({ label: c.title, click: () => send({ type: 'plugin-command', plugin: m.id, command: c.id }) });
     }
   }
-  return submenu.length ? [{ label: 'Plugins', submenu }] : [];
+  return submenu.length ? [{ label, submenu }] : [];
 }
 
 module.exports = { wire, validManifest, discover, menuItems };

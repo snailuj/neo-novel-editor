@@ -2606,7 +2606,7 @@ function buildMenu() {
         }
       ]
     },
-    ...plugins.menuItems(sendToWindow),
+    ...plugins.menuItems(sendToWindow, t('Plugins')),
     {
       role: 'windowMenu',
       label: t('Window'),
