@@ -826,24 +826,29 @@ test('a main half\'s failure rejects the window\'s invoke naming the plugin and 
     // what a plugin's own write in the library looks like when the system refuses it
     throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM', path: path.join(LIBRARY, 'probe.json') });
   });
+  // an answer Electron cannot clone (a function) once left the invoke waiting for ever
+  host.handle('unclonable', () => () => 1);
   const { dialog } = require('electron');
   const { showMessageBox } = dialog;
   const shown = [];
   dialog.showMessageBox = async (...args) => { shown.push(args); return {}; };
   const before = errorLog();
   try {
-    const answers = await js(`Promise.all(['echo', 'fail', 'refused'].map((channel) =>
-      window.__probe.neo.invoke(channel, 'sent').then((answer) => ({ answer }), (err) => ({ isError: err instanceof Error, message: err.message }))))`);
+    const answers = await js(`Promise.all(['echo', 'fail', 'refused', 'unclonable'].map((channel) => Promise.race([
+      window.__probe.neo.invoke(channel, 'sent').then((answer) => ({ answer }), (err) => ({ isError: err instanceof Error, message: err.message })),
+      new Promise((resolve) => setTimeout(() => resolve({ waiting: true }), 3000))
+    ])))`);
     assert.deepEqual(answers[0], { answer: 'sent' });
     assert.equal(answers[1].isError, true);
     assert.match(answers[1].message, /\bprobe\b.*\bfail\b.*failed on purpose/);
     assert.match(answers[2].message, /\bprobe\b.*\brefused\b.*EPERM/);
+    assert.match(answers[3].message, /\bprobe\b.*\bunclonable\b.*could not be cloned/, 'the invoke is rejected, not left waiting');
   } finally {
     dialog.showMessageBox = showMessageBox;
   }
   assert.deepEqual(shown, [], 'no dialog');
   const added = errorLog().slice(before.length);
-  assert.equal(added.match(/\[plugin probe: invoke (fail|refused)\]/g).length, 2, added);
+  assert.equal(added.match(/\[plugin probe: invoke (fail|refused|unclonable)\]/g).length, 3, added);
   assert.doesNotMatch(added, /\[ipc plugin:invoke\]/);
 });
 

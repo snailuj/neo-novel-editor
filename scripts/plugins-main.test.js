@@ -617,6 +617,32 @@ describe('a plugin\'s main half', { concurrency: 1 }, () => {
     assert.equal(logs.length, 3, logs.join('\n'));
   });
 
+  // Electron sends an answer by structured clone. One it cannot clone (a
+  // function, a Promise inside an object) leaves the window's invoke
+  // waiting for ever, and the failure goes to the console, not the log.
+  test('a handler whose answer cannot be cloned rejects the invoke and is logged, as any failure of its handler is', async () => {
+    const app = withMains({
+      odd: [
+        'exports.activate = (host) => {',
+        "  host.handle('fn', () => () => 1);",
+        "  host.handle('promised', async () => ({ later: new Promise(() => {}) }));",
+        "  host.handle('plain', () => ({ list: [1, 2], when: new Date(0), none: undefined }));",
+        '};'
+      ].join('\n')
+    });
+    const { handlers, logs } = wire({ appRoot: app });
+    plugins.activateMains();
+    await assert.rejects(invoke(handlers, 'odd', 'fn'), /\bodd\b.*\bfn\b.*could not be cloned/);
+    await assert.rejects(invoke(handlers, 'odd', 'promised'), /\bodd\b.*\bpromised\b.*could not be cloned/);
+    assert.equal(logs.length, 2, logs.join('\n'));
+    assert.match(logs[0], /^\[plugin odd: invoke fn\] /);
+    assert.match(logs[1], /^\[plugin odd: invoke promised\] /);
+    const plain = await invoke(handlers, 'odd', 'plain');
+    assert.deepEqual(plain.list, [1, 2]);
+    assert.equal(plain.when.getTime(), 0);
+    assert.equal(logs.length, 2);
+  });
+
   test('a main half that throws in activate, rejects, will not load or has no activate is logged, and the next still loads', async () => {
     const app = withMains({
       'a-throws': "exports.activate = (host) => { host.handle('echo', (p) => p); throw new Error('thrown in activate'); };",

@@ -455,7 +455,11 @@ async function invoke(id, channel, payload) {
   const fn = entry.handlers.get(channel);
   if (!fn) throw new Error(`plugin ${entry.id} has no handler for ${channel}`);
   try {
-    return await fn(payload);
+    // Electron clones the answer on its way to the window; one it cannot
+    // clone (a function, a Promise inside an object) would leave the invoke
+    // waiting for ever, with only the console to say why. Cloned here, it
+    // fails as a failure of the handler.
+    return structuredClone(await fn(payload));
   } catch (err) {
     logFailure(entry, fn, `invoke ${channel}`, err, 'handler');
     throw new Error(`plugin ${entry.id}: ${channel} failed: ${messageOf(err)}`);
