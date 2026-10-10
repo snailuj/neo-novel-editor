@@ -153,7 +153,10 @@ const SPECIFIERS = [
 test('no route to a function that writes a file leads round the guard', async () => {
   const fixture = await launchProfile();
   const outsideFile = path.join(tmpdir(), `neo-isolation-routes-${process.pid}.txt`);
+  const leftovers = async () => (await readdir(tmpdir())).filter((name) => name.startsWith(path.basename(outsideFile)));
   try {
+    // a clean baseline: a file left by an earlier run would read as a write by this one
+    expect(await leftovers()).toEqual([]);
     const cases = ROUTES.flatMap((route) => SPECIFIERS.map((id) => [route, id]));
     // import() works only in a module the loader knows, so the routes run from a file of their own
     const outcomes = await fixture.app.evaluate(async (_electron, { helper, cases, outsideFile }) => {
@@ -162,9 +165,7 @@ test('no route to a function that writes a file leads round the guard', async ()
     }, { helper: fileURLToPath(new URL('../support/fs-routes.cjs', import.meta.url)), cases, outsideFile });
     expect(outcomes).toEqual(Object.fromEntries(cases.map(([route, id]) => [`${route} ${id}`, 'refused'])));
   } finally {
-    for (const name of await readdir(tmpdir())) {
-      if (name.startsWith(path.basename(outsideFile))) await rm(path.join(tmpdir(), name), { force: true });
-    }
+    for (const name of await leftovers()) await rm(path.join(tmpdir(), name), { force: true });
     await fixture.close();
   }
 });
