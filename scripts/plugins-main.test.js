@@ -1617,28 +1617,32 @@ describe('the window half', () => {
     assert.match(logged()[3], /^plugin works: Error: a then callback throws\n\s+at new Promise/);
     assert.equal(taken(dropped(thrown('after an await', 'async plugins/broken/renderer.js:7:5'))), true);
     assert.match(logged()[4], /^plugin broken: Error: after an await\n/);
-    // the host answering a plugin's call (plugins.js frames) is the plugin's call, even with NEO's frames between
+    // the host answering a plugin's call (plugins.js frames, and no other
+    // script before the plugin's) is the plugin's call
     host.clock.now += 60000;
     assert.equal(taken(dropped(thrown('status takes a string', 'setStatus (plugins.js:697:11)', 'Object.status (plugins.js:760:20)', 'plugins/works/renderer.js:3:3'))), true);
     assert.match(logged()[5], /^plugin works: Error: status takes a string\n/);
-    assert.equal(taken(dropped(thrown('through NEO', 'showTab (plugins.js:640:5)', 'switchTab (app.js:7889:5)', 'go (plugins.js:359:9)', 'async plugins/broken/renderer.js:7:5'))), true);
-    assert.match(logged()[6], /^plugin broken: Error: through NEO\n/);
     // Anything else is NEO's, left to its net and not logged here: not an
-    // Error with a stack, or NEO's script is the first to name itself,
-    // whatever plugin awaits it below (a dropped reopen() that finds a NEO bug)
+    // Error with a stack, or any script but this file and the plugin's comes
+    // before the plugin's first frame. NEO's own code is one: a bug in it
+    // is not the plugin's, whatever plugin awaits it below (a dropped
+    // reopen() that finds a NEO bug), or calls it (neo.replace reaching
+    // app.js, which calls the host again and finds a bug there).
     const neos = [
       new Error('NEO\'s own'),
       Object.assign(new Error('app'), { stack: 'Error: app\n    at app.js:1:1' }),
       thrown('a NEO bug', 'openBook (app.js:2513:9)', 'async reopen (plugins/works/renderer.js:7:5)'),
       thrown('a NEO bug under a native frame', 'new Promise (<anonymous>)', 'openBook (app.js:2513:9)', 'async plugins/works/renderer.js:7:5'),
       thrown('NEO calls the host', 'emit (plugins.js:200:5)', 'run (app.js:11236:39)'),
+      thrown('through NEO', 'showTab (plugins.js:640:5)', 'switchTab (app.js:7889:5)', 'go (plugins.js:359:9)', 'async plugins/broken/renderer.js:7:5'),
+      thrown('a bug in NEO during a plugin\'s call', 'emit (plugins.js:200:5)', 'scheduleChapterSave (app.js:11277:5)', 'replace (plugins.js:480:12)', 'plugins/works/renderer.js:3:3'),
       'a string', undefined, null
     ];
     for (const reason of neos) {
       const event = dropped(reason);
       assert.deepEqual([event.prevented, event.stopped], [false, false], String(reason && reason.stack || reason));
     }
-    assert.equal(logged().length, 7);
+    assert.equal(logged().length, 6);
   });
 
   test('one function that listens to two events is logged for each, once a minute, and each line names its event', () => {
@@ -1680,6 +1684,9 @@ describe('the window half', () => {
     // no plugin in the stack: left to NEO's net, as is an error from any other file
     assert.equal(error('plugins.js', 'setStatus (plugins.js:697:11)', 'app.js:16064:74', '<anonymous>:1:47'), false);
     assert.equal(error('app.js', 'plugins/works/renderer.js:12:30'), false);
+    // NEO's own code between the host and the plugin (neo.replace reaching
+    // app.js, which calls the host again and finds a bug there): not the plugin's
+    assert.equal(error('plugins.js', 'emit (plugins.js:200:5)', 'scheduleChapterSave (app.js:11277:5)', 'replace (plugins.js:480:12)', 'plugins/works/renderer.js:3:3'), false);
     assert.equal(host.logged.length, 2);
     // and an error in plugins.js that holds no stack at all
     const bare = { filename: 'plugins.js', lineno: 1, message: 'Uncaught thrown', error: null, stopImmediatePropagation() { throw new Error('was stopped'); } };

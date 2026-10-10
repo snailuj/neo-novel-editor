@@ -901,11 +901,12 @@
     return hostUrl && e.filename === hostUrl && e.error ? pluginOfStack(e.error.stack) : undefined;
   }
 
-  // The id of the plugin a stack belongs to, or undefined. The first frame
-  // that names a script decides: a plugin's script is that plugin's, and this
-  // file is the host answering a call, which is the plugin's whose script is
-  // the first below it. Any other script (NEO's own) makes the stack NEO's,
-  // whatever plugin awaits it further down.
+  // The id of the plugin a stack belongs to, or undefined. Its frames that
+  // name a script are read from the top: a plugin's script is that plugin's,
+  // and this file is the host answering a call, so the stack goes on to the
+  // plugin's script below. Any other script before the plugin's (NEO's own
+  // code, whether it awaits the plugin or the plugin's call reached it) makes
+  // the stack NEO's.
   function pluginOfStack(stack) {
     if (typeof stack !== 'string') return undefined;
     // a frame is "at fn (url:line:col)", "at url:line:col" or, for an
@@ -916,10 +917,11 @@
       const frame = /^\s*at (?:async )?(?:.*? \()?(.*?):\d+:\d+\)?$/.exec(line);
       if (frame && !frame[1].startsWith('<')) urls.push(frame[1]);
     }
-    if (scriptIds.has(urls[0])) return scriptIds.get(urls[0]);
-    if (!hostUrl || urls[0] !== hostUrl) return undefined;
-    const below = urls.find((url) => scriptIds.has(url));
-    return below === undefined ? undefined : scriptIds.get(below);
+    for (const url of urls) {
+      if (scriptIds.has(url)) return scriptIds.get(url);
+      if (url !== hostUrl) return undefined;
+    }
+    return undefined;
   }
 
   // An error thrown in a plugin's script outside the host's calls, such as
