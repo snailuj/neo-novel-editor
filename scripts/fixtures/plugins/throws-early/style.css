@@ -1,0 +1,5 @@
+/* A stylesheet for a plugin that never registers (scripts/plugins.e2e.js). */
+
+::highlight(plugin-throws-early-marks) {
+  background-color: rgba(255, 0, 0, 0.35);
+}

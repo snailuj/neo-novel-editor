@@ -719,13 +719,15 @@ describe('the window half', () => {
   // remove() takes it off again), what it logs, and what it writes to the
   // console. reads stands in for app.js's getters; logError, when given,
   // for the log; clock.now is what performance.now() reads; invoked holds
-  // what reached window.neo.pluginInvoke.
+  // what reached window.neo.pluginInvoke; fire(type, event) is the page
+  // dispatching an event to the window's listeners.
   function windowHalf(list, reads = {}, logError = null) {
     const added = [];
     const logged = [];
     const consoled = [];
     const invoked = [];
     const clock = { now: 0 };
+    const windowListeners = [];
     const page = { appendChild: (el) => added.push(el) };
     const element = (tag) => ({
       tag,
@@ -744,6 +746,7 @@ describe('the window half', () => {
         pluginInvoke: async (...args) => { invoked.push(args); return { answered: args[2] }; }
       },
       document: { head: page, body: page, addEventListener() {}, createElement: element, getElementById: () => page },
+      addEventListener: (type, fn) => windowListeners.push([type, fn]),
       requestAnimationFrame: () => 1,
       performance: { now: () => clock.now },
       console: { error: (...args) => consoled.push(args.map(String).join(' ')) },
@@ -752,7 +755,8 @@ describe('the window half', () => {
     context.window = context;
     vm.runInContext(fs.readFileSync(path.join(root, 'plugins.js'), 'utf8'), context, { filename: 'plugins.js' });
     const getters = { book: () => null, chapterHTML: () => undefined, currentTab: () => 'manuscript', ...reads };
-    return { NeoPlugins: context.NeoPlugins, attach: () => context.NeoPlugins.attach(getters), added, logged, consoled, invoked, clock };
+    const fire = (type, event) => windowListeners.filter(([t]) => t === type).forEach(([, fn]) => fn(event));
+    return { NeoPlugins: context.NeoPlugins, attach: () => context.NeoPlugins.attach(getters), added, logged, consoled, invoked, clock, fire };
   }
 
   // the host with one listed plugin, p, registered with activate; neo is
@@ -983,6 +987,35 @@ describe('the window half', () => {
     register({ id: 'works', apiVersion: 99, activate() {} });
     await settled();
     assert.deepEqual(links(), ['plugins/works/style.css']);
+  });
+
+  test('an error thrown in a plugin script before it registers is logged under its name and goes no further; its stylesheet leaves', () => {
+    const styled = (id) => ({ id, apiVersion: 1, rendererUrl: `plugins/${id}/renderer.js`, styleUrl: `plugins/${id}/style.css` });
+    const host = windowHalf(['works', 'early'].map(styled));
+    host.attach();
+    host.NeoPlugins.register({ id: 'works', apiVersion: 1, activate() {} });
+    const links = () => host.added.filter((el) => el.tag === 'link').map((el) => el.href);
+    assert.equal(links().length, 2);
+    // a script's error as the page reports it: its filename is the script's URL
+    const error = (filename, err) => {
+      const event = { filename, lineno: 3, message: `Uncaught ${err.message}`, error: err, stopped: false, stopImmediatePropagation() { this.stopped = true; } };
+      host.fire('error', event);
+      return event.stopped;
+    };
+    assert.equal(error('plugins/early/renderer.js', new Error('early on purpose')), true);
+    assert.match(host.logged[0], /^plugin early: Error: early on purpose\n\s+at /);
+    assert.deepEqual(links(), ['plugins/works/style.css']);
+    // one from a plugin that registered keeps its stylesheet, and is logged too
+    assert.equal(error('plugins/works/renderer.js', new Error('late on purpose')), true);
+    assert.match(host.logged[1], /^plugin works: Error: late on purpose\n\s+at /);
+    assert.deepEqual(links(), ['plugins/works/style.css']);
+    // a script of NEO's own is not the host's
+    assert.equal(error('app.js', new Error('not a plugin')), false);
+    assert.equal(host.logged.length, 2);
+    // a thrown value that is no Error is logged by the page's message
+    const plain = { filename: 'plugins/works/renderer.js', lineno: 9, message: 'Uncaught thrown', error: null, stopImmediatePropagation() {} };
+    host.fire('error', plain);
+    assert.equal(host.logged[2], 'plugin works: Uncaught thrown @ plugins/works/renderer.js:9');
   });
 
   test('attach skips a null or id-less entry in the list, as register does', () => {

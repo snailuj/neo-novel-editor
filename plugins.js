@@ -45,6 +45,9 @@
   // each listed plugin's stylesheet <link>, by id, put in before its script
   // runs; it leaves again if the plugin is refused, fails or never loads
   const styles = new Map();
+  // each listed plugin's id, by the URL its script was loaded from (see
+  // onScriptError)
+  const scriptIds = new Map();
   let get = null; // app.js's getters, from attach()
   // The book the plugins last heard open, until they hear it close. A shelf
   // export borrows app.js's `book` without opening it, and an openBook can
@@ -851,6 +854,7 @@
       const script = document.createElement('script');
       script.src = m.rendererUrl;
       script.async = false;
+      scriptIds.set(script.src, m.id);
       // a plugin whose script will not load never registers
       script.onerror = () => {
         dropStyle(m.id);
@@ -859,6 +863,20 @@
       document.body.appendChild(script);
     }
   }
+
+  // An error thrown in a plugin's script outside the host's calls, such as
+  // from its top level before it registers. It is logged under the plugin's
+  // name and goes no further, so NEO's net for errors (app.js, which listens
+  // after this file) does not tell the writer. A plugin that never
+  // registered loses its stylesheet, as one that fails to activate does.
+  function onScriptError(e) {
+    const id = scriptIds.get(e.filename);
+    if (id === undefined) return;
+    e.stopImmediatePropagation();
+    if (!registry.has(id)) dropStyle(id);
+    log(id, e.error || `${e.message} @ ${e.filename}:${e.lineno}`);
+  }
+  window.addEventListener('error', onScriptError);
 
   // validPlace, for a plugin to check a place before it hands it over
   window.NeoPlugins = Object.freeze({ apiVersions: API_VERSIONS, register, emit, attach, showTab, runCommand, validPlace });

@@ -705,6 +705,20 @@ test('broken plugin', async () => {
   assert.match(await logWith('plugin broken: the Plugins menu'), /plugin broken: the Plugins menu asked for fix, and nothing is bound to it/);
 });
 
+// A script that throws before it registers never becomes a plugin: the
+// stylesheet linked for it goes, its error is logged under its name, and
+// NEO's own net for errors, which would tell the writer, does not hear of it.
+// A working plugin's stylesheet stays.
+test('a plugin whose script throws before it registers leaves no stylesheet behind', async () => {
+  const log = await logWith('plugin throws-early:');
+  assert.match(log, /plugin throws-early: Error: throws early on purpose\r?\n\s+at /);
+  assert.doesNotMatch(log, /Uncaught Error: throws early/);
+  const linked = (name) => js(`[...document.querySelectorAll('link[rel="stylesheet"]')].some((link) => link.href.endsWith('/${name}/style.css'))`);
+  assert.equal(await linked('throws-early'), false);
+  assert.equal(await linked('probe'), true);
+  assert.equal(await js('errorToastShown'), false, 'nothing was shown to the writer');
+});
+
 test('a pane whose plugin fails while it shows gives way to the manuscript', async () => {
   // missing-script is listed, but its script never loaded: its id is free
   await js(`NeoPlugins.register({ id: 'missing-script', apiVersion: 1, async activate(neo) {
