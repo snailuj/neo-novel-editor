@@ -23,6 +23,7 @@ const OUTSIDE_PACKAGE = 'symbolic link points outside the package';
 const OUTSIDE_PROJECT = 'symbolic link resolves outside the project';
 const UNRESOLVED = 'symbolic link does not resolve';
 const UNTRACKED_SOURCE = 'untracked file in a folder that is copied into the package';
+const NESTED_REPO = 'nested git repository: its files are not tracked by this project';
 
 function resourcesDir({ appOutDir, electronPlatformName, packager }) {
   return electronPlatformName === 'darwin' || electronPlatformName === 'mas'
@@ -59,11 +60,6 @@ function git(projectDir, args, what) {
 }
 
 const trackedFiles = (projectDir) => git(projectDir, ['ls-files', '-z'], 'read the tracked files');
-
-// --others without --exclude-standard lists git-ignored files too, which is the point: an
-// ignored file in a source folder is copied like any other.
-const untrackedFiles = (projectDir, folders) =>
-  git(projectDir, ['ls-files', '-z', '--others', '--', ...folders], 'list the untracked files');
 
 // The header tells folders (files), links (link) and files apart; a path list cannot.
 function readAsar(archive) {
@@ -137,6 +133,22 @@ function within(base, target) {
   return rel.split(path.sep).join('/');
 }
 
+// A link's target, or null with a stray recorded when it does not resolve or leaves the project.
+function resolveLink(full, shown, projectReal, strays) {
+  let target;
+  try {
+    target = fs.realpathSync(full);
+  } catch {
+    strays.push({ path: shown, reason: UNRESOLVED });
+    return null;
+  }
+  if (within(projectReal, target) === null) {
+    strays.push({ path: shown, reason: OUTSIDE_PROJECT });
+    return null;
+  }
+  return target;
+}
+
 function diskLinkProblem(link, root) {
   try {
     return within(root, fs.realpathSync(link)) === null ? OUTSIDE_PACKAGE : null;
@@ -208,19 +220,8 @@ function nestedLinks(projectDir, projectReal, files, folders, strays) {
       throw err;
     }
     if (!stat.isSymbolicLink()) return full;
-    let target;
-    try {
-      target = fs.realpathSync(full);
-    } catch {
-      strays.push({ path: shown, reason: UNRESOLVED });
-      return null;
-    }
-    const inProject = within(projectReal, target);
-    if (inProject === null) {
-      strays.push({ path: shown, reason: OUTSIDE_PROJECT });
-      return null;
-    }
-    if (within(modulesReal, target) === null) folders.add(inProject);
+    const target = resolveLink(full, shown, projectReal, strays);
+    if (target !== null && within(modulesReal, target) === null) folders.add(within(projectReal, target));
     return target;
   };
 
@@ -286,22 +287,61 @@ function addSource(projectDir, label, from, folders, strays) {
   }
   const inProject = within(projectDir, path.resolve(projectDir, from));
   if (inProject === null) strays.push({ path: from, reason: `${label} source is outside the project` });
-  else folders.add(inProject);
+  else if (inProject === '') {
+    throw new Error(`Packaging check: cannot check ${label} "${from}": its source is the whole project`);
+  } else folders.add(inProject);
+}
+
+// The files in each source folder, read from disk without following a link, must all be in
+// the tracked list. `git ls-files --others` cannot do this: it reports nothing for what is
+// inside a nested repository, such as an Obsidian vault that is a repository of its own. A
+// link inside a source is followed as nestedLinks follows one, and a folder holding a .git
+// is a nested repository, named once instead of file by file. Git-ignored files are not
+// tracked, so they are strays too: they are copied like any other.
+function untrackedIn(projectDir, projectReal, modulesReal, folders, tracked, strays) {
+  const known = new Set(tracked);
+  const pending = [...folders];
+  const done = new Set();
+  while (pending.length) {
+    const rel = pending.pop();
+    if (done.has(rel)) continue;
+    done.add(rel);
+    const full = path.join(projectDir, rel);
+    let stat;
+    try {
+      stat = fs.lstatSync(full);
+    } catch (err) {
+      if (err.code === 'ENOENT') continue;
+      throw err;
+    }
+    if (stat.isSymbolicLink()) {
+      const target = resolveLink(full, rel, projectReal, strays);
+      if (target !== null && (modulesReal === null || within(modulesReal, target) === null)) {
+        pending.push(within(projectReal, target));
+      }
+    } else if (!stat.isDirectory()) {
+      if (!known.has(rel)) strays.push({ path: rel, reason: UNTRACKED_SOURCE });
+    } else {
+      const entries = fs.readdirSync(full, { withFileTypes: true });
+      if (entries.some((entry) => entry.name === '.git')) strays.push({ path: rel, reason: NESTED_REPO });
+      else for (const entry of entries) pending.push(`${rel}/${entry.name}`);
+    }
+  }
 }
 
 // Strays among the project's own sources, and the folders whose untracked files are strays.
-function checkSources(context, files) {
+function checkSources(context, files, tracked) {
   const { projectDir } = context.packager;
   const projectReal = fs.realpathSync(projectDir);
+  const modules = path.join(projectDir, 'node_modules');
+  const modulesReal = exists(modules) ? fs.realpathSync(modules) : null;
   const folders = new Set();
   const strays = [];
   linkedPackages(projectDir, projectReal, folders, strays);
   nestedLinks(projectDir, projectReal, files, folders, strays);
   lockedLinks(projectDir, folders, strays);
   for (const [label, from] of extraSources(context.packager)) addSource(projectDir, label, from, folders, strays);
-  if (folders.size) {
-    for (const file of untrackedFiles(projectDir, [...folders])) strays.push({ path: file, reason: UNTRACKED_SOURCE });
-  }
+  untrackedIn(projectDir, projectReal, modulesReal, folders, tracked, strays);
   return strays;
 }
 
@@ -319,7 +359,7 @@ module.exports = async function afterPack(context) {
   for (const link of [...packed.links, ...unpacked.links, ...other.links]) {
     if (link.problem) strays.push({ path: link.path, reason: link.problem });
   }
-  strays.push(...checkSources(context, files));
+  strays.push(...checkSources(context, files, tracked));
   // one line per path and reason: a link can be found by more than one of the checks
   const found = [...new Map(strays.map((s) => [`${s.path}\0${s.reason}`, s])).values()];
   if (found.length) {

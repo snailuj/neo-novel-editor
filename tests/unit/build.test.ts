@@ -781,6 +781,82 @@ test('afterPack reports a top-level link once when both of its checks find it', 
   });
 });
 
+// A folder that is a git repository of its own, as an Obsidian vault can be. `git ls-files
+// --others` in the outer repository reports nothing for what is inside it, so the sources are
+// read from disk and every file in them must be in the tracked list. A fake vault in a temp
+// folder, never a real one.
+function nestedRepo(project: string, folder: string, files: string[]): void {
+  for (const file of files) put(project, `${folder}/${file}`, 'words');
+  execFileSync('git', ['init', '-q'], { cwd: path.join(project, folder) });
+  execFileSync('git', ['add', '-A'], { cwd: path.join(project, folder) });
+}
+
+test('afterPack refuses a nested repository behind a nested link', async () => {
+  for (const ignore of [false, true]) {
+    const { context, project } = await fakePackage('win32', {
+      files: { 'node_modules/jszip/index.js': '', ...(ignore ? { '.gitignore': 'vault/\n' } : {}) },
+      extra: JSZIP,
+    });
+    nestedRepo(project, 'vault', ['notes/page.md']);
+    linkPackage(project, 'jszip/notes', path.join(project, 'vault', 'notes'));
+    await assert.rejects(afterPack(context), /vault\/notes\/page\.md: untracked file/, `ignored: ${ignore}`);
+  }
+});
+
+test('afterPack refuses a nested repository named as an extraResources source or a lock link', async () => {
+  const sources = {
+    extraResources: { config: { extraResources: [{ from: 'vault/notes', to: 'notes' }] } },
+    'a lock link': {
+      files: {
+        'package-lock.json': JSON.stringify({
+          packages: { '': {}, 'node_modules/notes': { resolved: 'vault/notes', link: true } },
+        }),
+      },
+    },
+  };
+  for (const [name, section] of Object.entries(sources)) {
+    const { context, project } = await fakePackage('win32', section);
+    nestedRepo(project, 'vault', ['notes/page.md']);
+    await assert.rejects(afterPack(context), /vault\/notes\/page\.md: untracked file/, name);
+  }
+});
+
+test('afterPack names a source folder that is itself a nested repository once', async () => {
+  const { context, project } = await fakePackage('win32', {
+    config: { extraResources: [{ from: 'vault', to: 'notes' }] },
+  });
+  nestedRepo(project, 'vault', ['notes/page.md', 'notes/two.md']);
+  await assert.rejects(afterPack(context), (err: Error) => {
+    assert.match(err.message, /vault: nested git repository/);
+    assert.match(err.message, /1 stray file/);
+    return true;
+  });
+});
+
+test('afterPack reads a source folder from disk, finding deep files and following links inside it', async () => {
+  const files = { 'drafts/a.txt': '', 'drafts/deep/b.txt': '', 'other/c.txt': '' };
+  const config = { extraResources: [{ from: 'drafts', to: 'drafts' }] };
+  await checked((await fakePackage('win32', { files, config })).context);
+
+  const deep = await fakePackage('win32', { files, config });
+  put(deep.project, `drafts/deep/${CHAPTER}`);
+  await assert.rejects(afterPack(deep.context), /drafts\/deep\/Chapter 3\.txt: untracked file/);
+
+  const leaving = await fakePackage('win32', { files, config });
+  symlinkSync(outsideProject(leaving.context), path.join(leaving.project, 'drafts', 'inner'), 'junction');
+  await assert.rejects(afterPack(leaving.context), /drafts\/inner: .*outside the project/);
+
+  const inside = await fakePackage('win32', { files, config });
+  symlinkSync(path.join(inside.project, 'other'), path.join(inside.project, 'drafts', 'more'), 'junction');
+  put(inside.project, `other/${CHAPTER}`);
+  await assert.rejects(afterPack(inside.context), /other\/Chapter 3\.txt: untracked file/);
+});
+
+test('afterPack refuses a source folder that is the whole project', async () => {
+  const { context } = await fakePackage('win32', { config: { extraResources: [{ from: '.', to: 'x' }] } });
+  await assert.rejects(afterPack(context), /cannot check extraResources ".": .*whole project/);
+});
+
 test('afterPack refuses a package-lock.json it cannot read', async () => {
   const { context } = await fakePackage('win32', { files: { 'package-lock.json': '{not json' } });
   await assert.rejects(afterPack(context), /cannot read package-lock\.json/);
