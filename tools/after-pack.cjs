@@ -195,19 +195,16 @@ function linkedPackages(projectDir, projectReal, folders, strays) {
   }
 }
 
-// A link deeper inside a dependency (node_modules/jszip/notes) is copied by electron-builder
-// as plain files, so the package shows no link and only the markers would apply to what came
-// through it. Every packed node_modules path is therefore walked from the project's
-// node_modules, one component at a time, with lstat. A link is resolved, never read through
-// blindly: it is a stray when it leaves the project, a folder to check for untracked files
-// when it stays inside the project, and fine inside node_modules. The walk goes on from where
-// a link lands, so a link inside a linked package is found too. Each path component is
-// looked at once, so the cost follows the packed files, not the whole of node_modules.
-function nestedLinks(projectDir, projectReal, files, folders, strays) {
-  const modules = path.join(projectDir, 'node_modules');
-  if (!exists(modules)) return;
-  const modulesReal = fs.realpathSync(modules);
-  if (within(projectReal, modulesReal) === null) return; // linkedPackages reports that
+// electron-builder copies what a link points at as plain files wherever the link sits
+// (node_modules/jszip/notes, plugins/tool), so the package shows no link, and only the
+// markers and the tracked-file rule would see the names that came through it. A symlink a
+// checkout tracks passes the tracked-file rule as a name too. Every packed path is therefore
+// walked from the project root, one component at a time, with lstat. A link is resolved,
+// never read through blindly: it is a stray when it leaves the project, a folder to check
+// against the tracked list when it stays inside the project, and fine inside node_modules.
+// The walk goes on from where a link lands, so a link inside a linked package is found too.
+// Each path component is looked at once, so the cost follows the packed files.
+function packedLinks(projectDir, projectReal, modulesReal, files, folders, strays) {
   const landed = new Map();
 
   // where a walk continues from `full`, or null when there is nothing more to look at
@@ -221,17 +218,18 @@ function nestedLinks(projectDir, projectReal, files, folders, strays) {
     }
     if (!stat.isSymbolicLink()) return full;
     const target = resolveLink(full, shown, projectReal, strays);
-    if (target !== null && within(modulesReal, target) === null) folders.add(within(projectReal, target));
+    if (target !== null && (modulesReal === null || within(modulesReal, target) === null)) {
+      folders.add(within(projectReal, target));
+    }
     return target;
   };
 
   for (const file of files) {
-    if (!file.startsWith('node_modules/')) continue;
-    let at = modules;
-    let shown = 'node_modules';
-    for (const name of file.slice('node_modules/'.length).split('/')) {
+    let at = projectDir;
+    let shown = '';
+    for (const name of file.split('/')) {
       const full = path.join(at, name);
-      shown += `/${name}`;
+      shown = shown ? `${shown}/${name}` : name;
       if (!landed.has(full)) landed.set(full, classify(full, shown));
       at = landed.get(full);
       if (at === null) break;
@@ -295,7 +293,7 @@ function addSource(projectDir, label, from, folders, strays) {
 // The files in each source folder, read from disk without following a link, must all be in
 // the tracked list. `git ls-files --others` cannot do this: it reports nothing for what is
 // inside a nested repository, such as an Obsidian vault that is a repository of its own. A
-// link inside a source is followed as nestedLinks follows one, and a folder holding a .git
+// link inside a source is followed as packedLinks follows one, and a folder holding a .git
 // is a nested repository, named once instead of file by file. Git-ignored files are not
 // tracked, so they are strays too: they are copied like any other.
 function untrackedIn(projectDir, projectReal, modulesReal, folders, tracked, strays) {
@@ -338,7 +336,7 @@ function checkSources(context, files, tracked) {
   const folders = new Set();
   const strays = [];
   linkedPackages(projectDir, projectReal, folders, strays);
-  nestedLinks(projectDir, projectReal, files, folders, strays);
+  packedLinks(projectDir, projectReal, modulesReal, files, folders, strays);
   lockedLinks(projectDir, folders, strays);
   for (const [label, from] of extraSources(context.packager)) addSource(projectDir, label, from, folders, strays);
   untrackedIn(projectDir, projectReal, modulesReal, folders, tracked, strays);

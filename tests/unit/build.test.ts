@@ -857,6 +857,57 @@ test('afterPack refuses a source folder that is the whole project', async () => 
   await assert.rejects(afterPack(context), /cannot check extraResources ".": .*whole project/);
 });
 
+// Every packed path is walked from the project root, not only the ones under node_modules:
+// electron-builder copies what a link outside the project points at as plain files wherever
+// the link sits, and a symlink a checkout tracks passes the tracked-file rule as a name.
+test('afterPack refuses a link under plugins that leaves the project', async () => {
+  const { context, project } = await fakePackage('win32', { extra: ['plugins/tool/x.js'] });
+  const scripts = outsideProject(context);
+  put(scripts, 'x.js');
+  mkdirSync(path.join(project, 'plugins'), { recursive: true });
+  symlinkSync(scripts, path.join(project, 'plugins', 'tool'), 'junction');
+  await assert.rejects(afterPack(context), (err: Error) => {
+    assert.match(err.message, /plugins\/tool: .*outside the project/);
+    assert.match(err.message, /1 stray file/);
+    return true;
+  });
+});
+
+// A symlink in the index, as a macOS or Linux checkout tracks one. Only the index entry is
+// made here; the link on disk is a junction, which Windows allows without a privilege.
+function trackLink(project: string, name: string, target: string): void {
+  const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], {
+    cwd: project,
+    input: target,
+    encoding: 'utf8',
+  }).trim();
+  execFileSync('git', ['update-index', '--add', '--cacheinfo', `120000,${blob},${name}`], { cwd: project });
+}
+
+async function packageWithTrackedLink(target: (context: PackContext, project: string) => string): Promise<FakePackage> {
+  const made = await fakePackage('win32', { asar: false, files: { 'scripts/a.js': '' } });
+  trackLink(made.project, 'tool', 'scripts');
+  symlinkSync(target(made.context, made.project), path.join(made.project, 'tool'), 'junction');
+  writeHeaderOnlyAsar(path.join(made.resources, 'app.asar'), {
+    'package.json': { size: 2, offset: '0' },
+    tool: { size: 2, offset: '0' },
+  });
+  return made;
+}
+
+test('afterPack refuses a tracked symlink that leaves the project', async () => {
+  const { context } = await packageWithTrackedLink(outsideProject);
+  await assert.rejects(afterPack(context), /tool: .*outside the project/);
+});
+
+test('afterPack checks the folder a tracked symlink points at inside the project', async () => {
+  const inProject = (_context: PackContext, project: string): string => path.join(project, 'scripts');
+  await checked((await packageWithTrackedLink(inProject)).context);
+  const { context, project } = await packageWithTrackedLink(inProject);
+  put(project, `scripts/${CHAPTER}`);
+  await assert.rejects(afterPack(context), /scripts\/Chapter 3\.txt: untracked file/);
+});
+
 test('afterPack refuses a package-lock.json it cannot read', async () => {
   const { context } = await fakePackage('win32', { files: { 'package-lock.json': '{not json' } });
   await assert.rejects(afterPack(context), /cannot read package-lock\.json/);
