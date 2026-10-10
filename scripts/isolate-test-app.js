@@ -30,7 +30,12 @@ function variables(profile) {
     LOCALAPPDATA: path.join(profile, 'localAppData'),
     TEMP: tmp,
     TMP: tmp,
-    TMPDIR: tmp
+    TMPDIR: tmp,
+    // Linux: where Chromium and libraries keep their settings, data, caches and state
+    XDG_CONFIG_HOME: path.join(profile, 'xdg', 'config'),
+    XDG_DATA_HOME: path.join(profile, 'xdg', 'data'),
+    XDG_CACHE_HOME: path.join(profile, 'xdg', 'cache'),
+    XDG_STATE_HOME: path.join(profile, 'xdg', 'state')
   };
 }
 
@@ -120,7 +125,7 @@ function isolate(profile, {
   userData = path.join(profile, 'userData'),
   documents = path.join(profile, 'documents')
 } = {}) {
-  const { app, dialog, shell, systemPreferences } = require('electron');
+  const { app, dialog, shell, systemPreferences, utilityProcess } = require('electron');
   const env = variables(profile);
 
   Object.assign(process.env, env);
@@ -141,6 +146,10 @@ function isolate(profile, {
   }
   app.commandLine.appendSwitch('disable-background-networking');
   app.commandLine.appendSwitch('disable-component-update');
+  // safeStorage keeps main.js's API key. On macOS it would reach the developer's Keychain, and
+  // on Linux their keyring (gnome-libsecret or kwallet); these keep it to a mock and a plain file.
+  app.commandLine.appendSwitch('use-mock-keychain');
+  app.commandLine.appendSwitch('password-store', 'basic');
 
   // Every dialog is refused, the synchronous ones included: at launch main.js asks
   // showMessageBoxSync and showOpenDialogSync when the chosen library folder is missing or
@@ -155,6 +164,21 @@ function isolate(profile, {
   refuse(childProcess, 'child_process', {
     names: ['exec', 'execFile', 'spawn', 'fork', 'execSync', 'execFileSync', 'spawnSync'],
     answersAtOnce: () => true
+  });
+
+  // main.js forks one utility process, the spell worker. No other process starts, by this
+  // route either; that one is the only module the fork is let through for.
+  const fork = utilityProcess.fork;
+  const spellWorker = path.resolve(__dirname, '..', 'spell-worker.js');
+  const isSpellWorker = (modulePath) => {
+    if (path.resolve(String(modulePath)) === spellWorker) return true;
+    try { return fs.realpathSync.native(modulePath) === fs.realpathSync.native(spellWorker); } catch { return false; }
+  };
+  utilityProcess.fork = stubbed(function (modulePath, ...args) {
+    if (!isSpellWorker(modulePath)) {
+      throw new Error('utilityProcess.fork is disabled in tests, except for spell-worker.js: ' + modulePath);
+    }
+    return fork.call(utilityProcess, modulePath, ...args);
   });
 
   globalThis.fetch = stubbed(async () => { throw new Error('Network access is disabled in tests'); });

@@ -13,7 +13,10 @@ const PATH_NAMES = [
 
 // The variables that name a user's folders. Child processes and Chromium read these, not
 // Electron's paths; the harness points them into the profile.
-const VARIABLES = ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP', 'TMPDIR'];
+const VARIABLES = [
+  'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP', 'TMPDIR',
+  'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME',
+];
 
 // The calls the app, or a later Electron, can make to the developer's system. The lists
 // say which must exist on this platform, so a harness that stubs an empty object fails.
@@ -43,7 +46,7 @@ test('a test run is cut off from the developer\'s system', async () => {
   }
   try {
     const outsideFile = path.join(tmpdir(), `neo-isolation-outside-${process.pid}.txt`);
-    const seen = await fixture.app.evaluate(({ app, shell, dialog, systemPreferences }, { names, variables, programs, calls, outsideFile }) => {
+    const seen = await fixture.app.evaluate(({ app, shell, dialog, systemPreferences, utilityProcess }, { names, variables, programs, calls, outsideFile }) => {
       // The harness marks each stub; a call Electron implements has no mark.
       const unstubbed = (owner) => Object.entries(owner)
         .filter(([, fn]) => typeof fn === 'function' && fn.neoTestStub !== true)
@@ -57,7 +60,14 @@ test('a test run is cut off from the developer\'s system', async () => {
       const writeOutside = () => {
         try { fs.writeFileSync(outsideFile, 'x'); return 'written'; } catch (error) { return error.code; }
       };
+      // Only a stub is asked to start something it should not.
+      const forkRefused = () => {
+        if (utilityProcess.fork.neoTestStub !== true) return 'not a stub';
+        try { utilityProcess.fork('not-the-spell-worker.js'); return 'started'; } catch (error) { return error.message; }
+      };
       return {
+        keychainSwitches: [app.commandLine.hasSwitch('use-mock-keychain'), app.commandLine.getSwitchValue('password-store')],
+        forkRefused: forkRefused(),
         homedir: os.homedir(),
         tmpdir: os.tmpdir(),
         fetchStubbed: globalThis.fetch.neoTestStub === true,
@@ -79,6 +89,10 @@ test('a test run is cut off from the developer\'s system', async () => {
 
     expect.soft(seen.pluginDirs).toBeNull();
     expect.soft(seen.fetchStubbed).toBe(true);
+    // safeStorage reaches the Keychain (macOS) or the keyring (Linux) unless told not to; the
+    // spell worker still starts (the baseline spec checks words), any other utility process does not
+    expect.soft(seen.keychainSwitches).toEqual([true, 'basic']);
+    expect.soft(seen.forkRefused).toMatch(/disabled in tests/);
     // the write guard: nothing outside the profile can be written
     expect.soft(seen.outsideWrite).toBe('TEST_WRITE_OUTSIDE_PROFILE');
     expect.soft(seen.neoVariables).toEqual(['NEO_TEST_PROFILE', 'NEO_TEST_VISIBLE']);

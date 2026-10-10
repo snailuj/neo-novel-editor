@@ -47,7 +47,10 @@ const SHELL = [
 ];
 const PROGRAMS = ['exec', 'execFile', 'spawn', 'fork', 'execSync', 'execFileSync', 'spawnSync'];
 const FOLDERS = ['userData', 'documents', 'temp', 'home', 'appData', 'desktop', 'downloads', 'music', 'pictures', 'videos'];
-const VARIABLES = ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP', 'TMPDIR'];
+const VARIABLES = [
+  'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP', 'TMPDIR',
+  'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME',
+];
 
 type Anything = any; // the stand-ins are loose on purpose
 
@@ -58,6 +61,9 @@ type Run = {
   // The folder the run made for itself: where everything it does must stay.
   tempRoot: string;
   paths: Map<string, string>;
+  switches: Map<string, string | undefined>;
+  // The modules utilityProcess.fork was really asked to start.
+  forked: string[];
   env: Record<string, string>;
   electron: Anything;
   os: Anything;
@@ -65,7 +71,7 @@ type Run = {
   childProcess: Anything;
   moduleLoader: Anything;
   context: Anything;
-  main: { dir: string; file: string; logged: string };
+  main: { dir: string; file: string };
 };
 
 const inside = (parent: string, child: unknown): boolean => {
@@ -87,12 +93,17 @@ function run(target: Target): Run {
   if (target.profile) mkdirSync(profileDir);
 
   const paths = new Map<string, string>();
+  const switches = new Map<string, string | undefined>();
+  const forked: string[] = [];
   const real = () => 'a real call';
   const electron: Anything = {
     app: {
       setPath: (name: string, to: string) => paths.set(name, to),
       getPath: (name: string) => paths.get(name) ?? path.join(developer, 'electron', name),
-      commandLine: { appendSwitch() {}, hasSwitch: () => false },
+      commandLine: {
+        appendSwitch: (name: string, value?: string) => switches.set(name, value),
+        hasSwitch: (name: string) => switches.has(name),
+      },
       on() {},
       whenReady: () => ({ then() {} }),
       requestSingleInstanceLock: () => true,
@@ -109,7 +120,7 @@ function run(target: Target): Run {
     dialog: Object.fromEntries(DIALOG.map((name) => [name, real])),
     shell: Object.fromEntries(SHELL.map((name) => [name, real])),
     systemPreferences: {},
-    utilityProcess: { fork: real },
+    utilityProcess: { fork: (modulePath: string) => { forked.push(modulePath); return 'a worker'; } },
   };
   const env: Record<string, string> = Object.fromEntries(VARIABLES.map((name) => [name, path.join(developer, name)]));
   env.TEMP = env.TMP = env.TMPDIR = systemTmp;
@@ -176,9 +187,9 @@ function run(target: Target): Run {
   const made = readdirSync(systemTmp).filter((name) => /^neo-(plugins|plugin-edits)-test-/.test(name));
   const tempRoot = target.profile ? profileDir : path.join(systemTmp, made[0] ?? 'no-folder-was-made');
   const result: Run = {
-    sandbox, developer, systemTmp, tempRoot, paths, env, electron,
+    sandbox, developer, systemTmp, tempRoot, paths, switches, forked, env, electron,
     os: fakeOs, fs: fakeFs, childProcess: fakeChildProcess, moduleLoader, context,
-    main: { dir: '', file: '', logged: '' },
+    main: { dir: '', file: '' },
   };
   result.main.dir = runInContext('LIBRARY_DIR', context);
   result.main.file = runInContext('LIBRARY_FILE', context);
@@ -243,6 +254,28 @@ for (const target of TARGETS) {
         assert.equal(r.childProcess[name].neoTestStub, true, `${name} is a stub`);
         assert.throws(() => r.childProcess[name]('osascript'), /disabled in tests/, `${name} throws`);
       }
+    });
+
+    // main.js forks the spell worker and nothing else.
+    test('starts no utility process but the spell worker', () => {
+      const fork = r.electron.utilityProcess.fork;
+      assert.equal(fork.neoTestStub, true);
+      assert.equal(fork(path.join(root, 'spell-worker.js'), [], {}), 'a worker');
+      assert.deepEqual(r.forked, [path.join(root, 'spell-worker.js')]);
+      for (const other of [
+        path.join(root, 'main.js'),
+        path.join(r.sandbox, 'spell-worker.js'),
+        path.join(root, 'plugins', 'spell-worker.js'),
+      ]) {
+        assert.throws(() => fork(other, [], {}), /disabled in tests/, other);
+      }
+      assert.deepEqual(r.forked, [path.join(root, 'spell-worker.js')], 'nothing else was started');
+    });
+
+    // safeStorage would otherwise reach the Keychain (macOS) or the keyring (Linux).
+    test('keeps safeStorage off the developer\'s keychain', () => {
+      assert.ok(r.switches.has('use-mock-keychain'), 'use-mock-keychain');
+      assert.equal(r.switches.get('password-store'), 'basic');
     });
 
     test('opens no connection', async () => {
