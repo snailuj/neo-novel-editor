@@ -138,6 +138,66 @@ function guardWrites(profile, onRefuse = () => {}) {
   fs.promises.symlink = guarded(async () => deny('symlink'));
 }
 
+// Keeps every window a test opens off the screen and out of the keyboard's way, for whoever is
+// working on the machine while the suites run. NEO_TEST_VISIBLE=1 turns it off, for a manual
+// session that wants to see the window.
+//
+// Mechanism: every BrowserWindow that code loaded afterwards makes is made with show: false and
+// paintWhenInitiallyHidden: true, so it never reaches the screen and still lays out and paints (a
+// test reads the page's layout, and takes its selection and caret). backgroundThrottling stays off, so timers and animation frames
+// in a hidden page keep their rate. The calls that would bring a window forward do nothing, so
+// that code under test cannot undo it: show, showInactive, focus, moveTop, restore and maximize,
+// and app.focus. A window is never shown, rather than shown off every display or shown inactive:
+// Windows gives even an inactive or off-screen window a taskbar button and a place in Alt+Tab.
+// With no window shown, BrowserWindow.getFocusedWindow() is null.
+//
+// Every window event that matters is recorded in globalThis.neoTestWindowEvents, and appended as
+// JSON lines to the file NEO_TEST_WINDOW_LOG names, when it is set: a run can be checked for a
+// window that flashed up without anyone watching the screen.
+function hideWindows() {
+  const electron = require('electron');
+  const { app } = electron;
+  if (globalThis.neoTestWindowEvents) return; // already done: the patches below do not stack
+  const log = process.env.NEO_TEST_WINDOW_LOG;
+  const append = fs.appendFileSync; // taken before guardWrites replaces it: the log is outside the profile
+  const events = globalThis.neoTestWindowEvents = [];
+  const record = (win, event) => {
+    const entry = { t: Date.now(), pid: process.pid, id: win.id, event };
+    if (!win.isDestroyed()) Object.assign(entry, { visible: win.isVisible(), focused: win.isFocused(), bounds: win.getBounds() });
+    events.push(entry);
+    if (log) try { append(log, JSON.stringify(entry) + String.fromCharCode(10)); } catch { /* a log that cannot be written must not fail a test */ }
+  };
+  app.on('browser-window-created', (_event, win) => {
+    record(win, 'created');
+    for (const event of ['show', 'focus', 'restore', 'maximize', 'minimize']) win.on(event, () => record(win, event));
+  });
+  if (process.env.NEO_TEST_VISIBLE === '1') return;
+
+  const Base = electron.BrowserWindow;
+  // A subclass does not work: the object Electron builds does not take the subclass's prototype,
+  // and getAllWindows, which filters by instanceof, then finds none. A proxy of the class changes
+  // only the options of a construction, and is the same class for everything else.
+  const HiddenBrowserWindow = new Proxy(Base, {
+    construct: (target, [options = {}]) => Reflect.construct(target, [{
+      ...options,
+      show: false,
+      paintWhenInitiallyHidden: true,
+      webPreferences: { ...options.webPreferences, backgroundThrottling: false }
+    }])
+  });
+  // electron's BrowserWindow export cannot be redefined, so a require of 'electron' gets a view
+  // of the module with the hidden class in its place. Instances are ordinary BrowserWindows:
+  // getAllWindows, fromWebContents and instanceof see the same objects.
+  const view = new Proxy(electron, { get: (target, key) => key === 'BrowserWindow' ? HiddenBrowserWindow : Reflect.get(target, key) });
+  const load = Module.prototype.require;
+  Module.prototype.require = function (id) {
+    const loaded = load.apply(this, arguments);
+    return id === 'electron' ? view : loaded;
+  };
+  for (const name of ['show', 'showInactive', 'focus', 'moveTop', 'restore', 'maximize']) Base.prototype[name] = stubbed(() => {});
+  app.focus = stubbed(() => {});
+}
+
 // `profile` is the run's temp folder: everything the run does stays inside it. `userData` and
 // `documents` are where NEO keeps its settings and its default library, inside it by default.
 function isolate(profile, {
@@ -147,6 +207,7 @@ function isolate(profile, {
   const { app, dialog, session, shell, systemPreferences, utilityProcess } = require('electron');
   const env = variables(profile);
 
+  hideWindows();
   Object.assign(process.env, env);
   os.homedir = () => profile;
   os.tmpdir = () => env.TMP;
@@ -239,4 +300,4 @@ function isolate(profile, {
   Module.syncBuiltinESMExports();
 }
 
-module.exports = { isolate, stubbed, variables };
+module.exports = { hideWindows, isolate, stubbed, variables };
