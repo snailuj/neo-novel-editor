@@ -3,6 +3,10 @@
 // was packed and fails the build on anything tools/stray-files.cjs says does not belong. A
 // package it cannot read is a failure too: an unchecked package must not pass.
 //
+// The rule: every packed file under app.asar and app.asar.unpacked is traced to one source
+// file, which must be tracked by git or be a file of a lock-file package; anything that cannot
+// be traced stops the build.
+//
 // Three places are read:
 //  - app.asar, by its header, and app.asar.unpacked: every file must be tracked by git.
 //    Paths there are the app's own (`main.js`, `node_modules/...`).
@@ -325,6 +329,13 @@ function packedSources(ctx, files, folders, strays) {
     return [...found];
   };
 
+  // A file under the destination of an entry whose source holds the same file there. The walk
+  // is the usual one, so a link inside the source is still caught.
+  const tracedToSource = (file) => destinations.some(({ dest, from }) => {
+    if (file !== dest && !file.startsWith(`${dest}/`)) return false;
+    return walk(file === dest ? from : `${from}/${file.slice(dest.length + 1)}`);
+  });
+
   const roots = new Map();
   const unplaced = new Set();
   let relocated = 0;
@@ -341,7 +352,7 @@ function packedSources(ctx, files, folders, strays) {
       if (reached && !sources.includes(pkg.root)) relocated++;
     }
     if (reached) continue;
-    if (destinations.some((to) => file === to || file.startsWith(`${to}/`))) extra++;
+    if (tracedToSource(file)) extra++;
     else unplaced.add(pkg === null ? file : pkg.root);
   }
   for (const item of unplaced) strays.push({ path: item, reason: NOT_FOUND });
@@ -400,17 +411,21 @@ function extraSources(packager) {
   return found;
 }
 
-// Packed paths (relative to the app) that these entries put there from their sources:
-// extraResources into app.asar.unpacked, and a files set's `to` inside the archive. A source
-// that is not there put nothing anywhere (electron-builder skips it), so it excuses nothing.
+// Where these entries put files in the package, as { dest, from }: dest is a packed path
+// (relative to the app) and from the project folder (or file) it is copied from. extraResources
+// go into app.asar.unpacked, and a files set's `to` is inside the archive. A packed file under
+// dest is traced to `<from>/<path under dest>` by packedSources, which has to find it there.
 function destinationsOf(projectDir, sources) {
   const found = [];
   for (const { label, from, to } of sources) {
     if (to === null || label === 'extraFiles') continue;
-    if (!exists(path.resolve(projectDir, from))) continue;
+    const source = within(projectDir, path.resolve(projectDir, from));
+    if (source === null || source === '') continue; // reported on its own
     const dest = to.replace(/\\/g, '/').replace(/^\.?\//, '').replace(/\/$/, '');
-    if (label === 'files') found.push(dest);
-    else if (dest.startsWith('app.asar.unpacked/')) found.push(dest.slice('app.asar.unpacked/'.length));
+    if (label === 'files') found.push({ dest, from: source });
+    else if (dest.startsWith('app.asar.unpacked/')) {
+      found.push({ dest: dest.slice('app.asar.unpacked/'.length), from: source });
+    }
   }
   return found;
 }

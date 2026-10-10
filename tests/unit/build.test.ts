@@ -1008,6 +1008,49 @@ test('afterPack does not excuse a packed path by an extraResources entry whose s
   await assert.rejects(afterPack(context), /node_modules\/notes: cannot check/);
 });
 
+// A packed file is accounted for by a destination only when it traces to one file of that
+// entry's source: <from>/<the path under the destination> has to be there.
+test('afterPack excuses a packed path only when the entry source holds that file', async () => {
+  const entries = {
+    'a files entry': {
+      config: (from: string) => ({ files: [{ from, to: 'node_modules/notes' }] }),
+      place: (_unpacked: string) => undefined,
+      packed: { 'node_modules/notes/private chapter.md': 'words' },
+    },
+    'an extraResources entry': {
+      config: (from: string) => ({ extraResources: [{ from, to: 'app.asar.unpacked/node_modules/notes' }] }),
+      place: (unpacked: string) => put(unpacked, 'node_modules/notes/private chapter.md', 'words'),
+      packed: {},
+    },
+  };
+  const sources: Record<string, { files: Record<string, string>; from: string; empty?: boolean }> = {
+    'an existing empty source': { files: {}, from: 'empty', empty: true },
+    'an existing source without the file': { files: { 'other/LICENSE': 'mit' }, from: 'other' },
+  };
+  for (const [entryName, entry] of Object.entries(entries)) {
+    for (const [sourceName, source] of Object.entries(sources)) {
+      const { context, project, unpacked } = await fakePackage('win32', {
+        files: source.files,
+        config: entry.config(source.from),
+        packed: entry.packed,
+      });
+      if (source.empty) mkdirSync(path.join(project, source.from));
+      entry.place(unpacked);
+      await assert.rejects(afterPack(context), /node_modules\/notes: cannot check/, `${entryName}, ${sourceName}`);
+    }
+  }
+});
+
+test('afterPack excuses a packed path that traces to a file of a files entry source', async () => {
+  const { context } = await fakePackage('win32', {
+    files: { 'drafts/page.md': 'words' },
+    config: { files: [{ from: 'drafts', to: 'node_modules/notes' }] },
+    packed: { 'node_modules/notes/page.md': 'words' },
+  });
+  const line = await checked(context);
+  assert.equal(line.extra, 1);
+});
+
 test('afterPack places a packed path that an extraResources entry put there', async () => {
   const config = {
     extraResources: [{ from: 'licenses/dictionary-sv', to: 'app.asar.unpacked/node_modules/dictionary-sv' }],
