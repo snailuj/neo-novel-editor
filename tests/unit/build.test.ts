@@ -657,7 +657,6 @@ test('afterPack refuses a node_modules that itself resolves outside the project'
 test('afterPack checks every extraResources source for untracked files', async () => {
   const sections = {
     'a from and to': { config: HUNSPELL },
-    'a plain string': { config: { extraResources: ['licenses/hunspell'] } },
     'one entry, not a list': { config: { extraResources: HUNSPELL.extraResources[0] } },
     'extraFiles': { config: { extraFiles: HUNSPELL.extraResources } },
     "the platform's own section": { platformOptions: HUNSPELL },
@@ -990,6 +989,68 @@ test('afterPack fails on a packed path it cannot place in the project', async ()
   await assert.rejects(afterPack(own.context), /generated\/out\.js: cannot check/);
 });
 
+// A destination only accounts for what its source put there. When the source is not there,
+// electron-builder copies nothing, so a packed path under the destination has another origin
+// and no place in the project.
+test('afterPack does not excuse a packed path by a files entry whose source is missing', async () => {
+  const { context } = await fakePackage('win32', {
+    config: { files: [{ from: 'gone', to: 'node_modules/notes' }] },
+    packed: { 'node_modules/notes/private chapter.md': 'words' },
+  });
+  await assert.rejects(afterPack(context), /node_modules\/notes: cannot check/);
+});
+
+test('afterPack does not excuse a packed path by an extraResources entry whose source is missing', async () => {
+  const { context, unpacked } = await fakePackage('win32', {
+    config: { extraResources: [{ from: 'gone', to: 'app.asar.unpacked/node_modules/notes' }] },
+  });
+  put(unpacked, 'node_modules/notes/private chapter.md', 'words');
+  await assert.rejects(afterPack(context), /node_modules\/notes: cannot check/);
+});
+
+// A packed file is accounted for by a destination only when it traces to one file of that
+// entry's source: <from>/<the path under the destination> has to be there.
+test('afterPack excuses a packed path only when the entry source holds that file', async () => {
+  const entries = {
+    'a files entry': {
+      config: (from: string) => ({ files: [{ from, to: 'node_modules/notes' }] }),
+      place: (_unpacked: string) => undefined,
+      packed: { 'node_modules/notes/private chapter.md': 'words' },
+    },
+    'an extraResources entry': {
+      config: (from: string) => ({ extraResources: [{ from, to: 'app.asar.unpacked/node_modules/notes' }] }),
+      place: (unpacked: string) => put(unpacked, 'node_modules/notes/private chapter.md', 'words'),
+      packed: {},
+    },
+  };
+  const sources: Record<string, { files: Record<string, string>; from: string; empty?: boolean }> = {
+    'an existing empty source': { files: {}, from: 'empty', empty: true },
+    'an existing source without the file': { files: { 'other/LICENSE': 'mit' }, from: 'other' },
+  };
+  for (const [entryName, entry] of Object.entries(entries)) {
+    for (const [sourceName, source] of Object.entries(sources)) {
+      const { context, project, unpacked } = await fakePackage('win32', {
+        files: source.files,
+        config: entry.config(source.from),
+        packed: entry.packed,
+      });
+      if (source.empty) mkdirSync(path.join(project, source.from));
+      entry.place(unpacked);
+      await assert.rejects(afterPack(context), /node_modules\/notes: cannot check/, `${entryName}, ${sourceName}`);
+    }
+  }
+});
+
+test('afterPack excuses a packed path that traces to a file of a files entry source', async () => {
+  const { context } = await fakePackage('win32', {
+    files: { 'drafts/page.md': 'words' },
+    config: { files: [{ from: 'drafts', to: 'node_modules/notes' }] },
+    packed: { 'node_modules/notes/page.md': 'words' },
+  });
+  const line = await checked(context);
+  assert.equal(line.extra, 1);
+});
+
 test('afterPack places a packed path that an extraResources entry put there', async () => {
   const config = {
     extraResources: [{ from: 'licenses/dictionary-sv', to: 'app.asar.unpacked/node_modules/dictionary-sv' }],
@@ -1004,6 +1065,90 @@ test('afterPack places a packed path that an extraResources entry put there', as
   const loose = await fakePackage('win32', { files });
   put(loose.unpacked, 'node_modules/dictionary-sv/NOTICE.txt');
   await assert.rejects(afterPack(loose.context), /node_modules\/dictionary-sv: cannot check/);
+});
+
+// electron-builder reads a string extraResources or extraFiles entry as a glob whose source is
+// the whole project (app-builder-lib/out/fileMatcher.js, getFileMatchers: a string goes to the
+// default matcher, which copies from the project directory). 'notes/**' is not a folder
+// 'notes' to look in, so the sources cannot be named, and the copied files would land in
+// resources where only the writing markers apply. Only { from, to } names a source.
+test('afterPack refuses a string extraResources or extraFiles entry, which copies from the whole project', async () => {
+  const pattern = 'notes/**';
+  const forms: Record<string, [string, Record<string, unknown>]> = {
+    'extraResources in a list': ['extraResources', { config: { extraResources: [pattern] } }],
+    'extraFiles in a list': ['extraFiles', { config: { extraFiles: [pattern] } }],
+    'extraResources as a single string': ['extraResources', { config: { extraResources: pattern } }],
+    'extraFiles as a single string': ['extraFiles', { config: { extraFiles: pattern } }],
+    "extraResources in the platform's section": ['extraResources', { platformOptions: { extraResources: [pattern] } }],
+    "extraFiles in the platform's section": ['extraFiles', { platformOptions: { extraFiles: pattern } }],
+  };
+  for (const [name, [label, section]] of Object.entries(forms)) {
+    const { context, project } = await fakePackage('win32', section);
+    put(project, 'notes/private chapter.md', 'words');
+    await assert.rejects(
+      afterPack(context),
+      new RegExp(`cannot check ${label} "notes/\\*\\*": a pattern copies from the whole project; use \\{from, to\\}`),
+      name,
+    );
+  }
+});
+
+// electron-builder skips a `from` that is not there: copyFiles in fileMatcher.js warns "file
+// source doesn't exist" for extraResources and extraFiles, and computeFileSets in
+// util/appFileCopier.js skips a `files` set quietly. Nothing is copied from one, so none is
+// checked. A lock-file link or a link target is not a configured `from`: it has no such skip.
+test('afterPack skips a configured source that is not there, as electron-builder does', async () => {
+  const config = {
+    extraResources: [{ from: 'no-such-folder', to: 'x' }],
+    extraFiles: [{ from: 'nor-this', to: 'y' }],
+    files: [{ from: 'nor-that', to: 'z' }],
+  };
+  await checked((await fakePackage('win32', { config })).context);
+});
+
+test('afterPack fails on a lock-file link whose folder is not there', async () => {
+  const lock = JSON.stringify({
+    packages: { '': {}, 'node_modules/notes': { resolved: 'dictionaries/missing', link: true } },
+  });
+  const { context } = await fakePackage('win32', { files: { 'package-lock.json': lock } });
+  await assert.rejects(afterPack(context), /dictionaries\/missing: source folder does not exist/);
+});
+
+// A Finder .DS_Store lands in any folder the owner opens on a Mac and is untracked and
+// git-ignored, so it would stop every build there. electron-builder never copies two names:
+// walk() in builder-util/out/fs.js (line 68) returns before it looks at a .DS_Store or a
+// .gitkeep, and walk() is what copies extraResources, extraFiles and `files` sources; the
+// copier for a linked package skips both as well (app-builder-lib/out/util/
+// NodeModuleCopyHelper.js, excludedFiles, lines 12-23). Those two names are not strays.
+// Thumbs.db is not on either list for these sources (the default exclusion of it,
+// fileMatcher.js lines 16-17, is added only to the app's own files), so it ships and stays one.
+test('afterPack lets a .DS_Store or .gitkeep in a source folder be, as electron-builder never copies them', async () => {
+  const lock = JSON.stringify({
+    packages: { '': {}, 'node_modules/dictionary-hu': { resolved: 'dictionaries/hu', link: true } },
+  });
+  const sources = {
+    'an extraResources source': { files: { 'licenses/hunspell/COPYING': 'mpl' }, config: HUNSPELL, dir: 'licenses/hunspell' },
+    'a linked package': { files: { 'package-lock.json': lock, 'dictionaries/hu/index.dic': 'dic' }, dir: 'dictionaries/hu' },
+  };
+  for (const [name, { dir, ...options }] of Object.entries(sources)) {
+    const { context, project } = await fakePackage('win32', options);
+    put(project, `${dir}/.DS_Store`);
+    put(project, `${dir}/deep/.DS_Store`);
+    put(project, `${dir}/.gitkeep`);
+    await checked(context).catch((err: Error) => {
+      err.message = `${name}: ${err.message}`;
+      throw err;
+    });
+  }
+});
+
+test('afterPack still fails on a Thumbs.db in a source folder, and says the file can be deleted', async () => {
+  const { context, project } = await fakePackage('win32', {
+    files: { 'licenses/hunspell/COPYING': 'mpl' },
+    config: HUNSPELL,
+  });
+  put(project, 'licenses/hunspell/Thumbs.db');
+  await assert.rejects(afterPack(context), /licenses\/hunspell\/Thumbs\.db: untracked file.*can be deleted/);
 });
 
 test('afterPack refuses a package-lock.json it cannot read', async () => {

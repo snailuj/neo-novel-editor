@@ -3,6 +3,16 @@
 // was packed and fails the build on anything tools/stray-files.cjs says does not belong. A
 // package it cannot read is a failure too: an unchecked package must not pass.
 //
+// The rule: every packed file under app.asar and app.asar.unpacked is traced to one source
+// file, and anything that cannot be traced stops the build. Outside node_modules the source
+// must be tracked by git. Under node_modules a file counts as traced when it sits at the same
+// path in the project (or in a lock-file copy of the same name and version) with no link on
+// the way. The check does not confirm that the folder is a lock-file package, or that the file
+// belongs to that package. The known route: npm's install-links=true copies a `file:`
+// dependency in as real files, and its lock entry then has no `link: true`, so nothing marks
+// the folder as a source to read. There the ban on writing-file names in
+// tools/stray-files.cjs is the only guard.
+//
 // Three places are read:
 //  - app.asar, by its header, and app.asar.unpacked: every file must be tracked by git.
 //    Paths there are the app's own (`main.js`, `node_modules/...`).
@@ -24,6 +34,19 @@ const OUTSIDE_PROJECT = 'symbolic link resolves outside the project';
 const UNRESOLVED = 'symbolic link does not resolve';
 const UNTRACKED_SOURCE = 'untracked file in a folder that is copied into the package';
 const NESTED_REPO = 'nested git repository: its files are not tracked by this project';
+const SOURCE_MISSING = 'source folder does not exist, so it cannot be checked';
+const OS_CACHE = `${UNTRACKED_SOURCE}; electron-builder copies it as it is, and the file can be deleted`;
+
+// Names electron-builder never copies from a source folder: walk() in builder-util/out/fs.js
+// (line 68) returns before it looks at a .DS_Store or a .gitkeep, and walk() is what copies
+// extraResources, extraFiles and `files` sources; the copier for a linked package skips both
+// too (app-builder-lib/out/util/NodeModuleCopyHelper.js, excludedFiles, lines 12-23). A Finder
+// .DS_Store appears in any folder opened on a Mac and is git-ignored, so counting it would stop
+// every build there. Thumbs.db is not skipped for these sources (its default exclusion,
+// fileMatcher.js lines 16-17, is added only to the app's own files), so it stays a stray, with
+// a message that says it can be deleted.
+const NEVER_COPIED = new Set(['.DS_Store', '.gitkeep']);
+const OS_CACHE_NAME = /^thumbs\.db$/i;
 
 function resourcesDir({ appOutDir, electronPlatformName, packager }) {
   return electronPlatformName === 'darwin' || electronPlatformName === 'mas'
@@ -312,6 +335,13 @@ function packedSources(ctx, files, folders, strays) {
     return [...found];
   };
 
+  // A file under the destination of an entry whose source holds the same file there. The walk
+  // is the usual one, so a link inside the source is still caught.
+  const tracedToSource = (file) => destinations.some(({ dest, from }) => {
+    if (file !== dest && !file.startsWith(`${dest}/`)) return false;
+    return walk(file === dest ? from : `${from}/${file.slice(dest.length + 1)}`);
+  });
+
   const roots = new Map();
   const unplaced = new Set();
   let relocated = 0;
@@ -328,7 +358,7 @@ function packedSources(ctx, files, folders, strays) {
       if (reached && !sources.includes(pkg.root)) relocated++;
     }
     if (reached) continue;
-    if (destinations.some((to) => file === to || file.startsWith(`${to}/`))) extra++;
+    if (tracedToSource(file)) extra++;
     else unplaced.add(pkg === null ? file : pkg.root);
   }
   for (const item of unplaced) strays.push({ path: item, reason: NOT_FOUND });
@@ -370,6 +400,14 @@ function extraSources(packager) {
       const value = section[label];
       if (value == null) continue;
       for (const set of Array.isArray(value) ? value : [value]) {
+        // A string extraResources or extraFiles entry is a glob over the whole project
+        // (app-builder-lib/out/fileMatcher.js, getFileMatchers: it goes to the default
+        // matcher, rooted at the project), so there is no source folder to look in.
+        if (typeof set === 'string' && label !== 'files') {
+          throw new Error(
+            `Packaging check: cannot check ${label} "${set}": a pattern copies from the whole project; use {from, to}`,
+          );
+        }
         const from = typeof set === 'string' ? set : set && set.from;
         if (label === 'files' && (typeof set === 'string' || !from)) continue;
         found.push({ label, from, to: set && typeof set.to === 'string' ? set.to : null });
@@ -379,20 +417,31 @@ function extraSources(packager) {
   return found;
 }
 
-// Packed paths (relative to the app) that these entries put there from their sources:
-// extraResources into app.asar.unpacked, and a files set's `to` inside the archive.
-function destinationsOf(sources) {
+// Where these entries put files in the package, as { dest, from }: dest is a packed path
+// (relative to the app) and from the project folder (or file) it is copied from. extraResources
+// go into app.asar.unpacked, and a files set's `to` is inside the archive. A packed file under
+// dest is traced to `<from>/<path under dest>` by packedSources, which has to find it there.
+function destinationsOf(projectDir, sources) {
   const found = [];
-  for (const { label, to } of sources) {
+  for (const { label, from, to } of sources) {
     if (to === null || label === 'extraFiles') continue;
+    const source = within(projectDir, path.resolve(projectDir, from));
+    if (source === null || source === '') continue; // reported on its own
     const dest = to.replace(/\\/g, '/').replace(/^\.?\//, '').replace(/\/$/, '');
-    if (label === 'files') found.push(dest);
-    else if (dest.startsWith('app.asar.unpacked/')) found.push(dest.slice('app.asar.unpacked/'.length));
+    if (label === 'files') found.push({ dest, from: source });
+    else if (dest.startsWith('app.asar.unpacked/')) {
+      found.push({ dest: dest.slice('app.asar.unpacked/'.length), from: source });
+    }
   }
   return found;
 }
 
-function addSource(projectDir, label, from, folders, strays) {
+// `optional` collects the configured sources: electron-builder skips a configured `from`
+// that is not there (copyFiles in fileMatcher.js warns "file source doesn't exist" for
+// extraResources and extraFiles; computeFileSets in util/appFileCopier.js skips a `files` set
+// quietly), so nothing ships from one and it is skipped here too. A lock-file link and a link
+// target are not configured `from`s and have no such skip: if one is gone, it is a stray.
+function addSource(projectDir, label, from, folders, strays, optional = null) {
   if (typeof from !== 'string' || !from) {
     throw new Error(`Packaging check: cannot check ${label}: it names no source folder`);
   }
@@ -404,7 +453,10 @@ function addSource(projectDir, label, from, folders, strays) {
   if (inProject === null) strays.push({ path: from, reason: `${label} source is outside the project` });
   else if (inProject === '') {
     throw new Error(`Packaging check: cannot check ${label} "${from}": its source is the whole project`);
-  } else folders.add(inProject);
+  } else {
+    folders.add(inProject);
+    if (optional) optional.add(inProject);
+  }
 }
 
 // The files in each source folder, read from disk without following a link, must all be in
@@ -413,7 +465,7 @@ function addSource(projectDir, label, from, folders, strays) {
 // link inside a source is followed as packedLinks follows one, and a folder holding a .git
 // is a nested repository, named once instead of file by file. Git-ignored files are not
 // tracked, so they are strays too: they are copied like any other.
-function untrackedIn(projectDir, projectReal, modulesReal, folders, tracked, strays) {
+function untrackedIn(projectDir, projectReal, modulesReal, folders, optional, tracked, strays) {
   const known = new Set(tracked);
   const pending = [...folders];
   const done = new Set();
@@ -426,8 +478,9 @@ function untrackedIn(projectDir, projectReal, modulesReal, folders, tracked, str
     try {
       stat = fs.lstatSync(full);
     } catch (err) {
-      if (err.code === 'ENOENT') continue;
-      throw err;
+      if (err.code !== 'ENOENT') throw err;
+      if (!optional.has(rel)) strays.push({ path: rel, reason: SOURCE_MISSING });
+      continue;
     }
     if (stat.isSymbolicLink()) {
       const target = resolveLink(full, rel, projectReal, strays);
@@ -435,11 +488,13 @@ function untrackedIn(projectDir, projectReal, modulesReal, folders, tracked, str
         pending.push(within(projectReal, target));
       }
     } else if (!stat.isDirectory()) {
-      if (!known.has(rel)) strays.push({ path: rel, reason: UNTRACKED_SOURCE });
+      if (!known.has(rel)) {
+        strays.push({ path: rel, reason: OS_CACHE_NAME.test(path.posix.basename(rel)) ? OS_CACHE : UNTRACKED_SOURCE });
+      }
     } else {
       const entries = fs.readdirSync(full, { withFileTypes: true });
       if (entries.some((entry) => entry.name === '.git')) strays.push({ path: rel, reason: NESTED_REPO });
-      else for (const entry of entries) pending.push(`${rel}/${entry.name}`);
+      else for (const entry of entries) if (!NEVER_COPIED.has(entry.name)) pending.push(`${rel}/${entry.name}`);
     }
   }
 }
@@ -453,12 +508,13 @@ function checkSources(context, files, tracked, archive) {
   const modules = path.join(projectDir, 'node_modules');
   const modulesReal = exists(modules) ? fs.realpathSync(modules) : null;
   const folders = new Set();
+  const optional = new Set();
   const strays = [];
   const packages = readLock(projectDir);
   const sources = extraSources(context.packager);
   linkedPackages(projectDir, projectReal, folders, strays);
   if (packages) lockedLinks(projectDir, packages, folders, strays);
-  for (const { label, from } of sources) addSource(projectDir, label, from, folders, strays);
+  for (const { label, from } of sources) addSource(projectDir, label, from, folders, strays, optional);
   const found = packedSources(
     {
       projectDir,
@@ -466,13 +522,13 @@ function checkSources(context, files, tracked, archive) {
       modulesReal,
       archive,
       copies: lockCopies(packages ?? {}),
-      destinations: destinationsOf(sources),
+      destinations: destinationsOf(projectDir, sources),
     },
     files,
     folders,
     strays,
   );
-  untrackedIn(projectDir, projectReal, modulesReal, folders, tracked, strays);
+  untrackedIn(projectDir, projectReal, modulesReal, folders, optional, tracked, strays);
   return { strays, ...found };
 }
 
