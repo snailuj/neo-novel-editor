@@ -440,6 +440,10 @@
         else sel.removeAllRanges();
       }
       scroller.scrollTop = scroll;
+      // the selection changed and changed back, and in typewriter mode the
+      // page would glide to the caret for it, away from where the writer
+      // scrolled to
+      get.typewriterRest();
     }
     return change;
   }

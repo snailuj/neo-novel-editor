@@ -533,6 +533,35 @@ test('composition', async () => {
   assert.deepEqual(await replace(written(), 'passage', 'paragraph'), { ok: true });
 });
 
+// In typewriter mode the page glides to the caret after each selection change
+// while the writer is typing or moving by keyboard, which a wheel or trackpad
+// scroll does not end. A replace changes the selection and puts it back; the
+// page must stay where the writer scrolled to.
+test('typewriter mode: the page stays where the writer scrolled', async () => {
+  const [one] = book.chapters;
+  const scrollTop = () => js(`document.getElementById('paper-scroll').scrollTop`);
+  await js('(() => { typewriterEnabled = true; applyTypewriter(); })()');
+  try {
+    await select(one, 1, 0);
+    await tick(800); // past the glide to the caret, which select() starts
+    // a key in the chapter: the page follows the caret by keyboard from here
+    wc.sendInputEvent({ type: 'keyDown', keyCode: 'Shift' });
+    wc.sendInputEvent({ type: 'keyUp', keyCode: 'Shift' });
+    await until(() => js('typewriterByKeyboard'), 'the key to be heard');
+    // scrolled away to reread, the caret out of sight above
+    await js(`(() => { const sc = document.getElementById('paper-scroll'); sc.scrollTop = Math.round(sc.scrollHeight / 2); })()`);
+    await tick(100);
+    const away = await scrollTop();
+    assert.ok(away > 500, `the page is scrolled away: ${away}`);
+    assert.deepEqual(await replace(word(), 'paragraph', 'passage'), { ok: true });
+    assert.deepEqual(await replace(written(), 'passage', 'paragraph'), { ok: true });
+    await tick(800); // frames, and the length of a glide
+    assert.equal(await scrollTop(), away);
+  } finally {
+    await js('(() => { typewriterEnabled = false; applyTypewriter(); typewriterByKeyboard = false; })()');
+  }
+});
+
 // Review focus: offsets across inline marks count as captureCaret counts,
 // and what the engine wraps its edits in never reaches the file
 test('inline marks', async () => {

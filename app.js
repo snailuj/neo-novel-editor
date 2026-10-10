@@ -16423,5 +16423,6 @@ loadLibrary().then(() => {
 // because book, chapterHTML and currentTab are reassigned. book is handed
 // over as it stands, a book a shelf export borrowed included: plugins.js
 // decides what a plugin reads (openedBook), only the book the plugins heard
-// open.
-if (window.NeoPlugins) NeoPlugins.attach({ book: () => book, chapterHTML: (id) => chapterHTML[id], currentTab: () => currentTab, switchTab, captureCaret, restoreCaret, resumePosition });
+// open. typewriterRest ends the page's following of the caret by keyboard
+// (until the next key), for an edit that moved the selection and put it back.
+if (window.NeoPlugins) NeoPlugins.attach({ book: () => book, chapterHTML: (id) => chapterHTML[id], currentTab: () => currentTab, switchTab, captureCaret, restoreCaret, resumePosition, typewriterRest: () => { typewriterByKeyboard = false; } });
