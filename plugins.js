@@ -798,10 +798,14 @@
   function register(plugin) {
     const id = plugin && plugin.id;
     const manifest = listed().find((m) => m.id === id);
-    // a refused plugin's stylesheet goes too, unless the plugin is already
-    // working and this was a stray second register
+    // A refused plugin's stylesheet goes too, unless the plugin is already
+    // working and this was a stray second register. The script calling
+    // register is the plugin listed under its URL, whatever id it gives: its
+    // stylesheet goes too if that plugin has not registered.
     const refuse = (why) => {
       if (!registry.has(id)) dropStyle(id);
+      const own = document.currentScript && scriptIds.get(document.currentScript.src);
+      if (own !== undefined && !registry.has(own)) dropStyle(own);
       log(id, `${why}, so it is not activated`);
     };
     if (!manifest) return refuse('not among the plugins NEO found at launch');

@@ -705,6 +705,9 @@ test('broken plugin', async () => {
   assert.match(await logWith('plugin broken: the Plugins menu'), /plugin broken: the Plugins menu asked for fix, and nothing is bound to it/);
 });
 
+// whether a plugin's stylesheet is still linked in the page
+const linked = (name) => js(`[...document.querySelectorAll('link[rel="stylesheet"]')].some((link) => link.href.endsWith('/${name}/style.css'))`);
+
 // A script that throws before it registers never becomes a plugin: the
 // stylesheet linked for it goes, its error is logged under its name, and
 // NEO's own net for errors, which would tell the writer, does not hear of it.
@@ -713,10 +716,18 @@ test('a plugin whose script throws before it registers leaves no stylesheet behi
   const log = await logWith('plugin throws-early:');
   assert.match(log, /plugin throws-early: Error: throws early on purpose\r?\n\s+at /);
   assert.doesNotMatch(log, /Uncaught Error: throws early/);
-  const linked = (name) => js(`[...document.querySelectorAll('link[rel="stylesheet"]')].some((link) => link.href.endsWith('/${name}/style.css'))`);
   assert.equal(await linked('throws-early'), false);
   assert.equal(await linked('probe'), true);
   assert.equal(await js('errorToastShown'), false, 'nothing was shown to the writer');
+});
+
+// A script that registers under another id than its plugin.json gives is
+// refused under the id it gave, and its own stylesheet goes with it
+test('a plugin whose script registers under another id leaves no stylesheet behind', async () => {
+  const log = await logWith('plugin some-other-id:');
+  assert.match(log, /plugin some-other-id: not among the plugins NEO found at launch, so it is not activated/);
+  assert.equal(await linked('wrong-id'), false);
+  assert.equal(await linked('probe'), true);
 });
 
 test('a pane whose plugin fails while it shows gives way to the manuscript', async () => {

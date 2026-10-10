@@ -1,0 +1,5 @@
+/* A stylesheet for a plugin that registers under another id (scripts/plugins.e2e.js). */
+
+::highlight(plugin-wrong-id-marks) {
+  background-color: rgba(255, 0, 0, 0.35);
+}

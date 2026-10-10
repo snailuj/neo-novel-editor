@@ -720,7 +720,8 @@ describe('the window half', () => {
   // console. reads stands in for app.js's getters; logError, when given,
   // for the log; clock.now is what performance.now() reads; invoked holds
   // what reached window.neo.pluginInvoke; fire(type, event) is the page
-  // dispatching an event to the window's listeners.
+  // dispatching an event to the window's listeners; running(src, fn) runs
+  // fn as the script loaded from src does.
   function windowHalf(list, reads = {}, logError = null) {
     const added = [];
     const logged = [];
@@ -756,7 +757,16 @@ describe('the window half', () => {
     vm.runInContext(fs.readFileSync(path.join(root, 'plugins.js'), 'utf8'), context, { filename: 'plugins.js' });
     const getters = { book: () => null, chapterHTML: () => undefined, currentTab: () => 'manuscript', ...reads };
     const fire = (type, event) => windowListeners.filter(([t]) => t === type).forEach(([, fn]) => fn(event));
-    return { NeoPlugins: context.NeoPlugins, attach: () => context.NeoPlugins.attach(getters), added, logged, consoled, invoked, clock, fire };
+    // fn run as the script at src is, with document.currentScript naming it
+    const running = (src, fn) => {
+      context.document.currentScript = { src };
+      try {
+        return fn();
+      } finally {
+        context.document.currentScript = null;
+      }
+    };
+    return { NeoPlugins: context.NeoPlugins, attach: () => context.NeoPlugins.attach(getters), added, logged, consoled, invoked, clock, fire, running };
   }
 
   // the host with one listed plugin, p, registered with activate; neo is
@@ -1016,6 +1026,24 @@ describe('the window half', () => {
     const plain = { filename: 'plugins/works/renderer.js', lineno: 9, message: 'Uncaught thrown', error: null, stopImmediatePropagation() {} };
     host.fire('error', plain);
     assert.equal(host.logged[2], 'plugin works: Uncaught thrown @ plugins/works/renderer.js:9');
+  });
+
+  test('a script that registers under another id than its plugin.json is refused, and its own stylesheet leaves with it', () => {
+    const styled = (id) => ({ id, apiVersion: 1, rendererUrl: `plugins/${id}/renderer.js`, styleUrl: `plugins/${id}/style.css` });
+    const host = windowHalf(['works', 'wrong', 'stray'].map(styled));
+    host.attach();
+    const links = () => host.added.filter((el) => el.tag === 'link').map((el) => el.href);
+    host.running('plugins/works/renderer.js', () => host.NeoPlugins.register({ id: 'works', apiVersion: 1, activate() {} }));
+    host.running('plugins/wrong/renderer.js', () => host.NeoPlugins.register({ id: 'someone-else', apiVersion: 1, activate() {} }));
+    assert.match(host.logged[0], /^plugin someone-else: not among the plugins NEO found at launch/);
+    assert.deepEqual(links(), ['plugins/works/style.css', 'plugins/stray/style.css']);
+    // a stray second register from a working plugin's script keeps its stylesheet
+    host.running('plugins/works/renderer.js', () => host.NeoPlugins.register({ id: 'works', apiVersion: 1, activate() {} }));
+    host.running('plugins/works/renderer.js', () => host.NeoPlugins.register({ id: 'someone-else', apiVersion: 1, activate() {} }));
+    assert.deepEqual(links(), ['plugins/works/style.css', 'plugins/stray/style.css']);
+    // a register from no script (a timer, an event) names no stylesheet but the id's own
+    host.NeoPlugins.register({ id: 'stray', apiVersion: 99, activate() {} });
+    assert.deepEqual(links(), ['plugins/works/style.css']);
   });
 
   test('attach skips a null or id-less entry in the list, as register does', () => {

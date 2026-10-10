@@ -1,0 +1,6 @@
+{
+  "id": "wrong-id",
+  "apiVersion": 1,
+  "renderer": "renderer.js",
+  "style": "style.css"
+}
