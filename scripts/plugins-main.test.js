@@ -35,7 +35,7 @@ afterEach(() => {
 function wire({
   appRoot = root, isPackaged = false, dirs,
   app = { isPackaged, getPath: (name) => path.join(appRoot, name) },
-  settings = {}, library = () => path.join(appRoot, 'NEO Library')
+  settings = {}, library = () => path.join(appRoot, 'NEO Library'), activateMs
 } = {}) {
   if (dirs === undefined) delete process.env.NEO_PLUGIN_DIRS;
   else process.env.NEO_PLUGIN_DIRS = dirs;
@@ -49,7 +49,8 @@ function wire({
     appRoot,
     readSettings: () => structuredClone(saved.settings),
     writeSettings: (obj) => { saved.settings = structuredClone(obj); },
-    libraryDir: library
+    libraryDir: library,
+    ...(activateMs === undefined ? {} : { activateMs })
   });
   return { logs, handlers, saved };
 }
@@ -425,6 +426,90 @@ describe('a plugin\'s main half', { concurrency: 1 }, () => {
     assert.match(line('c-unloadable'), /SyntaxError: /);
     assert.match(line('d-inert'), /TypeError: .*no activate function/);
     assert.equal(logs.length, 4, logs.join('\n'));
+  });
+
+  // an activate that awaits what never comes (a file watcher's ready event,
+  // say) would leave its plugin's invokes waiting for ever, and nothing in
+  // neo-errors.log to say why
+  describe('an activate that does not settle', () => {
+    // each main half's activate waits for exports.open(), as a test says
+    const gated = (body = '') => [
+      'let open;',
+      'exports.opened = new Promise((resolve) => { open = resolve; });',
+      'exports.open = () => open();',
+      `exports.activate = async (host) => { host.handle('echo', (p) => p); await exports.opened; ${body} };`
+    ].join('\n');
+    // how an invoke stands a turn later: answered, refused or still waiting
+    // (which is the fault under test, so it must not hang the test)
+    const outcome = (promise) => Promise.race([
+      promise.then((value) => ({ value }), (error) => ({ error })),
+      turn().then(() => ({ waiting: true }))
+    ]);
+    async function refused(promise, pattern) {
+      const out = await outcome(promise);
+      assert.ok(out.error, out.waiting ? 'the invoke is left waiting' : `the invoke is answered with ${out.value}`);
+      assert.match(out.error.message, pattern);
+    }
+
+    test('is logged once after 10 s, and its pending and later invokes reject saying so', async (t) => {
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      const app = withMains({ stuck: gated() });
+      const { handlers, logs } = wire({ appRoot: app });
+      plugins.activateMains();
+      const pending = invoke(handlers, 'stuck', 'echo', 1);
+      t.mock.timers.tick(9999);
+      assert.deepEqual(await outcome(pending), { waiting: true }, 'nothing is refused inside 10 s');
+      assert.deepEqual(logs, []);
+      t.mock.timers.tick(1);
+      await refused(pending, /\bstuck\b.*did not finish activating.*\becho\b/);
+      assert.equal(logs.length, 1, logs.join('\n'));
+      assert.match(logs[0], /^\[plugin stuck: activate\] .*did not finish activating within 10 s/);
+      await refused(invoke(handlers, 'stuck', 'echo', 2), /\bstuck\b.*did not finish activating.*\becho\b/);
+      assert.equal(logs.length, 1, 'later invokes add nothing to the log');
+    });
+
+    test('stays refused, and says nothing more, when it settles late or fails late', async (t) => {
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      const app = withMains({ slow: gated(), doomed: gated("throw new Error('failed late');") });
+      const { handlers, logs } = wire({ appRoot: app });
+      plugins.activateMains();
+      t.mock.timers.tick(10000);
+      await turn();
+      assert.equal(logs.length, 2, logs.join('\n'));
+      mainOf(app, 'slow').open();
+      mainOf(app, 'doomed').open();
+      await turn();
+      for (const id of ['slow', 'doomed']) await refused(invoke(handlers, id, 'echo'), /did not finish activating/);
+      assert.equal(logs.length, 2, logs.join('\n'));
+    });
+
+    test('is no matter when it settles in time: the plugin answers, and the limit never logs', async (t) => {
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      const app = withMains({ prompt: gated(), sync: "exports.activate = (host) => host.handle('echo', (p) => p);" });
+      const { handlers, logs } = wire({ appRoot: app });
+      plugins.activateMains();
+      t.mock.timers.tick(9999);
+      mainOf(app, 'prompt').open();
+      assert.equal(await invoke(handlers, 'prompt', 'echo', 3), 3);
+      assert.equal(await invoke(handlers, 'sync', 'echo', 4), 4);
+      t.mock.timers.tick(60000);
+      await turn();
+      assert.deepEqual(logs, []);
+      assert.equal(await invoke(handlers, 'prompt', 'echo', 5), 5);
+    });
+
+    test('has the limit that wire is given', async (t) => {
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      const app = withMains({ stuck: gated() });
+      const { handlers, logs } = wire({ appRoot: app, activateMs: 500 });
+      plugins.activateMains();
+      t.mock.timers.tick(499);
+      await turn();
+      assert.deepEqual(logs, []);
+      t.mock.timers.tick(1);
+      await refused(invoke(handlers, 'stuck', 'echo'), /did not finish activating/);
+      assert.match(logs[0], /did not finish activating within 0\.5 s/);
+    });
   });
 
   test('activateMains starts each main half once, however often it runs', async () => {

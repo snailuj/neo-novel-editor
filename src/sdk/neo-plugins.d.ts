@@ -208,7 +208,12 @@ interface NeoAfterWrite {
   readonly name: string;
 }
 
-/** What a main entry's activate(host) receives. */
+/**
+ * What a main entry's activate(host) receives. An activate that returns a promise has
+ * 10 s to settle. Past that, NEO logs once that the plugin did not finish activating and
+ * refuses its invokes from then on, with an Error that says so, even if the promise
+ * settles later; handlers and listeners the plugin added are dropped.
+ */
 interface NeoMainHost {
   readonly id: string;
   /**

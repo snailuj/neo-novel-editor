@@ -21,6 +21,8 @@ const PLUGIN_ID = /^[a-z][a-z0-9-]{1,31}$/;
 const FILE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]*\.(js|cjs|css)$/;
 const MAX_COMMANDS = 16;
 const MAX_TITLE = 64;
+// how long a main half's activate may take to settle (start)
+const ACTIVATE_MS = 10000;
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const onlyKeys = (o, keys) => Object.keys(o).every((k) => keys.includes(k));
@@ -40,17 +42,19 @@ function validManifest(m) {
 }
 
 // { app, ipcMain, logError, appRoot, readSettings, writeSettings,
-// libraryDir }, from wire(). readSettings answers {} when there is no
-// settings.json yet and throws when it cannot read or parse the one there.
+// libraryDir }, from wire(), and activateMs where a test needs another limit
+// than ACTIVATE_MS. readSettings answers {} when there is no settings.json
+// yet and throws when it cannot read or parse the one there.
 let host = null;
 let found = null; // discover()'s answer, kept for the life of the process
-// Each started main half by plugin id: { id, ready, failed, handlers,
-// listeners }. ready settles once its activate has, and never rejects;
-// handlers maps a channel to a function, listeners an event to a Set.
+// Each started main half by plugin id: { id, ready, failed, timedOut,
+// handlers, listeners }. ready settles once its activate has, or its time
+// limit has passed, and never rejects; handlers maps a channel to a
+// function, listeners an event to a Set.
 let mains = new Map();
 
 function wire(deps) {
-  host = deps;
+  host = { ...deps, activateMs: deps.activateMs ?? ACTIVATE_MS };
   found = null;
   mains = new Map();
   failures = new WeakMap();
@@ -291,23 +295,44 @@ function apiFor(entry, folder) {
 // A main half that fails to start loses whatever it registered, and the
 // error goes to the log; NEO and the other plugins carry on
 function fail(entry, err) {
+  // once only: an activate that fails after its time limit has been reported
+  if (entry.failed) return;
   entry.failed = true;
   entry.handlers.clear();
   entry.listeners.clear();
   report(entry, 'activate', err);
 }
 
+// An activate that awaits what never comes would leave its plugin's invokes
+// waiting for ever, and the log silent. Past activateMs it counts as failed:
+// logged once, and its pending and later invokes are refused, even if it
+// settles after all.
 function start(entry, mainPath) {
   let result;
+  let async;
   try {
     const exported = require(mainPath);
     if (!exported || typeof exported.activate !== 'function') throw new TypeError(`${mainPath} has no activate function`);
     result = exported.activate(apiFor(entry, path.dirname(mainPath)));
+    async = !!result && typeof result.then === 'function';
   } catch (err) {
     fail(entry, err);
     return Promise.resolve();
   }
-  return Promise.resolve(result).then(() => {}, (err) => fail(entry, err));
+  if (!async) return Promise.resolve();
+  const limit = host.activateMs;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      entry.timedOut = true;
+      fail(entry, `did not finish activating within ${limit / 1000} s, so its invokes are refused`);
+      resolve();
+    }, limit);
+    timer.unref();
+    Promise.resolve(result).then(() => {}, (err) => fail(entry, err)).then(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
 }
 
 // Starts the main half of each plugin that has one, once. main.js calls it
@@ -317,7 +342,7 @@ function start(entry, mainPath) {
 function activateMains() {
   for (const m of discover()) {
     if (!m.mainPath || mains.has(m.id)) continue;
-    const entry = { id: m.id, ready: null, failed: false, handlers: new Map(), listeners: new Map() };
+    const entry = { id: m.id, ready: null, failed: false, timedOut: false, handlers: new Map(), listeners: new Map() };
     mains.set(m.id, entry);
     entry.ready = start(entry, m.mainPath);
   }
@@ -332,7 +357,7 @@ async function invoke(id, channel, payload) {
   const entry = mains.get(id);
   if (!entry) throw new Error(`no plugin called ${textOf(id)} has a main half to answer ${channel}`);
   await entry.ready;
-  if (entry.failed) throw new Error(`plugin ${entry.id} failed to start its main half, so nothing answers ${channel}`);
+  if (entry.failed) throw new Error(`plugin ${entry.id} ${entry.timedOut ? 'did not finish activating' : 'failed to start its main half'}, so nothing answers ${channel}`);
   const fn = entry.handlers.get(channel);
   if (!fn) throw new Error(`plugin ${entry.id} has no handler for ${channel}`);
   try {
