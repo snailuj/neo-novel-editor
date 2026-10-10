@@ -200,12 +200,18 @@ function lockedLinks(projectDir, folders, strays) {
 }
 
 // extraResources and extraFiles, from the build config and the platform's own section. An
-// entry is a path or { from, to }; a list or a single one.
+// entry is a path or { from, to }; a list or a single one. Both sections must be there:
+// electron-builder is a caret range, and a renamed field read as "no extraResources" would
+// turn this check off without an error.
 function extraSources(packager) {
   const found = [];
-  for (const section of [packager.config, packager.platformSpecificBuildOptions]) {
+  for (const field of ['config', 'platformSpecificBuildOptions']) {
+    const section = packager[field];
+    if (section === null || typeof section !== 'object') {
+      throw new Error(`Packaging check: cannot check extraResources: packager.${field} is not an object`);
+    }
     for (const key of ['extraResources', 'extraFiles']) {
-      const value = section && section[key];
+      const value = section[key];
       if (value == null) continue;
       for (const set of Array.isArray(value) ? value : [value]) {
         found.push([key, typeof set === 'string' ? set : set && set.from]);

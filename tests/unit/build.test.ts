@@ -334,8 +334,8 @@ async function fakePackage(
     packager: {
       projectDir: project,
       appInfo: { productFilename: 'NEO' },
-      config: options.config,
-      platformSpecificBuildOptions: options.platformOptions,
+      config: options.config ?? {},
+      platformSpecificBuildOptions: options.platformOptions ?? {},
     },
   };
   return { context, project, resources, unpacked: path.join(resources, 'app.asar.unpacked') };
@@ -635,6 +635,18 @@ test('afterPack refuses an extraResources source it cannot place in the project'
   ] as const) {
     const { context } = await fakePackage('win32', { config: { extraResources: [{ from, to: 'x' }] } });
     await assert.rejects(afterPack(context), message);
+  }
+});
+
+// electron-builder is a caret range: a renamed field must stop the build, not turn the
+// extraResources check off.
+test('afterPack refuses to run when the build config is not there to read', async () => {
+  for (const field of ['config', 'platformSpecificBuildOptions'] as const) {
+    for (const missing of [undefined, null, 'extraResources']) {
+      const { context } = await fakePackage('win32');
+      (context.packager as Record<string, unknown>)[field] = missing;
+      await assert.rejects(afterPack(context), new RegExp(`cannot check.*packager\\.${field}`), `${field} ${missing}`);
+    }
   }
 });
 
