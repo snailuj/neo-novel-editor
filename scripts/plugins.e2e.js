@@ -326,6 +326,45 @@ test('reads', async () => {
   await tick(300);
 });
 
+// The shelf leaves the last book's page in #chapters, and a book-open
+// listener runs before openBook draws the book anew: what it reads is the
+// chapter just read from the file, never that page, and nothing is found on
+// the page until it is drawn.
+test('a book-open listener reads the chapter as read from the file, not the page left behind', async () => {
+  const chId = owls.chapters[2];
+  await js('backToShelf()');
+  await tick(200);
+  // a sync that changed the chapter while the book was shut
+  fs.writeFileSync(path.join(LIBRARY, owls.id, 'chapters', chId + '.html'), '<p>New text from the other device.</p>');
+  const seen = await js(`(async () => {
+    const neo = window.__probe.neo;
+    const place = { chId: ${str(chId)}, pIdx: 0, off: 0, len: 3 };
+    let seen = null;
+    const off = neo.on('book-open', () => {
+      seen = {
+        chapter: neo.chapter(${str(chId)}),
+        where: neo.where(),
+        went: neo.go(place),
+        replaced: neo.replace(place, 'New', 'Old')
+      };
+    });
+    try {
+      await openBook(${str(owls.id)});
+    } finally {
+      off();
+    }
+    seen.replaced = await seen.replaced;
+    return seen;
+  })()`);
+  assert.deepEqual(seen.chapter.paragraphs, ['New text from the other device.']);
+  assert.equal(seen.chapter.html, '<p>New text from the other device.</p>');
+  assert.deepEqual([seen.where, seen.went, seen.replaced], [null, false, { ok: false, reason: 'missing' }], 'nothing is on the page yet');
+  // drawn, the page and the read agree
+  assert.deepEqual(await js(`window.__probe.neo.chapter(${str(chId)}).paragraphs`), ['New text from the other device.']);
+  assert.equal(await js(`document.querySelector('.chapter[data-id="${chId}"] .chapter-body').textContent`), 'New text from the other device.');
+  await tick(300);
+});
+
 test('a shelf export tells the plugins nothing; the save flushed on the way to the shelf is heard', async () => {
   // typed just before the shelf: the flush lands after the book has closed
   await caretAtEnd(owls.chapters[0]);

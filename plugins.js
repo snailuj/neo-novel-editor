@@ -55,6 +55,12 @@
     const book = get && get.book();
     return book && book.id === openId ? book : null;
   }
+  // The book the page was last drawn for, until the next book-open or
+  // book-close. The shelf leaves the last book's chapters in #chapters, and
+  // book-open goes out before openBook draws the book anew: until the
+  // rendered that follows, the page is not the open book's.
+  let drawnId = null;
+  const drawn = () => openId !== null && drawnId === openId;
   // true when app.js holds this book but the plugins never heard it open,
   // which happens only while a shelf export borrows it
   function borrowed(bookId) {
@@ -193,18 +199,23 @@
     sendChanges();
     if (event === 'book-open') {
       openId = detail.bookId;
+      drawnId = null;
       openings++;
       tellOpen(registry.values(), detail);
       return;
     }
     // the chapters were drawn anew, and every Range into them ended: the
     // highlights are built again before the plugins hear of it
-    if (event === 'rendered') repaint();
+    if (event === 'rendered') {
+      drawnId = detail.bookId;
+      repaint();
+    }
     dispatch(listenersOf(event), detail);
     // its listeners could still read the closing book; a place names no
     // book, so the highlights go with it
     if (event === 'book-close') {
       openId = null;
+      drawnId = null;
       for (const entry of registry.values()) unpaintAll(entry);
     }
   }
@@ -234,8 +245,9 @@
   }
 
   // a chapter of the open book as the page shows it, or null when it is
-  // not drawn
+  // not drawn (the page is the open book's only once it has been drawn)
   function bodyOf(chId) {
+    if (!drawn()) return null;
     for (const chapter of document.querySelectorAll('#chapters .chapter')) {
       if (chapter.dataset.id === chId) return chapter.querySelector('.chapter-body');
     }
@@ -340,9 +352,10 @@
 
   // Where the writer is, as a place: captureCaret's (chId, pIdx, off,
   // scroll) plus len, the length selected when the selection starts and
-  // ends in one paragraph, else 0. null off the manuscript.
+  // ends in one paragraph, else 0. null off the manuscript, and before the
+  // open book is drawn.
   function where() {
-    if (!openedBook() || get.currentTab() !== 'manuscript') return null;
+    if (!openedBook() || !drawn() || get.currentTab() !== 'manuscript') return null;
     const caret = get.captureCaret();
     if (!caret) return null;
     const range = getSelection().getRangeAt(0);
