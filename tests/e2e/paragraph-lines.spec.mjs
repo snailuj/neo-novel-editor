@@ -406,20 +406,19 @@ test('a page opened in its sheet has no line break between paragraphs', async ()
 const SECOND = 'chapter-second';
 const COMPACT = '<p>Beta one.</p><p>Beta two.</p>';
 
-// seedBook with a second chapter, whose file is written just as given
+// seedBook with a second chapter, whose file is written just as given. The
+// book is opened again, so the page and savedHTML hold what the files hold.
 async function seedWithSecond(page, html, second) {
-  return page.evaluate(async ({ html, chId, second }) => {
-    const meta = await neo.createBook({ title: 'Synthetic book', author: 'Test author' });
-    meta.chapterOrder = ['chapter-synthetic', chId];
-    await neo.writeBookMeta(meta.id, meta);
-    await neo.writeChapter(meta.id, 'chapter-synthetic', html);
-    await neo.writeChapter(meta.id, chId, second);
-    const lib = await neo.readLibrary();
-    lib.shelves[0].bookIds.push(meta.id);
-    await neo.writeLibrary(lib);
-    await openBook(meta.id);
-    return meta.id;
-  }, { html, chId: SECOND, second });
+  const bookId = await seedBook(page, html);
+  await page.evaluate(async ({ chId, second }) => {
+    const bookId = book.id;
+    book.chapterOrder.push(chId);
+    await neo.writeChapter(bookId, chId, second);
+    await saveMeta();
+    await backToShelf();
+    await openBook(bookId);
+  }, { chId: SECOND, second });
+  return bookId;
 }
 
 test('a structural undo leaves a compact chapter that was not touched as it is on disk', async () => {

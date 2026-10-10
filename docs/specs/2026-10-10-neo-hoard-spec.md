@@ -25,9 +25,9 @@ Neo-Hoard replaces hoard for writing projects. Neo gains the librarian's abiliti
 
 ## Chapter file format
 
-A chapter file holds one paragraph per line (`paragraphLines` in `app.js`), so Git blame and diffs follow paragraphs. The page holds no line-break nodes between paragraphs (`dropLineBreaks`), and a chapter the writer did not change keeps the bytes it has on disk, compact or lined.
+A chapter file holds one paragraph per line (`paragraphLines` in `app.js`), so Git blame and diffs follow paragraphs. The page holds no line-break nodes between paragraphs (`dropLineBreaks`), and a chapter the writer did not change keeps the bytes it has on disk, compact or lined. Any saved edit converts that chapter to the lined form, even if the writer later undoes it (a card moved out and back, or typing that was saved and then deleted).
 
-Known limit: a library shared with a device running upstream Neo, desktop or Pocket, shows the line-break nodes on that device's page, because upstream renders lined files without `dropLineBreaks`. The caret paths that expect paragraphs to stand alone then misbehave there. A darling cut from the start of a paragraph is restored as loose words outside any paragraph, and a script pasted at a caret on the body lands too far down. This stays until paragraph-per-line goes upstream or the fork stops sharing libraries with upstream devices. The review of 10 October 2026 ruled it later.
+Known limit: a library shared with a device running upstream Neo, desktop or Pocket, holds the line-break nodes on that device's page, because upstream renders lined files without `dropLineBreaks`. The caret paths that expect paragraphs to stand alone then misbehave there. A darling cut from the start of a paragraph is restored as loose words outside any paragraph, and a script pasted at a caret on the body lands too far down. This stays until paragraph-per-line goes upstream or the fork stops sharing libraries with upstream devices. The review of 10 October 2026 deferred it.
 
 ## Suggestion and review model
 
