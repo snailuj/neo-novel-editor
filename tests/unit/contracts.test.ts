@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync, cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -57,19 +60,29 @@ test('drift is caught', () => {
 // checked nothing, and the drift gate passed silently.
 test('check cannot be skipped by reaching the script through a link', () => {
   const tmp = mkdtempSync(path.join(tmpdir(), 'hoard-gen-'));
+  const link = path.join(tmp, 'link');
   try {
-    cpSync(path.join(root, 'schemas'), path.join(tmp, 'schemas'), { recursive: true });
-    cpSync(path.join(root, 'src', 'generated'), path.join(tmp, 'src', 'generated'), { recursive: true });
-    appendFileSync(path.join(tmp, 'src', 'generated', 'validators.cjs'), '// hand edit' + String.fromCharCode(10));
-
-    const link = path.join(tmp, 'repo-link');
-    symlinkSync(root, link, 'junction');
-    for (const script of [gen, path.join(link, 'tools', 'gen.mjs')]) {
-      const { status, output } = runScript(script, '--check', '--root', tmp);
+    // A copy of the command beside a library that reports drift: the test is about how the
+    // script is reached, not what it finds. The link leads to the copy, never into the
+    // repository: a run cut off here leaves the link in the temp folder, and a recursive
+    // delete by a tool that follows links would take the repository with it.
+    const real = path.join(tmp, 'real');
+    mkdirSync(real);
+    copyFileSync(gen, path.join(real, 'gen.mjs'));
+    writeFileSync(
+      path.join(real, 'generate.mjs'),
+      "export async function generate() { return { schemas: [], differing: ['src/generated/validators.cjs'] }; }\n",
+    );
+    symlinkSync(real, link, 'junction');
+    assert.ok(realpathSync(link).startsWith(realpathSync(tmp)), 'the link stays in the temp folder');
+    for (const script of [path.join(real, 'gen.mjs'), path.join(link, 'gen.mjs')]) {
+      const { status, output } = runScript(script, '--check');
       assert.equal(status, 1, script + ': ' + output);
       assert.match(output, /validators\.cjs/);
     }
   } finally {
+    // The link itself first; the recursive delete below then has none to meet.
+    rmSync(link, { force: true });
     rmSync(tmp, { recursive: true, force: true });
   }
 });
