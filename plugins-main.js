@@ -288,16 +288,19 @@ function listenersOf(event) {
 // to neo-errors.log, a file in the synced library written on the main
 // thread, on every save. Its first failure is logged, then one a minute at
 // most, with a count of those left out, as plugins.js does in the window.
+// One function that serves two events or channels has a minute for each.
 const QUIET_MS = 60000;
-let failures = new WeakMap(); // listener or handler -> { at, untold }
+let failures = new WeakMap(); // listener or handler -> Map of event -> { at, untold }
 function logFailure(entry, fn, event, err, noun = 'listener') {
   const now = performance.now();
-  const last = failures.get(fn);
+  if (!failures.has(fn)) failures.set(fn, new Map());
+  const byEvent = failures.get(fn);
+  const last = byEvent.get(event);
   if (last && now - last.at < QUIET_MS) {
     last.untold++;
     return;
   }
-  failures.set(fn, { at: now, untold: 0 });
+  byEvent.set(event, { at: now, untold: 0 });
   const more = last && last.untold ? `${last.untold} more failures of this ${noun} since its last line; the latest: ` : '';
   host.logError(`plugin ${entry.id}: ${event}`, more + textOf(err));
 }

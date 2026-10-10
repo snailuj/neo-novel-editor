@@ -892,6 +892,29 @@ describe('a plugin\'s main half', { concurrency: 1 }, () => {
     assert.match(logs[4], /^\[plugin keeper: invoke throws\] Error: throws every time\n/);
   });
 
+  test('one function that handles two channels is logged for each, once a minute, as a failure of each', async (t) => {
+    const clock = { now: 0 };
+    t.mock.method(performance, 'now', () => clock.now);
+    const app = withMains({ keeper });
+    const { handlers, logs } = wire({ appRoot: app });
+    plugins.activateMains();
+    const { host } = mainOf(app, 'keeper');
+    const shared = () => { throw new Error('shared fails'); };
+    host.handle('first', shared);
+    host.handle('second', shared);
+    for (let i = 0; i < 5; i++) {
+      await assert.rejects(invoke(handlers, 'keeper', 'first'), /shared fails/);
+      await assert.rejects(invoke(handlers, 'keeper', 'second'), /shared fails/);
+    }
+    assert.equal(logs.length, 2, 'the first failure on each channel');
+    assert.match(logs[0], /^\[plugin keeper: invoke first\] Error: shared fails\n/);
+    assert.match(logs[1], /^\[plugin keeper: invoke second\] Error: shared fails\n/);
+    clock.now += 60000;
+    await assert.rejects(invoke(handlers, 'keeper', 'second'), /shared fails/);
+    assert.equal(logs.length, 3);
+    assert.match(logs[2], /^\[plugin keeper: invoke second\] 4 more failures of this handler since its last line; the latest: Error: shared fails\n/);
+  });
+
   test('after-write listeners hear each write on a later turn; one that throws or rejects is logged and the rest still hear it', async () => {
     const app = withMains({ keeper, other: keeper });
     const { logs } = wire({ appRoot: app });
@@ -1338,8 +1361,8 @@ describe('the window half', () => {
     assert.deepEqual(calls, ['throws', 'rejects', 'after']);
     await settled();
     assert.equal(logged.length, 2, logged.join('\n'));
-    assert.match(logged[0], /^plugin p: Error: thrown on purpose\n\s+at /);
-    assert.match(logged[1], /^plugin p: Error: rejected on purpose\n\s+at /);
+    assert.match(logged[0], /^plugin p: chapter-saved: Error: thrown on purpose\n\s+at /);
+    assert.match(logged[1], /^plugin p: chapter-saved: Error: rejected on purpose\n\s+at /);
   });
 
   test('a listener that throws what has no text form is logged, and emit never throws', async () => {
@@ -1355,10 +1378,10 @@ describe('the window half', () => {
     assert.deepEqual(calls, ['change', 'symbol', 'bare', 'rejects']);
     await settled();
     assert.deepEqual(logged, [
-      'plugin p: Symbol(change)',
-      'plugin p: Symbol(boom)',
-      'plugin p: (a value of type object with no text form)',
-      'plugin p: Symbol(later)'
+      'plugin p: chapter-change: Symbol(change)',
+      'plugin p: book-close: Symbol(boom)',
+      'plugin p: book-close: (a value of type object with no text form)',
+      'plugin p: book-close: Symbol(later)'
     ]);
   });
 
@@ -1374,21 +1397,21 @@ describe('the window half', () => {
     };
     await saves(100);
     assert.equal(logged.length, 2, 'the first failure of each listener');
-    assert.match(logged[0], /^plugin p: Error: throws every time\n\s+at /);
-    assert.match(logged[1], /^plugin p: Error: rejects every time\n\s+at /);
+    assert.match(logged[0], /^plugin p: chapter-saved: Error: throws every time\n\s+at /);
+    assert.match(logged[1], /^plugin p: chapter-saved: Error: rejects every time\n\s+at /);
     clock.now += 59999;
     await saves(10);
     assert.equal(logged.length, 2);
     clock.now += 1;
     await saves(1);
     assert.equal(logged.length, 4);
-    assert.match(logged[2], /^plugin p: 109 more failures of this listener since its last line; the latest: Error: throws every time\n\s+at /);
-    assert.match(logged[3], /^plugin p: 109 more failures of this listener since its last line; the latest: Error: rejects every time\n\s+at /);
+    assert.match(logged[2], /^plugin p: chapter-saved: 109 more failures of this listener since its last line; the latest: Error: throws every time\n\s+at /);
+    assert.match(logged[3], /^plugin p: chapter-saved: 109 more failures of this listener since its last line; the latest: Error: rejects every time\n\s+at /);
     // a minute with none, and the next is logged as a first
     clock.now += 60000;
     await saves(1);
     assert.equal(logged.length, 6);
-    assert.match(logged[4], /^plugin p: Error: throws every time\n/);
+    assert.match(logged[4], /^plugin p: chapter-saved: Error: throws every time\n/);
   });
 
   test('book() and a late book-open read only the book the plugins heard open, never one a shelf export borrowed', () => {
@@ -1597,6 +1620,24 @@ describe('the window half', () => {
     assert.equal(logged().length, 4);
   });
 
+  test('one function that listens to two events is logged for each, once a minute, and each line names its event', () => {
+    const { NeoPlugins, neo, logged, clock } = withPlugin();
+    const shared = () => { throw new Error('shared fails'); };
+    neo.on('chapter-saved', shared);
+    neo.on('book-close', shared);
+    for (let i = 0; i < 5; i++) {
+      NeoPlugins.emit('chapter-saved', { bookId: 'b', chId: 'c' });
+      NeoPlugins.emit('book-close', { bookId: 'b' });
+    }
+    assert.equal(logged.length, 2, 'the first failure on each event');
+    assert.match(logged[0], /^plugin p: chapter-saved: Error: shared fails\n\s+at /);
+    assert.match(logged[1], /^plugin p: book-close: Error: shared fails\n\s+at /);
+    clock.now += 60000;
+    NeoPlugins.emit('book-close', { bookId: 'b' });
+    assert.equal(logged.length, 3);
+    assert.match(logged[2], /^plugin p: book-close: 4 more failures of this listener since its last line; the latest: Error: shared fails\n\s+at /);
+  });
+
   test('an error the host throws for a plugin\'s own callback is credited to the plugin whose script is in its stack', () => {
     const styled = (id) => ({ id, apiVersion: 1, rendererUrl: `plugins/${id}/renderer.js`, styleUrl: null });
     const host = windowHalf(['works', 'other'].map(styled));
@@ -1693,8 +1734,8 @@ describe('the window half', () => {
         await settled();
         await settled();
         assert.equal(host.consoled.length, 2, host.consoled.join('\n'));
-        assert.match(host.consoled[0], /^plugin p: Error: a listener throws on purpose\n[\s\S]*Error: log down/);
-        assert.match(host.consoled[1], /^plugin p: Error: a listener rejects on purpose\n[\s\S]*Error: log down/);
+        assert.match(host.consoled[0], /^plugin p: chapter-saved: Error: a listener throws on purpose\n[\s\S]*Error: log down/);
+        assert.match(host.consoled[1], /^plugin p: chapter-saved: Error: a listener rejects on purpose\n[\s\S]*Error: log down/);
       }
     } finally {
       process.off('unhandledRejection', onUnhandled);

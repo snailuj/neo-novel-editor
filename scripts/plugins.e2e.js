@@ -847,8 +847,8 @@ test('listeners that throw or reject', async () => {
   assert.match(chapterFile(owls.id, chId), /Elk/);
   assert.deepEqual((await js('window.__calls')).slice(0, 3), ['throws', 'rejects', 'after']);
   const log = await logWith('a listener rejects on purpose');
-  assert.match(log, /plugin probe: Error: a listener throws on purpose\r?\n\s+at /);
-  assert.match(log, /plugin probe: Error: a listener rejects on purpose\r?\n\s+at /);
+  assert.match(log, /plugin probe: chapter-saved: Error: a listener throws on purpose\r?\n\s+at /);
+  assert.match(log, /plugin probe: chapter-saved: Error: a listener rejects on purpose\r?\n\s+at /);
   // nothing reached NEO's own net for errors, which would tell the writer
   assert.doesNotMatch(log, /Unhandled: .*on purpose/);
   assert.equal(await js(`document.getElementById('hint').textContent`), '', 'nothing was shown to the writer');
@@ -856,7 +856,7 @@ test('listeners that throw or reject', async () => {
   await js('backToShelf()');
   await tick(200);
   assert.equal(await js(`book === null && !document.getElementById('bookshelf-view').hidden`), true, 'back on the shelf');
-  assert.match(await logWith('Symbol(boom)'), /plugin probe: Symbol\(boom\)/);
+  assert.match(await logWith('Symbol(boom)'), /plugin probe: book-close: Symbol\(boom\)/);
   await js(`openBook(${str(owls.id)})`);
   await tick(300);
   // unsubscribed, they are not called again

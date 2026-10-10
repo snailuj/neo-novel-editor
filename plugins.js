@@ -103,12 +103,12 @@
     }
   }
 
-  // The listeners a plugin added for an event, as { entry, fn }, in the order
-  // the plugins registered
+  // The listeners a plugin added for an event, as { entry, fn, event }, in the
+  // order the plugins registered
   function listenersOf(event, entries = registry.values()) {
     const out = [];
     for (const entry of entries) {
-      for (const fn of entry.listeners.get(event) || []) out.push({ entry, fn });
+      for (const fn of entry.listeners.get(event) || []) out.push({ entry, fn, event });
     }
     return out;
   }
@@ -118,19 +118,22 @@
   // moves; so would a plugin's script that errors on every tick of a timer.
   // The first failure is logged, then one a minute at most, with a count of
   // those left out. key is what fails (the listener, or an object standing
-  // for a plugin's script), and what names it in the line.
+  // for a plugin's script), and what names it in the line. A listener that
+  // is on two events fails on each, with its own minute and its event named.
   const QUIET_MS = 60000;
-  const failures = new WeakMap(); // key -> { at, untold }
-  function logFailure(id, key, err, what = 'listener') {
+  const failures = new WeakMap(); // key -> Map of event -> { at, untold }
+  function logFailure(id, key, err, what = 'listener', event = '') {
     const now = performance.now();
-    const last = failures.get(key);
+    if (!failures.has(key)) failures.set(key, new Map());
+    const byEvent = failures.get(key);
+    const last = byEvent.get(event);
     if (last && now - last.at < QUIET_MS) {
       last.untold++;
       return;
     }
-    failures.set(key, { at: now, untold: 0 });
+    byEvent.set(event, { at: now, untold: 0 });
     const more = last && last.untold ? `${last.untold} more failures of this ${what} since its last line; the latest: ` : '';
-    log(id, more + text(err));
+    log(id, (event ? event + ': ' : '') + more + text(err));
   }
 
   // Calls a plugin's function. What it throws, or what its promise rejects
@@ -151,8 +154,8 @@
     if (!listeners.length) return;
     if (detail.place) Object.freeze(detail.place);
     Object.freeze(detail);
-    for (const { entry, fn } of listeners) {
-      if (!entry.disposed) call(fn, detail, (err) => logFailure(entry.id, fn, err));
+    for (const { entry, fn, event } of listeners) {
+      if (!entry.disposed) call(fn, detail, (err) => logFailure(entry.id, fn, err, 'listener', event));
     }
   }
 
