@@ -272,7 +272,12 @@ test('markers are narrow enough for the packages NEO depends on', () => {
 type PackContext = {
   appOutDir: string;
   electronPlatformName: string;
-  packager: { projectDir: string; appInfo: { productFilename: string } };
+  packager: {
+    projectDir: string;
+    appInfo: { productFilename: string };
+    config?: Record<string, unknown>;
+    platformSpecificBuildOptions?: Record<string, unknown>;
+  };
 };
 type FakePackage = { context: PackContext; project: string; resources: string; unpacked: string };
 
@@ -288,13 +293,24 @@ function put(dir: string, file: string, text = '{}'): void {
 // app.asar next to app.asar.unpacked, which holds node_modules/dictionary-ro.
 async function fakePackage(
   platform: string,
-  options: { git?: boolean; extra?: string[]; asar?: boolean; unpack?: boolean } = {},
+  options: {
+    git?: boolean;
+    extra?: string[];
+    asar?: boolean;
+    unpack?: boolean;
+    // more tracked files in the project, with their text
+    files?: Record<string, string>;
+    // electron-builder's build config and the running platform's own section of it
+    config?: Record<string, unknown>;
+    platformOptions?: Record<string, unknown>;
+  } = {},
 ): Promise<FakePackage> {
   const base = mkdtempSync(path.join(tmpdir(), 'hoard-pack-'));
   fakePackages.push(base);
   const project = path.join(base, 'project');
   const app = path.join(base, 'app');
   for (const file of TRACKED_FILES) put(project, file);
+  for (const [file, text] of Object.entries(options.files ?? {})) put(project, file, text);
   if (options.git !== false) {
     execFileSync('git', ['init', '-q'], { cwd: project });
     execFileSync('git', ['add', '-A'], { cwd: project });
@@ -315,7 +331,12 @@ async function fakePackage(
   const context = {
     appOutDir,
     electronPlatformName: platform,
-    packager: { projectDir: project, appInfo: { productFilename: 'NEO' } },
+    packager: {
+      projectDir: project,
+      appInfo: { productFilename: 'NEO' },
+      config: options.config,
+      platformSpecificBuildOptions: options.platformOptions,
+    },
   };
   return { context, project, resources, unpacked: path.join(resources, 'app.asar.unpacked') };
 }
@@ -470,6 +491,176 @@ test('afterPack fails on an app.asar.unpacked it cannot stat, rather than treati
   } finally {
     denied.mock.restore();
   }
+});
+
+// Files can reach the package without passing app.asar's tracked-file rule. The project's
+// node_modules can hold a link to a folder of the project (dictionary-hu is
+// `file:dictionaries/hu`), and electron-builder reads through it and unpacks the contents as
+// plain files. extraResources copy a folder as it is. An untracked file in either source
+// ships, so the hook checks the sources, not only the result.
+const CHAPTER = 'Chapter 3.txt';
+const LOCK = JSON.stringify({
+  lockfileVersion: 3,
+  packages: {
+    '': {},
+    'node_modules/dictionary-hu': { resolved: 'dictionaries/hu', link: true },
+    'dictionaries/hu': { version: '1.0.0' },
+  },
+});
+const HUNSPELL = { extraResources: [{ from: 'licenses/hunspell', to: 'licenses/hunspell' }] };
+
+function linkPackage(project: string, name: string, target: string): void {
+  mkdirSync(path.dirname(path.join(project, 'node_modules', name)), { recursive: true });
+  symlinkSync(target, path.join(project, 'node_modules', name), 'junction');
+}
+
+test('findMarked applies the writing markers alone', () => {
+  const { findMarked } = createRequire(import.meta.url)(path.join(root, 'tools', 'stray-files.cjs')) as {
+    findMarked(packaged: string[]): Stray[];
+  };
+  const found = findMarked(['licenses/hunspell/book.json', 'app-update.yml', 'licenses/COPYING', 'tsconfig.json']);
+  assert.deepEqual(found.map((s) => s.path), ['licenses/hunspell/book.json']);
+  assert.match(found[0].reason, /writing/);
+});
+
+test('afterPack refuses an untracked file in a package the project links to', async () => {
+  const { context, project, unpacked } = await fakePackage('win32', {
+    files: { 'package-lock.json': LOCK, 'dictionaries/hu/index.dic': 'dic' },
+  });
+  linkPackage(project, 'dictionary-hu', path.join(project, 'dictionaries', 'hu'));
+  put(project, `dictionaries/hu/${CHAPTER}`, 'words');
+  // what electron-builder does through the link
+  put(unpacked, 'node_modules/dictionary-hu/index.dic');
+  put(unpacked, `node_modules/dictionary-hu/${CHAPTER}`, 'words');
+  await assert.rejects(afterPack(context), (err: Error) => {
+    assert.match(err.message, /dictionaries\/hu\/Chapter 3\.txt: untracked file/);
+    assert.match(err.message, /1 stray file/, 'the lock file and node_modules name one folder, reported once');
+    return true;
+  });
+});
+
+test('afterPack passes a linked package whose folder is all tracked', async () => {
+  const { context, project, unpacked } = await fakePackage('win32', {
+    files: { 'package-lock.json': LOCK, 'dictionaries/hu/index.dic': 'dic' },
+  });
+  linkPackage(project, 'dictionary-hu', path.join(project, 'dictionaries', 'hu'));
+  put(unpacked, 'node_modules/dictionary-hu/index.dic');
+  await checked(context);
+});
+
+test('afterPack checks a link the lock file names when node_modules has none', async () => {
+  const { context, project } = await fakePackage('win32', {
+    files: { 'package-lock.json': LOCK, 'dictionaries/hu/index.dic': 'dic' },
+  });
+  put(project, `dictionaries/hu/${CHAPTER}`);
+  await assert.rejects(afterPack(context), /dictionaries\/hu\/Chapter 3\.txt: untracked file/);
+});
+
+test('afterPack checks a link in node_modules that no lock file names', async () => {
+  const { context, project } = await fakePackage('win32', { files: { 'dictionaries/hu/index.dic': 'dic' } });
+  linkPackage(project, 'dictionary-hu', path.join(project, 'dictionaries', 'hu'));
+  put(project, `dictionaries/hu/${CHAPTER}`);
+  await assert.rejects(afterPack(context), /dictionaries\/hu\/Chapter 3\.txt: untracked file/);
+});
+
+test('afterPack counts a git-ignored file in a source folder as untracked', async () => {
+  const { context, project } = await fakePackage('win32', {
+    files: { '.gitignore': '*.secret\n', 'package-lock.json': LOCK, 'dictionaries/hu/index.dic': 'dic' },
+  });
+  put(project, 'dictionaries/hu/draft.secret');
+  await assert.rejects(afterPack(context), /dictionaries\/hu\/draft\.secret: untracked file/);
+});
+
+test('afterPack refuses a package in node_modules that resolves outside the project', async () => {
+  for (const name of ['linked', '@neo/linked']) {
+    const { context, project } = await fakePackage('win32');
+    const vault = path.join(context.appOutDir, '..', 'vault');
+    put(vault, 'book.json');
+    linkPackage(project, name, vault);
+    await assert.rejects(afterPack(context), (err: Error) => {
+      assert.match(err.message, new RegExp(`node_modules/${name}: .*outside the project`));
+      assert.doesNotMatch(err.message, /book\.json/, 'the link is not followed');
+      return true;
+    });
+  }
+});
+
+test('afterPack refuses a node_modules that itself resolves outside the project', async () => {
+  const { context, project } = await fakePackage('win32');
+  const elsewhere = path.join(context.appOutDir, '..', 'elsewhere');
+  mkdirSync(elsewhere);
+  rmSync(path.join(project, 'node_modules'), { recursive: true });
+  symlinkSync(elsewhere, path.join(project, 'node_modules'), 'junction');
+  await assert.rejects(afterPack(context), /node_modules: .*outside the project/);
+});
+
+test('afterPack checks every extraResources source for untracked files', async () => {
+  const sections = {
+    'a from and to': { config: HUNSPELL },
+    'a plain string': { config: { extraResources: ['licenses/hunspell'] } },
+    'one entry, not a list': { config: { extraResources: HUNSPELL.extraResources[0] } },
+    'extraFiles': { config: { extraFiles: HUNSPELL.extraResources } },
+    "the platform's own section": { platformOptions: HUNSPELL },
+  };
+  for (const [name, section] of Object.entries(sections)) {
+    const { context, project, resources } = await fakePackage('win32', {
+      files: { 'licenses/hunspell/COPYING': 'mpl' },
+      ...section,
+    });
+    put(project, `licenses/hunspell/${CHAPTER}`);
+    put(resources, 'licenses/hunspell/COPYING');
+    put(resources, `licenses/hunspell/${CHAPTER}`);
+    await assert.rejects(afterPack(context), /licenses\/hunspell\/Chapter 3\.txt: untracked file/, name);
+  }
+});
+
+test('afterPack checks an extraResources source that lands in app.asar.unpacked', async () => {
+  const { context, project, unpacked } = await fakePackage('win32', {
+    files: { 'licenses/dictionary-sv/index.aff': 'aff' },
+    config: {
+      extraResources: [{ from: 'licenses/dictionary-sv', to: 'app.asar.unpacked/node_modules/dictionary-sv' }],
+    },
+  });
+  put(project, `licenses/dictionary-sv/${CHAPTER}`);
+  put(unpacked, 'node_modules/dictionary-sv/index.aff');
+  put(unpacked, `node_modules/dictionary-sv/${CHAPTER}`);
+  await assert.rejects(afterPack(context), /licenses\/dictionary-sv\/Chapter 3\.txt: untracked file/);
+});
+
+test('afterPack refuses an extraResources source it cannot place in the project', async () => {
+  for (const [from, message] of [
+    ['../outside', /\.\.\/outside: .*outside the project/],
+    // an electron-builder macro, written so it is not read as a template string
+    [`licenses/\${arch}`, /cannot check .*\$\{arch\}/],
+  ] as const) {
+    const { context } = await fakePackage('win32', { config: { extraResources: [{ from, to: 'x' }] } });
+    await assert.rejects(afterPack(context), message);
+  }
+});
+
+test('afterPack refuses a package-lock.json it cannot read', async () => {
+  const { context } = await fakePackage('win32', { files: { 'package-lock.json': '{not json' } });
+  await assert.rejects(afterPack(context), /cannot read package-lock\.json/);
+});
+
+test('afterPack looks for writing markers in the whole resources folder', async () => {
+  const { context, resources } = await fakePackage('win32', {
+    files: { 'licenses/hunspell/book.json': '{}' },
+    config: HUNSPELL,
+  });
+  put(resources, 'licenses/hunspell/book.json');
+  await assert.rejects(afterPack(context), /licenses\/hunspell\/book\.json: writing marker/);
+});
+
+test('afterPack leaves the files electron-builder and extraResources put beside the asar alone', async () => {
+  const { context, resources } = await fakePackage('win32', {
+    files: { 'licenses/hunspell/COPYING': 'mpl' },
+    config: HUNSPELL,
+  });
+  for (const file of ['licenses/hunspell/COPYING', 'app-update.yml', 'elevate.exe']) put(resources, file);
+  const line = await checked(context);
+  assert.equal(line.other, 3);
+  assert.equal(line.checked, TRACKED_FILES.length + UNTRACKED_FILES.length + 3);
 });
 
 test('afterPack fails when it cannot check', async () => {

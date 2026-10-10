@@ -89,4 +89,13 @@ function why(file, known) {
   return null;
 }
 
-module.exports = { findStrays };
+// Only the writing markers, for files that have no tracked counterpart to compare with:
+// what electron-builder and Electron put beside the asar, and extraResources.
+function findMarked(packaged) {
+  return packaged.flatMap((raw) => {
+    const reason = markerReason(normalize(raw));
+    return reason ? [{ path: raw, reason }] : [];
+  });
+}
+
+module.exports = { findMarked, findStrays };
