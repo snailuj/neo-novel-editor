@@ -657,7 +657,6 @@ test('afterPack refuses a node_modules that itself resolves outside the project'
 test('afterPack checks every extraResources source for untracked files', async () => {
   const sections = {
     'a from and to': { config: HUNSPELL },
-    'a plain string': { config: { extraResources: ['licenses/hunspell'] } },
     'one entry, not a list': { config: { extraResources: HUNSPELL.extraResources[0] } },
     'extraFiles': { config: { extraFiles: HUNSPELL.extraResources } },
     "the platform's own section": { platformOptions: HUNSPELL },
@@ -1004,6 +1003,53 @@ test('afterPack places a packed path that an extraResources entry put there', as
   const loose = await fakePackage('win32', { files });
   put(loose.unpacked, 'node_modules/dictionary-sv/NOTICE.txt');
   await assert.rejects(afterPack(loose.context), /node_modules\/dictionary-sv: cannot check/);
+});
+
+// electron-builder reads a string extraResources or extraFiles entry as a glob whose source is
+// the whole project (app-builder-lib/out/fileMatcher.js, getFileMatchers: a string goes to the
+// default matcher, which copies from the project directory). 'notes/**' is not a folder
+// 'notes' to look in, so the sources cannot be named, and the copied files would land in
+// resources where only the writing markers apply. Only { from, to } names a source.
+test('afterPack refuses a string extraResources or extraFiles entry, which copies from the whole project', async () => {
+  const pattern = 'notes/**';
+  const forms: Record<string, [string, Record<string, unknown>]> = {
+    'extraResources in a list': ['extraResources', { config: { extraResources: [pattern] } }],
+    'extraFiles in a list': ['extraFiles', { config: { extraFiles: [pattern] } }],
+    'extraResources as a single string': ['extraResources', { config: { extraResources: pattern } }],
+    'extraFiles as a single string': ['extraFiles', { config: { extraFiles: pattern } }],
+    "extraResources in the platform's section": ['extraResources', { platformOptions: { extraResources: [pattern] } }],
+    "extraFiles in the platform's section": ['extraFiles', { platformOptions: { extraFiles: pattern } }],
+  };
+  for (const [name, [label, section]] of Object.entries(forms)) {
+    const { context, project } = await fakePackage('win32', section);
+    put(project, 'notes/private chapter.md', 'words');
+    await assert.rejects(
+      afterPack(context),
+      new RegExp(`cannot check ${label} "notes/\\*\\*": a pattern copies from the whole project; use \\{from, to\\}`),
+      name,
+    );
+  }
+});
+
+// electron-builder skips a `from` that is not there: copyFiles in fileMatcher.js warns "file
+// source doesn't exist" for extraResources and extraFiles, and computeFileSets in
+// util/appFileCopier.js skips a `files` set quietly. Nothing is copied from one, so none is
+// checked. A lock-file link or a link target is not a configured `from`: it has no such skip.
+test('afterPack skips a configured source that is not there, as electron-builder does', async () => {
+  const config = {
+    extraResources: [{ from: 'no-such-folder', to: 'x' }],
+    extraFiles: [{ from: 'nor-this', to: 'y' }],
+    files: [{ from: 'nor-that', to: 'z' }],
+  };
+  await checked((await fakePackage('win32', { config })).context);
+});
+
+test('afterPack fails on a lock-file link whose folder is not there', async () => {
+  const lock = JSON.stringify({
+    packages: { '': {}, 'node_modules/notes': { resolved: 'dictionaries/missing', link: true } },
+  });
+  const { context } = await fakePackage('win32', { files: { 'package-lock.json': lock } });
+  await assert.rejects(afterPack(context), /dictionaries\/missing: source folder does not exist/);
 });
 
 test('afterPack refuses a package-lock.json it cannot read', async () => {
