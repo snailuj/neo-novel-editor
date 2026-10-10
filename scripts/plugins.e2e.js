@@ -792,17 +792,17 @@ test('a plugin script that errors again and again adds no line a tick', async ()
 // unhandled rejection: an invoke its main half refuses, in a listener that
 // does not await it. NEO's net would log "Unhandled:" for each and tell the
 // writer. The host credits the rejection to the plugin, and it is logged
-// under its name, once a minute (the tests above logged this plugin's first).
+// under its name, once a minute. The dropper plugin is used by no other test,
+// so its quiet minute is this test's own: its first refusal is logged, and
+// the other nineteen only counted.
 test('an invoke a plugin does not await, and that is refused, is logged under the plugin and not shown', async () => {
-  const lines = () => (errorLog().match(/\] \[renderer\] plugin timer: /g) || []).length;
-  const before = lines();
-  const runs = await js('window.__timerRuns');
-  await js('window.__timerInvoke(20)');
-  for (let i = 0; i < 100 && (await js('window.__timerRuns')) < runs + 20; i++) await tick(50);
-  assert.equal(await js('window.__timerRuns'), runs + 20, 'all twenty were refused');
+  await js('window.__dropperInvoke(20)');
+  for (let i = 0; i < 100 && (await js('window.__dropperRefused')) < 20; i++) await tick(50);
+  assert.equal(await js('window.__dropperRefused'), 20, 'all twenty were refused');
   await tick(500); // the page reports a dropped rejection a turn later; the log is written through IPC
   assert.doesNotMatch(errorLog(), /Unhandled:/);
-  assert.ok(lines() - before <= 1, `${lines() - before} lines for twenty refusals`);
+  assert.equal(errorLog().split('has a main half to answer index').length - 1, 1, 'one line for twenty refusals');
+  assert.match(errorLog(), /\] \[renderer\] plugin dropper: Error: no plugin called dropper has a main half to answer index\r?\n\s+at /);
   assert.equal(await js('errorToastShown'), false, 'nothing was shown to the writer');
 });
 
