@@ -42,9 +42,10 @@ function validManifest(m) {
 }
 
 // { app, ipcMain, logError, appRoot, readSettings, writeSettings,
-// libraryDir }, from wire(), and activateMs where a test needs another limit
-// than ACTIVATE_MS. readSettings answers {} when there is no settings.json
-// yet and throws when it cannot read or parse the one there.
+// libraryDir }, from wire(), and, where a test needs another, activateMs
+// (ACTIVATE_MS) and defer (see activateMains). readSettings answers {} when
+// there is no settings.json yet and throws when it cannot read or parse the
+// one there.
 let host = null;
 let found = null; // discover()'s answer, kept for the life of the process
 // Each started main half by plugin id: { id, ready, failed, timedOut,
@@ -54,7 +55,7 @@ let found = null; // discover()'s answer, kept for the life of the process
 let mains = new Map();
 
 function wire(deps) {
-  host = { ...deps, activateMs: deps.activateMs ?? ACTIVATE_MS };
+  host = { ...deps, activateMs: deps.activateMs ?? ACTIVATE_MS, defer: deps.defer ?? setImmediate };
   found = null;
   mains = new Map();
   failures = new WeakMap();
@@ -335,16 +336,20 @@ function start(entry, mainPath) {
   });
 }
 
-// Starts the main half of each plugin that has one, once. main.js calls it
-// after creating the window, so no plugin holds the window back, and none
-// is awaited: an activate that returns a promise runs on while NEO starts,
-// and an invoke waits for it.
+// Registers the main half of each plugin that has one, once, and starts it
+// a turn later (host.defer, setImmediate unless a test says otherwise).
+// main.js calls it from its startup callback, and the window's first
+// requests (the preload's sendSync) are answered only once that returns, so
+// a main entry's require, or the part of an activate before its first
+// await, must not run inside it. None is awaited: an activate that returns
+// a promise runs on while NEO starts. An invoke that comes before a main
+// half has started waits for it, as for one still activating.
 function activateMains() {
   for (const m of discover()) {
     if (!m.mainPath || mains.has(m.id)) continue;
     const entry = { id: m.id, ready: null, failed: false, timedOut: false, handlers: new Map(), listeners: new Map() };
     mains.set(m.id, entry);
-    entry.ready = start(entry, m.mainPath);
+    entry.ready = new Promise((resolve) => host.defer(() => resolve(start(entry, m.mainPath))));
   }
 }
 

@@ -35,7 +35,10 @@ afterEach(() => {
 function wire({
   appRoot = root, isPackaged = false, dirs,
   app = { isPackaged, getPath: (name) => path.join(appRoot, name) },
-  settings = {}, library = () => path.join(appRoot, 'NEO Library'), activateMs
+  settings = {}, library = () => path.join(appRoot, 'NEO Library'), activateMs,
+  // plugins-main.js starts each main half a turn after activateMains; the
+  // tests start theirs at once unless a test passes null for its own way
+  defer = (run) => run()
 } = {}) {
   if (dirs === undefined) delete process.env.NEO_PLUGIN_DIRS;
   else process.env.NEO_PLUGIN_DIRS = dirs;
@@ -50,6 +53,7 @@ function wire({
     readSettings: () => structuredClone(saved.settings),
     writeSettings: (obj) => { saved.settings = structuredClone(obj); },
     libraryDir: library,
+    defer,
     ...(activateMs === undefined ? {} : { activateMs })
   });
   return { logs, handlers, saved };
@@ -512,6 +516,21 @@ describe('a plugin\'s main half', { concurrency: 1 }, () => {
     });
   });
 
+  // the window's first requests (sendSync) wait on main.js's startup callback,
+  // which calls activateMains: a main entry's require and the synchronous
+  // start of its activate must not run inside it
+  test('activateMains runs no plugin code itself: each main half starts a turn later, and an invoke sent before waits for it', async () => {
+    const app = withMains({ later: "exports.activate = (host) => { exports.started = true; host.handle('echo', (p) => p); };" });
+    const { handlers, logs } = wire({ appRoot: app, defer: null });
+    plugins.activateMains();
+    plugins.activateMains();
+    const answer = invoke(handlers, 'later', 'echo', 7);
+    assert.equal(mainOf(app, 'later').started, undefined, 'activate has not run');
+    assert.equal(await answer, 7);
+    assert.equal(mainOf(app, 'later').started, true);
+    assert.deepEqual(logs, []);
+  });
+
   test('activateMains starts each main half once, however often it runs', async () => {
     const app = withMains({ once: "let n = 0; exports.activate = (host) => { n++; host.handle('count', () => n); };" });
     const { handlers } = wire({ appRoot: app });
@@ -741,9 +760,9 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
       dialogs,
       call: (channel, ...args) => handlers.get(channel)(null, ...args),
       ready(order) {
-        context.createWindow = () => order.push('createWindow');
-        for (const name of ['announceLibraryFallback', 'initSpell', 'buildMenu', 'checkForUpdates']) context[name] = () => {};
-        context.dailyBackup = async () => {};
+        for (const name of ['createWindow', 'announceLibraryFallback', 'initSpell', 'buildMenu', 'dailyBackup', 'checkForUpdates']) {
+          context[name] = () => { order.push(name); };
+        }
         whenReady();
       }
     };
@@ -759,15 +778,22 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
   });
   after(() => fs.rmSync(profile, { recursive: true, force: true }));
 
-  test('the window is created before any main half activates, and plugin:invoke answers from main.js', async (t) => {
+  // The window's preload asks main.js three things synchronously (sendSync)
+  // and the window waits for the answers, which come once the startup
+  // callback has returned. A main entry's require and the start of its
+  // activate run plugin code of any length, so none of it runs in that callback.
+  test('the window is created and the rest of startup done before any main half activates, and plugin:invoke answers from main.js', async (t) => {
     const order = [];
     const probe = require(probeMain);
     const activate = probe.activate;
     t.mock.method(probe, 'activate', (host) => { order.push('activate probe'); return activate(host); });
     main.ready(order);
-    assert.deepEqual(order, ['createWindow', 'activate probe']);
+    assert.equal(order[0], 'createWindow');
+    assert.ok(order.length > 1, 'the rest of the startup ran');
+    assert.ok(!order.includes('activate probe'), 'no plugin code ran inside the startup callback');
     const neo = windowNeo((channel, ...args) => main.call(channel, ...args));
     assert.deepEqual(await neo.pluginInvoke('probe', 'echo', { a: 1 }), { a: 1 });
+    assert.equal(order.at(-1), 'activate probe');
     assert.doesNotMatch(errorLog(), /\[(startup|plugins)\]/);
   });
 

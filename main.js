@@ -3024,7 +3024,8 @@ app.whenReady().then(() => {
     try { checkLibraryWritable(); } catch (err) { logError('library check', err); }
     try { ensureLibrary(); } catch (err) { logError('library', err); }
     createWindow();
-    // after the window, and never awaited: a plugin's main half can't hold it back
+    // after the window; the main halves start a turn later, so no plugin's code
+    // runs before the window's first requests are answered
     try { plugins.activateMains(); } catch (err) { logError('plugins', err); }
     try { announceLibraryFallback(); } catch (err) { logError('library notice', err); }
     try { initSpell(); } catch (err) { logError('spell', err); }
