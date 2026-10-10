@@ -15,6 +15,18 @@ const PATH_NAMES = [
 // Electron's paths; the harness points them into the profile.
 const VARIABLES = ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP', 'TMPDIR'];
 
+// The calls the app, or a later Electron, can make to the developer's system. The lists
+// say which must exist on this platform, so a harness that stubs an empty object fails.
+const SHELL = [
+  'openExternal', 'openPath', 'showItemInFolder', 'trashItem', 'beep',
+  ...(process.platform === 'win32' ? ['writeShortcutLink', 'readShortcutLink'] : []),
+];
+const DIALOG = [
+  'showOpenDialog', 'showOpenDialogSync', 'showSaveDialog', 'showSaveDialogSync',
+  'showMessageBox', 'showMessageBoxSync', 'showErrorBox',
+  ...(process.platform === 'linux' ? [] : ['showCertificateTrustDialog']),
+];
+
 // Every way for the app to start a program.
 const PROGRAMS = ['exec', 'execFile', 'spawn', 'fork', 'execSync', 'execFileSync', 'spawnSync'];
 
@@ -30,11 +42,13 @@ test('a test run is cut off from the developer\'s system', async () => {
     else process.env.NEO_PLUGIN_DIRS = named;
   }
   try {
-    const seen = await fixture.app.evaluate(({ app, shell, dialog, systemPreferences }, { names, variables, programs }) => {
+    const seen = await fixture.app.evaluate(({ app, shell, dialog, systemPreferences }, { names, variables, programs, calls }) => {
       // The harness marks each stub; a call Electron implements has no mark.
       const unstubbed = (owner) => Object.entries(owner)
         .filter(([, fn]) => typeof fn === 'function' && fn.neoTestStub !== true)
         .map(([name]) => name);
+      const state = (owner, list) => Object.fromEntries(list.map((name) => [name,
+        typeof owner[name] !== 'function' ? 'missing' : owner[name].neoTestStub === true ? 'stub' : 'real']));
       // evaluate has no require; this is the same module object main.js gets.
       const childProcess = process.getBuiltinModule('node:child_process');
       return {
@@ -44,14 +58,20 @@ test('a test run is cut off from the developer\'s system', async () => {
         paths: Object.fromEntries(names.map((name) => [name, app.getPath(name)])),
         unstubbedShell: unstubbed(shell),
         unstubbedDialog: unstubbed(dialog),
+        shell: state(shell, calls.shell),
+        dialog: state(dialog, calls.dialog),
         // macOS writes the app's defaults at every launch.
         setUserDefaultStubbed: systemPreferences.setUserDefault?.neoTestStub === true,
         programs: Object.fromEntries(programs.map((name) => [name, childProcess[name]?.neoTestStub === true])),
       };
-    }, { names: PATH_NAMES, variables: VARIABLES, programs: PROGRAMS });
+    }, { names: PATH_NAMES, variables: VARIABLES, programs: PROGRAMS, calls: { shell: SHELL, dialog: DIALOG } });
 
     expect.soft(seen.pluginDirs).toBeNull();
     expect.soft(seen.neoVariables).toEqual(['NEO_TEST_PROFILE', 'NEO_TEST_VISIBLE']);
+    const allStubs = (list) => Object.fromEntries(list.map((name) => [name, 'stub']));
+    expect.soft(seen.shell).toEqual(allStubs(SHELL));
+    expect.soft(seen.dialog).toEqual(allStubs(DIALOG));
+    // and whatever else Electron has put on them since
     expect.soft(seen.unstubbedShell).toEqual([]);
     expect.soft(seen.unstubbedDialog).toEqual([]);
     expect.soft(seen.setUserDefaultStubbed).toBe(true);
