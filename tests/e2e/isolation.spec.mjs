@@ -107,7 +107,9 @@ test('a missing library folder opens no dialog', async () => {
   }
 });
 
-// book:delete sends a book folder to the system trash. In a test that is the profile's own.
+// book:delete sends a book folder to the system trash, which in a test is the profile's own.
+// This calls shell.trashItem directly: book:delete itself first asks showMessageBox, and the
+// stub answers 0 (Cancel), so a spec of book:delete must override it to answer 1.
 test('trashing moves a folder into the profile and refuses one outside it', async () => {
   const fixture = await launchProfile();
   const outside = await mkdtemp(path.join(tmpdir(), 'neo-outside-'));

@@ -1,5 +1,6 @@
-// What the build produces. Paths in `entry` and `from` are relative to the repository
-// root; `outfile` and `to` are relative to the output directory (plugins/ by default).
+// What the build produces. Paths in `entry` and `from` are relative to the build root (the
+// repository, or the directory named by --root); `outfile` and `to` are relative to the
+// output directory (<root>/plugins by default).
 export const bundles = [
   {
     name: 'renderer',

@@ -46,8 +46,9 @@ dialog.showMessageBox = stubbed(async () => ({ response: 0 }));
 dialog.showErrorBox = stubbed((_title, message) => { throw new Error(message); });
 // The window never opens a browser, a file manager or a file, and writes no shortcut,
 // during a test: every shell call is refused, whatever Electron adds, except trashItem.
-// That moves the item into the profile's trash, so a test of book:delete can see the
-// folder go there; the write guard refuses an item from outside the profile.
+// That moves the item into the profile's trash; the write guard refuses an item from
+// outside the profile. A spec of book:delete that watches the folder go there must first
+// override dialog.showMessageBox to answer 1: the stub answers 0, which is Cancel there.
 refuse(shell, 'shell');
 shell.trashItem = stubbed(async (target) => {
   fs.renameSync(target, path.join(profile, 'trash', Date.now() + '-' + path.basename(target)));
