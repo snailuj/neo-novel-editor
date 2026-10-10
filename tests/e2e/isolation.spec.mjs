@@ -4,6 +4,7 @@ import fsFunctions from '../support/fs-functions.cjs';
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Paths Electron can name that the app or Electron itself writes under. The harness sets
 // each of them inside the profile, so a test never resolves one to the developer's own.
@@ -133,6 +134,39 @@ test('a test run is cut off from the developer\'s system', async () => {
     expect.soft(Object.entries(seen.paths).filter(([, target]) => !inProfile(target))).toEqual([]);
     expect.soft(Object.entries(seen.variables).filter(([, target]) => !inProfile(target))).toEqual([]);
   } finally { await fixture.close(); }
+});
+
+// The rule: every way main-process code can reach a function that writes a file gets the guarded
+// function or a refusal. A plugin's main half is code of that kind, and so is anything it loads.
+// Each route is tried for each specifier of fs and of Electron's original-fs (fs without the
+// guard), with the write aimed outside the profile; nothing may be written. Two more modules
+// lead to the same place: child_process (a program writes), worker_threads (a thread has an fs
+// of its own, which no patch to this one reaches). The named imports matter: a facade of a
+// builtin is a copy of its exports made at the first import, so patched functions are missed
+// unless it is synced.
+const ROUTES = ['require', 'import default', 'import named', 'getBuiltinModule'];
+const SPECIFIERS = [
+  'fs', 'node:fs', 'fs/promises', 'node:fs/promises', 'original-fs', 'original-fs/promises',
+  'child_process', 'node:child_process', 'worker_threads', 'node:worker_threads',
+];
+
+test('no route to a function that writes a file leads round the guard', async () => {
+  const fixture = await launchProfile();
+  const outsideFile = path.join(tmpdir(), `neo-isolation-routes-${process.pid}.txt`);
+  try {
+    const cases = ROUTES.flatMap((route) => SPECIFIERS.map((id) => [route, id]));
+    // import() works only in a module the loader knows, so the routes run from a file of their own
+    const outcomes = await fixture.app.evaluate(async (_electron, { helper, cases, outsideFile }) => {
+      const load = process.getBuiltinModule('node:module').createRequire(helper);
+      return load(helper).tryRoutes(cases, outsideFile);
+    }, { helper: fileURLToPath(new URL('../support/fs-routes.cjs', import.meta.url)), cases, outsideFile });
+    expect(outcomes).toEqual(Object.fromEntries(cases.map(([route, id]) => [`${route} ${id}`, 'refused'])));
+  } finally {
+    for (const name of await readdir(tmpdir())) {
+      if (name.startsWith(path.basename(outsideFile))) await rm(path.join(tmpdir(), name), { force: true });
+    }
+    await fixture.close();
+  }
 });
 
 // index.html's policy restricts scripts and objects only, so a chapter's image or a plugin's

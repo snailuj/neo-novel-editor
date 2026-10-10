@@ -18,6 +18,7 @@ const Module = require('module');
 const os = require('os');
 const path = require('path');
 const { fileURLToPath } = require('url');
+const workerThreads = require('worker_threads');
 
 // The variables that name a user's folders. Child processes, Chromium and libraries read these
 // and not Electron's paths.
@@ -49,7 +50,8 @@ function stubbed(fn) {
 // (a truthy one).
 function refuse(owner, label, { names = Object.keys(owner), answersAtOnce = () => false } = {}) {
   for (const name of names) {
-    const fail = () => { throw new Error(label + '.' + name + ' is disabled in tests'); };
+    // a function and not an arrow, so that `new` on a refused class reaches the throw
+    const fail = function () { throw new Error(label + '.' + name + ' is disabled in tests'); };
     owner[name] = stubbed(answersAtOnce(name) ? fail : async () => fail());
   }
 }
@@ -171,6 +173,8 @@ function isolate(profile, {
     names: ['exec', 'execFile', 'spawn', 'fork', 'execSync', 'execFileSync', 'spawnSync'],
     answersAtOnce: () => true
   });
+  // A worker thread has an fs of its own, which no patch to this one reaches.
+  refuse(workerThreads, 'worker_threads', { names: ['Worker'], answersAtOnce: () => true });
 
   // main.js forks one utility process, the spell worker. No other process starts, by this
   // route either; that one is the only module the fork is let through for.
@@ -195,25 +199,33 @@ function isolate(profile, {
   ));
 
   globalThis.fetch = stubbed(async () => { throw new Error('Network access is disabled in tests'); });
-  // Electron's original-fs is fs without the guard above, which a plugin's main half could
-  // require, or fetch with getBuiltinModule.
-  const refuseOriginalFs = (id) => {
-    if (/^(node:)?original-fs(\/|$)/.test(String(id))) throw new Error('original-fs is disabled in tests');
-  };
-  // Module._load is private, but the one hook that sees every require, a plugin's included.
-  const load = Module._load;
-  Module._load = function (request, ...args) {
-    if (request === 'electron-updater') throw new Error('Updates are disabled in tests');
-    refuseOriginalFs(request);
-    return load.call(this, request, ...args);
-  };
+  // Electron's original-fs is fs without the guard above, which a plugin's main half could load
+  // by require, by import() or by getBuiltinModule; electron-updater would look for an update.
+  const isOriginalFs = (id) => /^(node:)?original-fs(\/|$)/.test(String(id));
+  if (typeof Module.registerHooks !== 'function') {
+    throw new Error('isolate() needs module.registerHooks, from Node 22.15, to refuse original-fs');
+  }
+  // A resolve hook sees every require and every import, in any module, which no wrapper of
+  // require or import() does.
+  Module.registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (isOriginalFs(specifier)) throw new Error('original-fs is disabled in tests');
+      if (specifier === 'electron-updater') throw new Error('Updates are disabled in tests');
+      return nextResolve(specifier, context);
+    }
+  });
+  // getBuiltinModule loads a builtin without resolving it
   const getBuiltinModule = process.getBuiltinModule;
   if (typeof getBuiltinModule === 'function') {
     process.getBuiltinModule = stubbed((id) => {
-      refuseOriginalFs(id);
+      if (isOriginalFs(id)) throw new Error('original-fs is disabled in tests');
       return getBuiltinModule.call(process, id);
     });
   }
+
+  // import gives a builtin's named exports from a copy made when it was first imported, so
+  // `import { writeFileSync } from 'fs'` would still be the function patched out above.
+  Module.syncBuiltinESMExports();
 }
 
 module.exports = { isolate, stubbed, variables };

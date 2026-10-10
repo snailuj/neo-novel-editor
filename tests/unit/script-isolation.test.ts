@@ -78,9 +78,14 @@ type Run = {
   os: Anything;
   fs: Anything;
   childProcess: Anything;
+  workerThreads: Anything;
   moduleLoader: Anything;
+  hooks: { resolve?: (specifier: string, context: unknown, next: (specifier: string) => unknown) => unknown };
+  synced: { count: number; afterPatching: boolean };
   process: Anything;
   context: Anything;
+  // What the registered resolve hook answers for a specifier (the next resolver says 'resolved <it>').
+  resolve: (specifier: string) => unknown;
   main: { dir: string; file: string };
 };
 
@@ -149,7 +154,18 @@ function run(target: Target): Run {
   const fakeOs: Anything = { ...os, homedir: () => developer, tmpdir: () => systemTmp };
   const fakeFs: Anything = { ...fs, promises: { ...fs.promises } };
   const fakeChildProcess: Anything = { ...childProcess };
-  const moduleLoader: Anything = { _load: (request: string) => `loaded ${request}` };
+  // The resolve hook the setup registers, and what was patched when the ESM facades were synced.
+  const hooks: { resolve?: (specifier: string, context: unknown, next: (specifier: string) => unknown) => unknown } = {};
+  const synced: { count: number; afterPatching: boolean } = { count: 0, afterPatching: false };
+  const fakeWorkerThreads: Anything = { Worker: class {} };
+  const moduleLoader: Anything = {
+    registerHooks: (registered: typeof hooks) => { Object.assign(hooks, registered); },
+    syncBuiltinESMExports: () => {
+      synced.count += 1;
+      synced.afterPatching = fakeFs.writeFileSync.neoTestGuard === true
+        && fakeChildProcess.exec.neoTestStub === true && fakeWorkerThreads.Worker.neoTestStub === true;
+    },
+  };
   const fakeProcess = {
     pid: process.pid, env, platform: process.platform, versions: process.versions, argv: [], kill: process.kill, on() {},
     getBuiltinModule: (id: string) => `builtin ${id}`,
@@ -172,6 +188,7 @@ function run(target: Target): Run {
   });
   const names: Record<string, unknown> = {
     electron, os: fakeOs, fs: fakeFs, child_process: fakeChildProcess, module: moduleLoader,
+    worker_threads: fakeWorkerThreads,
   };
   const cache = new Map<string, { exports: unknown }>();
   const requireFrom = (dir: string) => (request: string): unknown => {
@@ -212,7 +229,12 @@ function run(target: Target): Run {
   const tempRoot = target.profile ? profileDir : path.join(systemTmp, made[0] ?? 'no-folder-was-made');
   const result: Run = {
     sandbox, developer, systemTmp, tempRoot, paths, switches, forked, setupReady, requestListeners, env, electron,
-    os: fakeOs, fs: fakeFs, childProcess: fakeChildProcess, moduleLoader, process: fakeProcess, context,
+    os: fakeOs, fs: fakeFs, childProcess: fakeChildProcess, workerThreads: fakeWorkerThreads, moduleLoader, hooks, synced,
+    process: fakeProcess, context,
+    resolve: (specifier) => {
+      assert.ok(hooks.resolve, 'a resolve hook was registered');
+      return hooks.resolve(specifier, {}, (next) => `resolved ${next}`);
+    },
     main: { dir: '', file: '' },
   };
   result.main.dir = runInContext('LIBRARY_DIR', context);
@@ -315,8 +337,8 @@ for (const target of TARGETS) {
 
     test('opens no connection', async () => {
       await assert.rejects(runInContext("fetch('https://example.com')", r.context), /Network access is disabled/);
-      assert.throws(() => r.moduleLoader._load('electron-updater'), /disabled in tests/);
-      assert.equal(r.moduleLoader._load('jszip'), 'loaded jszip');
+      assert.throws(() => r.resolve('electron-updater'), /disabled in tests/);
+      assert.equal(r.resolve('jszip'), 'resolved jszip');
     });
 
     test('writes only inside the temp folder', () => {
@@ -363,14 +385,31 @@ for (const target of TARGETS) {
       assert.doesNotThrow(() => r.fs.mkdtempSync(path.join(r.tempRoot, 'made-')));
     });
 
-    // Electron's original-fs is fs without the guard. It is reached by require, by import and by
-    // process.getBuiltinModule.
+    // Electron's original-fs is fs without the guard. A resolve hook sees what require and import()
+    // load, and is tested here; process.getBuiltinModule resolves nothing and is wrapped. That
+    // import() itself is refused runs in Electron, in tests/e2e/isolation.spec.mjs, as does each
+    // route to each module: a vm of stand-ins has no ESM loader.
     test('cannot be walked round through original-fs', () => {
+      for (const id of ['original-fs', 'original-fs/promises', 'node:original-fs']) {
+        assert.throws(() => r.resolve(id), /disabled in tests/, `resolve ${id}`);
+      }
       for (const id of ['original-fs', 'original-fs/promises']) {
-        assert.throws(() => r.moduleLoader._load(id), /disabled in tests/, `require ${id}`);
         assert.throws(() => r.process.getBuiltinModule(id), /disabled in tests/, `getBuiltinModule ${id}`);
       }
       assert.equal(r.process.getBuiltinModule('node:fs'), 'builtin node:fs');
+    });
+
+    // fs, child_process and worker_threads are patched, and import's named exports are copies made at
+    // the first import: they are synced after the patches, or `import { x } from 'fs'` is the original.
+    test('syncs the named exports of import after it has patched', () => {
+      assert.ok(r.synced.count > 0, 'syncBuiltinESMExports was called');
+      assert.equal(r.synced.afterPatching, true, 'it was called when fs, child_process and worker_threads were patched');
+    });
+
+    // A worker thread has an fs of its own, which no patch to this one reaches.
+    test('starts no worker thread', () => {
+      assert.equal(r.workerThreads.Worker.neoTestStub, true);
+      assert.throws(() => new r.workerThreads.Worker('x', { eval: true }), /disabled in tests/);
     });
 
     test('main.js starts with its library inside the temp folder', () => {
