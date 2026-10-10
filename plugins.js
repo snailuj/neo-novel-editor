@@ -441,9 +441,10 @@
         if (!spot || !spot.p.isConnected) return [node, offset];
         const here = change && spot.p === change.p;
         const off = here ? moved(change, spot.off) : spot.off;
-        // an end that fell inside a character of the new text goes to the
-        // end of the change, the nearest point that is not
-        return pointIn(spot.p, off) || (here && pointIn(spot.p, change.off + change.text.length)) || [spot.p, 0];
+        // An end that fell inside a character of the new text steps back a
+        // unit, to the start of the character: each end stays as near as it
+        // was, and the selection keeps its direction.
+        return pointIn(spot.p, off) || (here && pointIn(spot.p, off - 1)) || [spot.p, 0];
       };
       if (focused && focused !== document.body && focused.isConnected) focused.focus({ preventScroll: true });
       else if (document.activeElement) document.activeElement.blur();
