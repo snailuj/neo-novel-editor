@@ -12,12 +12,12 @@
 
 'use strict';
 
-const childProcess = require('node:child_process');
-const fs = require('node:fs');
-const Module = require('node:module');
-const os = require('node:os');
-const path = require('node:path');
-const { fileURLToPath } = require('node:url');
+const childProcess = require('child_process');
+const fs = require('fs');
+const Module = require('module');
+const os = require('os');
+const path = require('path');
+const { fileURLToPath } = require('url');
 
 // The variables that name a user's folders. Child processes, Chromium and libraries read these
 // and not Electron's paths.
@@ -196,10 +196,11 @@ function isolate(profile, {
 
   globalThis.fetch = stubbed(async () => { throw new Error('Network access is disabled in tests'); });
   // Electron's original-fs is fs without the guard above, which a plugin's main half could
-  // require: by require, which every one goes through Module._load for, or by getBuiltinModule.
+  // require, or fetch with getBuiltinModule.
   const refuseOriginalFs = (id) => {
     if (/^(node:)?original-fs(\/|$)/.test(String(id))) throw new Error('original-fs is disabled in tests');
   };
+  // Module._load is private, but the one hook that sees every require, a plugin's included.
   const load = Module._load;
   Module._load = function (request, ...args) {
     if (request === 'electron-updater') throw new Error('Updates are disabled in tests');
