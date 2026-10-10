@@ -86,8 +86,9 @@ interface NeoApi {
   /**
    * Calls the plugin's own main half: resolves with what its handler for the channel
    * returns, and rejects with an Error that names the plugin and the channel and carries
-   * the handler's message (the handler's error is logged once in neo-errors.log, with its
-   * stack). A channel matches ^[a-z][a-z0-9.-]{0,63}$.
+   * the handler's message (the handler's error is logged in neo-errors.log, with its
+   * stack: the first of a channel's failures, then at most one a minute, with a count of
+   * those left out). A channel matches ^[a-z][a-z0-9.-]{0,63}$.
    * The plugin's id is filled in for it, which prevents mistakes but is no wall: every
    * plugin's script runs in NEO's page, and any of them can reach any main half.
    * Rejects without calling when the plugin is not active (its activate failed).
@@ -214,8 +215,9 @@ interface NeoAfterWrite {
 
 /**
  * What a main entry's activate(host) receives. NEO calls activate once the window has its
- * plugin list, on its main thread: what runs before activate's first await delays NEO's
- * other work, so heavy work belongs after it. An activate that returns a promise has
+ * plugin list, or 5 s after the first main half is held back if no window has asked, on
+ * its main thread: what runs before activate's first await delays NEO's other work, so
+ * heavy work belongs after it. An activate that returns a promise has
  * 10 s to settle. Past that, NEO logs once that the plugin did not finish activating and
  * refuses its invokes from then on, with an Error that says so, even if the promise
  * settles later; handlers and listeners the plugin added are dropped.
