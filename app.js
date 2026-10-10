@@ -11303,8 +11303,9 @@ function scheduleChapterSave(chId) {
     // and writing now would only leave an empty stray file in chapters/
     if (book.id !== bookId || !book.chapterOrder.includes(chId)) return;
     // a flush (a blur, the 20 s tick) wrote these words while this save
-    // waited; a write still on its way may yet fail, so this one queues behind
-    if (!writing[chId] && sameOnDisk(chapterHTML[chId], savedHTML[chId])) return;
+    // waited; a write still on its way may yet fail, so this one queues behind.
+    // Plain equality is enough: persistChapter leaves the page's copy as the bytes it wrote.
+    if (!writing[chId] && chapterHTML[chId] === savedHTML[chId]) return;
     persistChapter(chId);
   }, 800);
 }
