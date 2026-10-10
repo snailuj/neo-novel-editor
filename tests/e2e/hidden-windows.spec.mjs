@@ -73,6 +73,8 @@ test('a window that asks to be shown and focused stays hidden and unfocused', as
     expect(await probe.app.evaluate(({ BrowserWindow }) => BrowserWindow.getFocusedWindow())).toBeNull();
     const events = await probe.app.evaluate(() => globalThis.probeEvents);
     expect(events.some((entry) => entry.event === 'created')).toBe(true);
+    // not even for the moment before something hides it
+    expect(events.filter((entry) => entry.event === 'created').every((entry) => entry.visible === false)).toBe(true);
     expect(NEVER_SHOWN(events)).toEqual([]);
     const os = osView();
     if (os) {
@@ -98,6 +100,8 @@ test('the app\'s own window in a test run is never shown or focused', async () =
     const events = await fixture.app.evaluate(() => globalThis.neoTestWindowEvents);
     // the record exists and saw the window made
     expect(events.some((entry) => entry.event === 'created')).toBe(true);
+    // not even for the moment before something hides it
+    expect(events.filter((entry) => entry.event === 'created').every((entry) => entry.visible === false)).toBe(true);
     expect(NEVER_SHOWN(events)).toEqual([]);
   } finally { await fixture.close(); }
 });

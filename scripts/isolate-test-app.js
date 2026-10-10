@@ -174,7 +174,7 @@ function hideWindows() {
     const entry = { t: Date.now(), pid: process.pid, id: win.id, event };
     if (!win.isDestroyed()) Object.assign(entry, { visible: win.isVisible(), focused: win.isFocused(), bounds: win.getBounds() });
     events.push(entry);
-    if (log) try { append(log, JSON.stringify(entry) + String.fromCharCode(10)); } catch { /* a log that cannot be written must not fail a test */ }
+    if (log) try { append(log, JSON.stringify(entry) + '\n'); } catch { /* a log that cannot be written must not fail a test */ }
   };
   app.on('browser-window-created', (_event, win) => {
     record(win, 'created');
