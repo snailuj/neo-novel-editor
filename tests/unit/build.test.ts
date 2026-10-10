@@ -175,3 +175,67 @@ test('a plugin ships its manifest and its code, nothing else', () => {
     [],
   );
 });
+
+test('names and folders that mark writing are strays, tracked or not', () => {
+  for (const file of [
+    '.superpowers/x',
+    'book-x/book.json',
+    'fonts/deep/library.json',
+    'chapters/ch-1.html',
+    '.obsidian/app.json',
+    '_meta/x.md',
+    'node_modules/foo/book.json',
+    'plugins/hoard/.obsidian/app.json',
+    'plugins/hoard/book.json',
+  ]) {
+    assertStray(file, /writing/);
+    assertStray(file, /writing/, [...TRACKED, file]);
+  }
+});
+
+test('every file and folder of a library or vault is a marker', () => {
+  for (const file of [
+    'library.json.tmp',
+    'library.json.bak',
+    'book.json.bak',
+    'darlings.json',
+    'stickies.json',
+    'art.json',
+    'snapshots/20261010T120000Z-d-3-900-ab12/snapshot.json',
+    'notes.html',
+    'outline.html',
+    '_catalog.txt',
+    'neo-errors.log',
+    'Backups/neo-backup-2026-10-10.zip',
+    'neo-backup-2026-10-10.zip',
+    'Exports/draft.pdf',
+    'Deleted Books/book-x-lxyz1234-abcde/book.json',
+    'book-my-novel-lxyz1234-abcde/anything.txt',
+    'book-lxyz1234-abcde/anything.txt',
+    'book-x/cover-1700000000000.png',
+    'cover-1700000000000.jpg',
+    'art-1700000000000.webp',
+    'something/chapters/intro.html',
+    'x/ch-lxyz1234-ab12.html',
+    '.neo/provenance.json',
+  ]) {
+    assertStray(file, /writing/, [...TRACKED, file]);
+  }
+});
+
+test('markers are narrow enough for the packages NEO depends on', () => {
+  assert.deepEqual(
+    strays([
+      'node_modules/foo/exports/index.js',
+      'node_modules/foo/backups/index.js',
+      'node_modules/book-cover/index.js',
+      'node_modules/foo/cover-art.png',
+      'node_modules/foo/art-deco.css',
+      'node_modules/foo/notes.txt',
+      'node_modules/foo/chapters.js',
+      'node_modules/foo/snapshots/index.js',
+      'node_modules/foo/library.js',
+    ]),
+    [],
+  );
+});
