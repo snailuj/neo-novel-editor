@@ -730,6 +730,18 @@ test('a plugin whose script registers under another id leaves no stylesheet behi
   assert.equal(await linked('probe'), true);
 });
 
+// What a plugin's own callback throws, from a timer or an event, reaches the
+// page and not the host. The host throws too, from its own file, when the
+// callback calls it with the wrong thing: the error is credited to the
+// plugin whose script is in its stack, and NEO's net does not hear of it.
+test('a TypeError the host throws for a plugin\'s timer is logged under the plugin', async () => {
+  await js('window.__timerBadStatus()');
+  const log = await logWith('plugin timer:');
+  assert.match(log, /plugin timer: TypeError: status takes a string, not 42\r?\n\s+at /);
+  assert.doesNotMatch(log, /Uncaught TypeError: status takes/);
+  assert.equal(await js('errorToastShown'), false, 'nothing was shown to the writer');
+});
+
 test('a pane whose plugin fails while it shows gives way to the manuscript', async () => {
   // missing-script is listed, but its script never loaded: its id is free
   await js(`NeoPlugins.register({ id: 'missing-script', apiVersion: 1, async activate(neo) {

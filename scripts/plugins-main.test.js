@@ -746,7 +746,8 @@ describe('the window half', () => {
         logError: logError || ((line) => logged.push(line)),
         pluginInvoke: async (...args) => { invoked.push(args); return { answered: args[2] }; }
       },
-      document: { head: page, body: page, addEventListener() {}, createElement: element, getElementById: () => page },
+      // currentScript is plugins.js itself while it loads
+      document: { head: page, body: page, addEventListener() {}, createElement: element, getElementById: () => page, currentScript: { src: 'plugins.js' } },
       addEventListener: (type, fn) => windowListeners.push([type, fn]),
       requestAnimationFrame: () => 1,
       performance: { now: () => clock.now },
@@ -755,6 +756,7 @@ describe('the window half', () => {
     });
     context.window = context;
     vm.runInContext(fs.readFileSync(path.join(root, 'plugins.js'), 'utf8'), context, { filename: 'plugins.js' });
+    context.document.currentScript = null;
     const getters = { book: () => null, chapterHTML: () => undefined, currentTab: () => 'manuscript', ...reads };
     const fire = (type, event) => windowListeners.filter(([t]) => t === type).forEach(([, fn]) => fn(event));
     // fn run as the script at src is, with document.currentScript naming it
@@ -1026,6 +1028,33 @@ describe('the window half', () => {
     const plain = { filename: 'plugins/works/renderer.js', lineno: 9, message: 'Uncaught thrown', error: null, stopImmediatePropagation() {} };
     host.fire('error', plain);
     assert.equal(host.logged[2], 'plugin works: Uncaught thrown @ plugins/works/renderer.js:9');
+  });
+
+  test('an error the host throws for a plugin\'s own callback is credited to the plugin whose script is in its stack', () => {
+    const styled = (id) => ({ id, apiVersion: 1, rendererUrl: `plugins/${id}/renderer.js`, styleUrl: null });
+    const host = windowHalf(['works', 'other'].map(styled));
+    host.attach();
+    host.NeoPlugins.register({ id: 'works', apiVersion: 1, activate() {} });
+    // an error the page reports from a file, with the stack its Error holds
+    const error = (filename, ...frames) => {
+      const stack = ['TypeError: status takes a string, not 42', ...frames.map((frame) => `    at ${frame}`)].join('\n');
+      const event = { filename, lineno: 697, message: 'Uncaught TypeError: status takes a string, not 42', error: Object.assign(new TypeError('status takes a string, not 42'), { stack }), stopped: false, stopImmediatePropagation() { this.stopped = true; } };
+      host.fire('error', event);
+      return event.stopped;
+    };
+    // thrown in plugins.js, called from a callback in works' script: the first plugin frame
+    assert.equal(error('plugins.js', 'setStatus (plugins.js:697:11)', 'Object.status (plugins.js:760:20)', 'plugins/works/renderer.js:12:30', 'plugins/other/renderer.js:3:3'), true);
+    assert.match(host.logged[0], /^plugin works: TypeError: status takes a string, not 42\n\s+at setStatus /);
+    // an async frame, from a function with a name
+    assert.equal(error('plugins.js', 'setStatus (plugins.js:697:11)', 'async Timeout.tick (plugins/other/renderer.js:8:5)'), true);
+    assert.match(host.logged[1], /^plugin other: TypeError/);
+    // no plugin in the stack: left to NEO's net, as is an error from any other file
+    assert.equal(error('plugins.js', 'setStatus (plugins.js:697:11)', 'app.js:16064:74', '<anonymous>:1:47'), false);
+    assert.equal(error('app.js', 'plugins/works/renderer.js:12:30'), false);
+    assert.equal(host.logged.length, 2);
+    // and an error in plugins.js that holds no stack at all
+    const bare = { filename: 'plugins.js', lineno: 1, message: 'Uncaught thrown', error: null, stopImmediatePropagation() { throw new Error('was stopped'); } };
+    assert.doesNotThrow(() => host.fire('error', bare));
   });
 
   test('a script that registers under another id than its plugin.json is refused, and its own stylesheet leaves with it', () => {

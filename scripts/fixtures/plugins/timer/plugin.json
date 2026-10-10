@@ -1,0 +1,5 @@
+{
+  "id": "timer",
+  "apiVersion": 1,
+  "renderer": "renderer.js"
+}

@@ -48,6 +48,8 @@
   // each listed plugin's id, by the URL its script was loaded from (see
   // onScriptError)
   const scriptIds = new Map();
+  // this file's own URL, as a script's errors name it
+  const hostUrl = document.currentScript && document.currentScript.src;
   let get = null; // app.js's getters, from attach()
   // The book the plugins last heard open, until they hear it close. A shelf
   // export borrows app.js's `book` without opening it, and an openBook can
@@ -868,13 +870,28 @@
     }
   }
 
+  // The id of the plugin an error comes from, or undefined. An error in a
+  // plugin's script is that plugin's. One thrown in this file, as when the
+  // host refuses what a plugin's own later callback (a timer, an event
+  // handler) called it with, is the plugin of the first frame of its stack
+  // that lies in a plugin's script. Any other is NEO's.
+  function pluginOfError(e) {
+    if (scriptIds.has(e.filename)) return scriptIds.get(e.filename);
+    if (!hostUrl || e.filename !== hostUrl || !e.error || typeof e.error.stack !== 'string') return undefined;
+    for (const line of e.error.stack.split('\n')) {
+      const frame = /^\s*at (?:.*? \()?(.*?):\d+:\d+\)?$/.exec(line);
+      if (frame && scriptIds.has(frame[1])) return scriptIds.get(frame[1]);
+    }
+    return undefined;
+  }
+
   // An error thrown in a plugin's script outside the host's calls, such as
   // from its top level before it registers. It is logged under the plugin's
   // name and goes no further, so NEO's net for errors (app.js, which listens
   // after this file) does not tell the writer. A plugin that never
   // registered loses its stylesheet, as one that fails to activate does.
   function onScriptError(e) {
-    const id = scriptIds.get(e.filename);
+    const id = pluginOfError(e);
     if (id === undefined) return;
     e.stopImmediatePropagation();
     if (!registry.has(id)) dropStyle(id);
