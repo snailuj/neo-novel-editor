@@ -84,6 +84,8 @@ function guardWrites(profile, onRefuse = () => {}) {
       if (stat.isSymbolicLink()) deny(method);
     }
   };
+  // A guarded function carries a mark, so that a test can tell it from one the guard missed.
+  const guarded = (fn) => Object.assign(fn, { neoTestGuard: true });
   const wrap = (owner, name, indices, asynchronous = false) => {
     const original = owner[name];
     if (typeof original !== 'function') return;
@@ -91,9 +93,13 @@ function guardWrites(profile, onRefuse = () => {}) {
       for (const index of indices) check(args[index], name);
       return original.apply(owner, args);
     };
-    owner[name] = asynchronous ? async (...args) => invoke(...args) : invoke;
+    owner[name] = guarded(asynchronous ? async (...args) => invoke(...args) : invoke);
   };
-  for (const name of ['writeFile', 'appendFile', 'mkdir', 'unlink', 'rm', 'rmdir', 'truncate', 'chmod', 'chown', 'utimes']) {
+  // mkdtemp and mkdtempDisposable take the path their folder's name starts with.
+  for (const name of [
+    'writeFile', 'appendFile', 'mkdir', 'mkdtemp', 'mkdtempDisposable', 'unlink', 'rm', 'rmdir', 'truncate',
+    'chmod', 'lchmod', 'chown', 'lchown', 'utimes', 'lutimes'
+  ]) {
     wrap(fs, name + 'Sync', [0]);
     wrap(fs, name, [0]);
     wrap(fs.promises, name, [0], true);
@@ -113,10 +119,10 @@ function guardWrites(profile, onRefuse = () => {}) {
       if (writable(args[1])) check(args[0], name);
       return original.apply(owner, args);
     };
-    owner[name] = asynchronous ? async (...args) => invoke(...args) : invoke;
+    owner[name] = guarded(asynchronous ? async (...args) => invoke(...args) : invoke);
   }
-  for (const name of ['symlinkSync', 'symlink']) fs[name] = () => deny(name);
-  fs.promises.symlink = async () => deny('symlink');
+  for (const name of ['symlinkSync', 'symlink']) fs[name] = guarded(() => deny(name));
+  fs.promises.symlink = guarded(async () => deny('symlink'));
 }
 
 // `profile` is the run's temp folder: everything the run does stays inside it. `userData` and
@@ -182,11 +188,24 @@ function isolate(profile, {
   });
 
   globalThis.fetch = stubbed(async () => { throw new Error('Network access is disabled in tests'); });
+  // Electron's original-fs is fs without the guard above, which a plugin's main half could
+  // require: by require, which every one goes through Module._load for, or by getBuiltinModule.
+  const refuseOriginalFs = (id) => {
+    if (/^(node:)?original-fs(\/|$)/.test(String(id))) throw new Error('original-fs is disabled in tests');
+  };
   const load = Module._load;
   Module._load = function (request, ...args) {
     if (request === 'electron-updater') throw new Error('Updates are disabled in tests');
+    refuseOriginalFs(request);
     return load.call(this, request, ...args);
   };
+  const getBuiltinModule = process.getBuiltinModule;
+  if (typeof getBuiltinModule === 'function') {
+    process.getBuiltinModule = stubbed((id) => {
+      refuseOriginalFs(id);
+      return getBuiltinModule.call(process, id);
+    });
+  }
 }
 
 module.exports = { isolate, stubbed, variables };

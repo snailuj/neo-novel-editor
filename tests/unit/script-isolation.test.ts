@@ -10,6 +10,13 @@ import { compileFunction, createContext, runInContext, Script } from 'node:vm';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const realRequire = createRequire(path.join(root, 'package.json'));
+const { UNGUARDED } = realRequire('./tests/support/fs-functions.cjs') as { UNGUARDED: string[] };
+
+// Writers the guard must wrap, by name, in fs and in fs.promises where the name exists there.
+const GUARDED = [
+  'writeFile', 'appendFile', 'mkdir', 'mkdtemp', 'mkdtempDisposable', 'unlink', 'rm', 'rmdir', 'truncate',
+  'chmod', 'chown', 'lchown', 'utimes', 'lutimes', 'rename', 'copyFile', 'cp', 'link', 'open', 'symlink',
+];
 
 // Each of these starts an Electron main process that goes on to require NEO's main.js. The
 // test runs everything before that require, then main.js itself, against stand-ins for
@@ -70,6 +77,7 @@ type Run = {
   fs: Anything;
   childProcess: Anything;
   moduleLoader: Anything;
+  process: Anything;
   context: Anything;
   main: { dir: string; file: string };
 };
@@ -132,6 +140,7 @@ function run(target: Target): Run {
   const moduleLoader: Anything = { _load: (request: string) => `loaded ${request}` };
   const fakeProcess = {
     pid: process.pid, env, platform: process.platform, versions: process.versions, argv: [], kill: process.kill, on() {},
+    getBuiltinModule: (id: string) => `builtin ${id}`,
   };
 
   // Timers that never fire: main.js arms some when it loads, and nothing here may run on.
@@ -188,7 +197,7 @@ function run(target: Target): Run {
   const tempRoot = target.profile ? profileDir : path.join(systemTmp, made[0] ?? 'no-folder-was-made');
   const result: Run = {
     sandbox, developer, systemTmp, tempRoot, paths, switches, forked, env, electron,
-    os: fakeOs, fs: fakeFs, childProcess: fakeChildProcess, moduleLoader, context,
+    os: fakeOs, fs: fakeFs, childProcess: fakeChildProcess, moduleLoader, process: fakeProcess, context,
     main: { dir: '', file: '' },
   };
   result.main.dir = runInContext('LIBRARY_DIR', context);
@@ -291,6 +300,51 @@ for (const target of TARGETS) {
       const within = path.join(r.tempRoot, 'inside.txt');
       assert.doesNotThrow(() => r.fs.writeFileSync(within, 'x'));
       assert.equal(readFileSync(within, 'utf8'), 'x');
+    });
+
+    // Not only the writers known today: a function of fs that is neither guarded nor listed in
+    // tests/support/fs-functions.cjs is new, and fails here until it has been read.
+    test('leaves no function of fs that is neither guarded nor known to be safe', () => {
+      const unlisted: string[] = [];
+      for (const [label, owner] of [['fs', r.fs], ['fs.promises', r.fs.promises]] as const) {
+        for (const [name, fn] of Object.entries<Anything>(owner)) {
+          if (typeof fn === 'function' && fn.neoTestGuard !== true && !UNGUARDED.includes(name)) unlisted.push(`${label}.${name}`);
+        }
+      }
+      assert.deepEqual(unlisted, []);
+      // and the guard is not empty
+      for (const name of GUARDED) {
+        for (const form of [name, `${name}Sync`]) {
+          if (typeof r.fs[form] === 'function') assert.equal(r.fs[form].neoTestGuard, true, `fs.${form}`);
+        }
+        if (typeof r.fs.promises[name] === 'function') assert.equal(r.fs.promises[name].neoTestGuard, true, `fs.promises.${name}`);
+      }
+    });
+
+    test('makes no folder, owner or time change outside the temp folder', async () => {
+      const prefix = path.join(r.sandbox, 'outside-');
+      const refused = { code: 'TEST_WRITE_OUTSIDE_PROFILE' };
+      assert.throws(() => r.fs.mkdtempSync(prefix), refused, 'mkdtempSync');
+      assert.throws(() => r.fs.mkdtemp(prefix, () => {}), refused, 'mkdtemp');
+      await assert.rejects(r.fs.promises.mkdtemp(prefix), refused, 'promises.mkdtemp');
+      if (r.fs.mkdtempDisposableSync) assert.throws(() => r.fs.mkdtempDisposableSync(prefix), refused, 'mkdtempDisposableSync');
+      const file = path.join(r.sandbox, 'outside.txt');
+      assert.throws(() => r.fs.lchownSync(file, 0, 0), refused, 'lchownSync');
+      assert.throws(() => r.fs.lutimesSync(file, new Date(), new Date()), refused, 'lutimesSync');
+      await assert.rejects(r.fs.promises.lutimes(file, new Date(), new Date()), refused, 'promises.lutimes');
+      assert.deepEqual(readdirSync(r.sandbox).filter((name) => name.startsWith('outside')), [], 'nothing was made');
+      // inside the temp folder they work
+      assert.doesNotThrow(() => r.fs.mkdtempSync(path.join(r.tempRoot, 'made-')));
+    });
+
+    // Electron's original-fs is fs without the guard. It is reached by require, by import and by
+    // process.getBuiltinModule.
+    test('cannot be walked round through original-fs', () => {
+      for (const id of ['original-fs', 'original-fs/promises']) {
+        assert.throws(() => r.moduleLoader._load(id), /disabled in tests/, `require ${id}`);
+        assert.throws(() => r.process.getBuiltinModule(id), /disabled in tests/, `getBuiltinModule ${id}`);
+      }
+      assert.equal(r.process.getBuiltinModule('node:fs'), 'builtin node:fs');
     });
 
     test('main.js starts with its library inside the temp folder', () => {

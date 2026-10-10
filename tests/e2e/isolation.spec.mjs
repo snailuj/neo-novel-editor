@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { launchProfile } from '../support/electron-profile.mjs';
+import fsFunctions from '../support/fs-functions.cjs';
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -46,7 +47,7 @@ test('a test run is cut off from the developer\'s system', async () => {
   }
   try {
     const outsideFile = path.join(tmpdir(), `neo-isolation-outside-${process.pid}.txt`);
-    const seen = await fixture.app.evaluate(({ app, shell, dialog, systemPreferences, utilityProcess }, { names, variables, programs, calls, outsideFile }) => {
+    const seen = await fixture.app.evaluate(({ app, shell, dialog, systemPreferences, utilityProcess }, { names, variables, programs, calls, outsideFile, unguarded }) => {
       // The harness marks each stub; a call Electron implements has no mark.
       const unstubbed = (owner) => Object.entries(owner)
         .filter(([, fn]) => typeof fn === 'function' && fn.neoTestStub !== true)
@@ -65,7 +66,21 @@ test('a test run is cut off from the developer\'s system', async () => {
         if (utilityProcess.fork.neoTestStub !== true) return 'not a stub';
         try { utilityProcess.fork('not-the-spell-worker.js'); return 'started'; } catch (error) { return error.message; }
       };
+      // A function of fs that is neither guarded nor listed as safe is new, and has to be read.
+      const unlistedFs = [];
+      for (const [label, owner] of [['fs', fs], ['fs.promises', fs.promises]]) {
+        for (const [name, fn] of Object.entries(owner)) {
+          if (typeof fn === 'function' && fn.neoTestGuard !== true && !unguarded.includes(name)) unlistedFs.push(`${label}.${name}`);
+        }
+      }
+      // original-fs is fs without the guard
+      const originalFs = () => {
+        try { return process.getBuiltinModule('original-fs') ? 'reached' : 'absent'; } catch (error) { return error.message; }
+      };
       return {
+        unlistedFs,
+        originalFs: originalFs(),
+        mkdtemp: ['mkdtemp', 'mkdtempSync', 'lchownSync', 'lutimesSync'].map((name) => [name, fs[name]?.neoTestGuard === true]),
         keychainSwitches: [app.commandLine.hasSwitch('use-mock-keychain'), app.commandLine.getSwitchValue('password-store')],
         forkRefused: forkRefused(),
         homedir: os.homedir(),
@@ -84,11 +99,14 @@ test('a test run is cut off from the developer\'s system', async () => {
         setUserDefaultStubbed: systemPreferences.setUserDefault?.neoTestStub === true,
         programs: Object.fromEntries(programs.map((name) => [name, childProcess[name]?.neoTestStub === true])),
       };
-    }, { names: PATH_NAMES, variables: VARIABLES, programs: PROGRAMS, calls: { shell: SHELL, dialog: DIALOG }, outsideFile });
+    }, { names: PATH_NAMES, variables: VARIABLES, programs: PROGRAMS, calls: { shell: SHELL, dialog: DIALOG }, outsideFile, unguarded: fsFunctions.UNGUARDED });
     await rm(outsideFile, { force: true });
 
     expect.soft(seen.pluginDirs).toBeNull();
     expect.soft(seen.fetchStubbed).toBe(true);
+    expect.soft(seen.unlistedFs).toEqual([]);
+    expect.soft(seen.mkdtemp.filter(([, guarded]) => !guarded)).toEqual([]);
+    expect.soft(seen.originalFs).toMatch(/disabled in tests/);
     // safeStorage reaches the Keychain (macOS) or the keyring (Linux) unless told not to; the
     // spell worker still starts (the baseline spec checks words), any other utility process does not
     expect.soft(seen.keychainSwitches).toEqual([true, 'basic']);
