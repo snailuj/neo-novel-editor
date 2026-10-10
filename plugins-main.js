@@ -55,7 +55,7 @@ function wire(deps) {
   mains = new Map();
   failures = new WeakMap();
   // a plugin's window half calls its own main half (neo.invoke in plugins.js)
-  host.ipcMain.handle('plugin:invoke', (_e, id, channel, payload) => invoke(id, channel, payload));
+  host.ipcMain.handle('plugin:invoke', (_e, id, channel, payload) => answer(id, channel, payload));
   // the window asks once, synchronously, before any of its code runs, and
   // waits until it has an answer, so a throw here would hang it. It gets no
   // mainPath: the window never touches the disk, so it needs no paths on it
@@ -176,6 +176,14 @@ function textOf(what) {
   } catch {
     return `(a value of type ${typeof what} with no text form)`;
   }
+}
+
+// the short text of what a plugin threw: an error's message, else textOf
+function messageOf(what) {
+  try {
+    if (what && typeof what.message === 'string') return what.message;
+  } catch { /* a message that throws when read: textOf copes */ }
+  return textOf(what);
 }
 
 function report(entry, doing, what) {
@@ -317,7 +325,8 @@ function activateMains() {
 
 // plugin:invoke: waits until the plugin's main half has started, then
 // hands the payload to the handler it took for the channel. A handler's
-// error is logged and goes back to the window as the rejection.
+// error is logged here, once, and goes back to the window as a rejection
+// naming the plugin and the channel (see answer).
 async function invoke(id, channel, payload) {
   if (typeof channel !== 'string' || !CHANNEL.test(channel)) throw new TypeError(`${textOf(channel)} is not a channel name`);
   const entry = mains.get(id);
@@ -330,7 +339,20 @@ async function invoke(id, channel, payload) {
     return await fn(payload);
   } catch (err) {
     report(entry, `invoke ${channel}`, err);
-    throw err;
+    throw new Error(`plugin ${entry.id}: ${channel} failed: ${messageOf(err)}`);
+  }
+}
+
+// What plugin:invoke sends back is { result } or { error }, never a
+// rejection: main.js logs every rejected handler again and, for an EPERM,
+// EACCES or EROFS inside the library, tells the writer NEO can't save, and
+// a plugin's failure is neither a refused save nor main.js's to log.
+// preload.js turns { error } back into the rejection.
+async function answer(id, channel, payload) {
+  try {
+    return { result: await invoke(id, channel, payload) };
+  } catch (err) {
+    return { error: err.message };
   }
 }
 

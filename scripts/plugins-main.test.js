@@ -72,6 +72,21 @@ function appFolder(manifests) {
   return dir;
 }
 
+// preload.js in a vm, with ipcRenderer.invoke answered by call(channel,
+// ...args): window.neo as the page gets it. A main half's answer crosses
+// IPC here as it does in Electron, so a test sees what a plugin would.
+function windowNeo(call) {
+  let neo = null;
+  const electron = {
+    contextBridge: { exposeInMainWorld: (_name, api) => { neo = api; } },
+    ipcRenderer: { sendSync: () => [], invoke: async (...args) => call(...args), send() {}, on() {} },
+    webUtils: {}
+  };
+  const context = vm.createContext({ require: () => electron, process: { platform: process.platform } });
+  vm.runInContext(fs.readFileSync(path.join(root, 'preload.js'), 'utf8'), context, { filename: 'preload.js' });
+  return neo;
+}
+
 const plugin = (id, extra) => ({ id, apiVersion: 1, renderer: 'renderer.js', ...extra });
 const ids = () => plugins.discover().map((m) => m.id);
 const find = (id) => plugins.discover().find((m) => m.id === id);
@@ -315,7 +330,7 @@ describe('a plugin\'s main half', { concurrency: 1 }, () => {
   const mainOf = (app, id) => require(path.join(app, 'plugins', id, 'main.cjs'));
   // a main half that keeps the host it is handed, for the test to use
   const keeper = 'exports.activate = (host) => { exports.host = host; };';
-  const invoke = (handlers, ...args) => handlers.get('plugin:invoke')({}, ...args);
+  const invoke = (handlers, ...args) => windowNeo((channel, ...rest) => handlers.get(channel)({}, ...rest)).pluginInvoke(...args);
   // a promise's handlers have run, and so has anything set on setImmediate
   const turn = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -323,6 +338,9 @@ describe('a plugin\'s main half', { concurrency: 1 }, () => {
     const { handlers } = wire({ dirs: fixtures });
     plugins.activateMains();
     assert.deepEqual(await invoke(handlers, 'probe', 'echo', { a: 1 }), { a: 1 });
+    // an answer that looks like a failure is still an answer
+    assert.deepEqual(await invoke(handlers, 'probe', 'echo', { error: 'not a failure' }), { error: 'not a failure' });
+    assert.equal(await invoke(handlers, 'probe', 'echo'), undefined);
   });
 
   test('an invoke sent before a slow activate ends waits for it, then resolves', async () => {
@@ -350,15 +368,40 @@ describe('a plugin\'s main half', { concurrency: 1 }, () => {
     await assert.rejects(invoke(handlers, 'other', 'echo'), /\becho\b/);
     await assert.rejects(invoke(handlers, 'broken', 'echo'), /\becho\b/); // a window half alone
     await assert.rejects(invoke(handlers, 'probe', 'nope'), /\bnope\b/);
-    await assert.rejects(invoke(handlers, 'probe', 'Echo Me'), { name: 'TypeError', message: /Echo Me/ });
+    await assert.rejects(invoke(handlers, 'probe', 'Echo Me'), /Echo Me/);
   });
 
-  test('a handler that throws rejects the invoke, and the error is logged with its stack', async () => {
+  // main.js logs and explains every rejection of an ipcMain.handle; a plugin's
+  // failure is neither a refused write nor main.js's to log, so it goes back
+  // as an answer that the window turns into the rejection
+  test('a handler that throws rejects the invoke with an Error naming the plugin and the channel, and is logged once with its stack', async () => {
     const { handlers, logs } = wire({ dirs: fixtures });
     plugins.activateMains();
-    await assert.rejects(invoke(handlers, 'probe', 'fail'), /failed on purpose/);
+    await assert.rejects(invoke(handlers, 'probe', 'fail'), (err) => {
+      assert.equal(err.constructor.name, 'Error');
+      assert.match(err.message, /\bprobe\b.*\bfail\b.*failed on purpose/);
+      return true;
+    });
     assert.equal(logs.length, 1, logs.join('\n'));
     assert.match(logs[0], /^\[plugin probe: invoke fail\] Error: failed on purpose\n\s+at /);
+  });
+
+  test('a handler that rejects or throws what is no Error still rejects the invoke with a message', async () => {
+    const app = withMains({
+      odd: [
+        'exports.activate = (host) => {',
+        "  host.handle('text', () => { throw 'plain text'; });",
+        "  host.handle('nothing', async () => { throw undefined; });",
+        "  host.handle('bare', () => { throw Object.create(null); });",
+        '};'
+      ].join('\n')
+    });
+    const { handlers, logs } = wire({ appRoot: app });
+    plugins.activateMains();
+    await assert.rejects(invoke(handlers, 'odd', 'text'), /\bodd\b.*\btext\b.*plain text/);
+    await assert.rejects(invoke(handlers, 'odd', 'nothing'), /\bodd\b.*\bnothing\b/);
+    await assert.rejects(invoke(handlers, 'odd', 'bare'), /\bodd\b.*\bbare\b/);
+    assert.equal(logs.length, 3, logs.join('\n'));
   });
 
   test('a main half that throws in activate, rejects, will not load or has no activate is logged, and the next still loads', async () => {
@@ -542,6 +585,7 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
 
   function loadMain() {
     const handlers = new Map();
+    const dialogs = [];
     let whenReady = null;
     const electron = {
       app: {
@@ -556,7 +600,7 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
       ipcMain: { on() {}, handle: (channel, fn) => handlers.set(channel, fn) },
       BrowserWindow: { getFocusedWindow: () => null, getAllWindows: () => [] },
       Menu: { buildFromTemplate: (items) => items, setApplicationMenu() {} },
-      dialog: {},
+      dialog: { showMessageBox: async (...args) => { dialogs.push(args); return {}; } },
       utilityProcess: { fork: () => ({ on() {}, postMessage() {} }) },
       screen: {}
     };
@@ -573,6 +617,7 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
     // nothing is logged into the real Documents folder before ready() moves the library
     vm.runInContext('LIBRARY_DIR = libraryRoot; LIBRARY_FILE = require("path").join(libraryRoot, "library.json");', context);
     return {
+      dialogs,
       call: (channel, ...args) => handlers.get(channel)(null, ...args),
       ready(order) {
         context.createWindow = () => order.push('createWindow');
@@ -600,8 +645,30 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
     t.mock.method(probe, 'activate', (host) => { order.push('activate probe'); return activate(host); });
     main.ready(order);
     assert.deepEqual(order, ['createWindow', 'activate probe']);
-    assert.deepEqual(await main.call('plugin:invoke', 'probe', 'echo', { a: 1 }), { a: 1 });
+    const neo = windowNeo((channel, ...args) => main.call(channel, ...args));
+    assert.deepEqual(await neo.pluginInvoke('probe', 'echo', { a: 1 }), { a: 1 });
     assert.doesNotMatch(errorLog(), /\[(startup|plugins)\]/);
+  });
+
+  // main.js wraps every ipcMain.handle: a rejection is logged under the
+  // channel, and a refused write inside the library (EPERM, EACCES, EROFS)
+  // opens a dialog saying NEO can't save. A plugin that writes a file of its
+  // own in the library can fail so, with the writer's chapter already saved.
+  test('a handler that fails logs once and opens no dialog, though its error looks like a refused write in the library', async () => {
+    const { host } = require(probeMain);
+    host.handle('refused', () => {
+      throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM', path: path.join(library(), 'probe.json') });
+    });
+    const neo = windowNeo((channel, ...args) => main.call(channel, ...args));
+    const before = errorLog();
+    const errors = await Promise.all(['refused', 'fail'].map((channel) => neo.pluginInvoke('probe', channel).then(() => null, (err) => err)));
+    await turn();
+    assert.deepEqual(main.dialogs, [], 'no dialog');
+    const added = errorLog().slice(before.length);
+    assert.deepEqual(added.match(/^\[[^\]]+\] \[[^\]]+\]/gm).map((line) => line.replace(/^\[[^\]]+\] /, '')),
+      ['[plugin probe: invoke refused]', '[plugin probe: invoke fail]']);
+    assert.match(errors[0] && errors[0].message, /\bprobe\b.*\brefused\b.*EPERM/);
+    assert.match(errors[1] && errors[1].message, /\bprobe\b.*\bfail\b.*failed on purpose/);
   });
 
   test('paths name the profile\'s library and userData folders and the probe\'s own folder', () => {

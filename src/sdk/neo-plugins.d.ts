@@ -85,7 +85,9 @@ interface NeoApi {
   status(text: string): void;
   /**
    * Calls the plugin's own main half: resolves with what its handler for the channel
-   * returns, and rejects with its error. A channel matches ^[a-z][a-z0-9.-]{0,63}$.
+   * returns, and rejects with an Error that names the plugin and the channel and carries
+   * the handler's message (the handler's error is logged once in neo-errors.log, with its
+   * stack). A channel matches ^[a-z][a-z0-9.-]{0,63}$.
    * The plugin's id is filled in for it, which prevents mistakes but is no wall: every
    * plugin's script runs in NEO's page, and any of them can reach any main half.
    * Rejects without calling when the plugin is not active (its activate failed).

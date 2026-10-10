@@ -819,6 +819,34 @@ test('listeners that throw or reject', async () => {
   assert.equal((await js('window.__calls')).length, calls);
 });
 
+test('a main half\'s failure rejects the window\'s invoke naming the plugin and the channel, is logged once and opens no dialog', async () => {
+  // the probe's main half runs in this process, so the test can add to it
+  const { host } = require('./fixtures/plugins/probe/main.js');
+  host.handle('refused', () => {
+    // what a plugin's own write in the library looks like when the system refuses it
+    throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM', path: path.join(LIBRARY, 'probe.json') });
+  });
+  const { dialog } = require('electron');
+  const { showMessageBox } = dialog;
+  const shown = [];
+  dialog.showMessageBox = async (...args) => { shown.push(args); return {}; };
+  const before = errorLog();
+  try {
+    const answers = await js(`Promise.all(['echo', 'fail', 'refused'].map((channel) =>
+      window.__probe.neo.invoke(channel, 'sent').then((answer) => ({ answer }), (err) => ({ isError: err instanceof Error, message: err.message }))))`);
+    assert.deepEqual(answers[0], { answer: 'sent' });
+    assert.equal(answers[1].isError, true);
+    assert.match(answers[1].message, /\bprobe\b.*\bfail\b.*failed on purpose/);
+    assert.match(answers[2].message, /\bprobe\b.*\brefused\b.*EPERM/);
+  } finally {
+    dialog.showMessageBox = showMessageBox;
+  }
+  assert.deepEqual(shown, [], 'no dialog');
+  const added = errorLog().slice(before.length);
+  assert.equal(added.match(/\[plugin probe: invoke (fail|refused)\]/g).length, 2, added);
+  assert.doesNotMatch(added, /\[ipc plugin:invoke\]/);
+});
+
 test('CSP', async () => {
   const refused = () => consoleLines.filter((line) => /Content Security Policy/i.test(line));
   assert.deepEqual(refused(), []);
