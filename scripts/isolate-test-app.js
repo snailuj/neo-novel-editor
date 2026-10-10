@@ -62,7 +62,10 @@ function refuse(owner, label, { names = Object.keys(owner), answersAtOnce = () =
 //   - native code: addons, process.dlopen and FFI such as the koffi that main.js loads on macOS;
 //   - Chromium's own writes (cache, cookies, crash dumps, downloads) and Electron's native
 //     writers, such as webContents.savePage;
-//   - a function of fs that code took before isolate() ran, which is still the original.
+//   - a function of fs that code took before isolate() ran, which is still the original;
+//   - writers that call no fs function: node:sqlite DatabaseSync(path), v8.writeHeapSnapshot(path)
+//     and process.report.writeReport(path);
+//   - the spell worker's utility process, which has an fs of its own, unguarded.
 // Other routes to fs are closed in isolate(): original-fs, import(), getBuiltinModule and
 // worker threads.
 function guardWrites(profile, onRefuse = () => {}) {
