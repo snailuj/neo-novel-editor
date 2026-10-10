@@ -377,6 +377,30 @@ test('a save that comes due with words typed since the flush writes them', async
   assert.deepEqual(writes.map((w) => w.html), [F + '<p>Typed.</p>\n', F + '<p>Typed.</p>\n<p>More.</p>\n']);
 });
 
+// A write still on its way may fail, and savedHTML then goes back to what
+// the disk holds: a save that comes due meanwhile queues behind it, so the
+// words are tried again at once rather than at the next flush
+test('a save that comes due while a write is on its way writes when that write fails', async () => {
+  const { page, writes } = bookInMemory({ x: F });
+  const timers = heldTimers(page);
+  const written = page.window.neo.writeChapter;
+  let fail;
+  page.window.neo.writeChapter = () => {
+    page.window.neo.writeChapter = written;
+    return new Promise((resolve, reject) => { fail = reject; });
+  };
+  page.chapterHTML.x = F + '<p>Typed.</p>';
+  page.scheduleChapterSave('x');
+  const flushed = page.persistChapter('x').then(() => 'written', () => 'failed');
+  assert.equal(page.writing.x, 1, 'the write is on its way');
+  assert.equal(timers.run(), 1, 'the save was still waiting');
+  await new Promise((resolve) => setImmediate(resolve));
+  fail(new Error('the disk refused'));
+  assert.equal(await flushed, 'failed');
+  await settled(page);
+  assert.deepEqual(writes, [{ chId: 'x', html: F + '<p>Typed.</p>\n' }]);
+});
+
 // structural undo hands back chapters whose files the action deleted, and
 // savedHTML still holds their last write
 test('a write the same as the last one still goes to disk', async () => {
