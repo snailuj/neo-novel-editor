@@ -15,6 +15,18 @@ function resourcesDir({ appOutDir, electronPlatformName, packager }) {
     : path.join(appOutDir, 'resources');
 }
 
+// Only ENOENT means absent. fs.existsSync answers false for EPERM and EACCES as well, which
+// would pass a folder the hook was not allowed to look into.
+function exists(file) {
+  try {
+    fs.lstatSync(file);
+    return true;
+  } catch (err) {
+    if (err.code === 'ENOENT') return false;
+    throw err;
+  }
+}
+
 // -z keeps git from quoting names with spaces or accents.
 function trackedFiles(projectDir) {
   try {
@@ -33,7 +45,7 @@ function trackedFiles(projectDir) {
 
 // The header tells folders (files), links (link) and files apart; a path list cannot.
 function readAsar(archive) {
-  if (!fs.existsSync(archive)) {
+  if (!exists(archive)) {
     throw new Error(`Packaging check: ${archive} is missing, so the package cannot be checked`);
   }
   let header;
@@ -67,7 +79,7 @@ function readAsar(archive) {
 function walkUnpacked(dir, root) {
   const files = [];
   const links = [];
-  if (!fs.existsSync(dir)) return { files, links };
+  if (!exists(dir)) return { files, links };
   const pending = [''];
   while (pending.length) {
     const folder = pending.pop();

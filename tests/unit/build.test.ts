@@ -288,7 +288,7 @@ function put(dir: string, file: string, text = '{}'): void {
 // app.asar next to app.asar.unpacked, which holds node_modules/dictionary-ro.
 async function fakePackage(
   platform: string,
-  options: { git?: boolean; extra?: string[]; asar?: boolean } = {},
+  options: { git?: boolean; extra?: string[]; asar?: boolean; unpack?: boolean } = {},
 ): Promise<FakePackage> {
   const base = mkdtempSync(path.join(tmpdir(), 'hoard-pack-'));
   fakePackages.push(base);
@@ -306,9 +306,11 @@ async function fakePackage(
     : path.join(appOutDir, 'resources');
   mkdirSync(resources, { recursive: true });
   if (options.asar !== false) {
-    await asarApi().createPackageWithOptions(app, path.join(resources, 'app.asar'), {
-      unpackDir: 'node_modules/dictionary-ro',
-    });
+    await asarApi().createPackageWithOptions(
+      app,
+      path.join(resources, 'app.asar'),
+      options.unpack === false ? {} : { unpackDir: 'node_modules/dictionary-ro' },
+    );
   }
   const context = {
     appOutDir,
@@ -382,6 +384,28 @@ test('afterPack does not follow a link out of the package', async () => {
     assert.doesNotMatch(err.message, /ch-1\.html/);
     return true;
   });
+});
+
+test('afterPack takes a missing app.asar.unpacked as nothing unpacked', async () => {
+  const line = await checked((await fakePackage('win32', { unpack: false })).context);
+  assert.equal(line.unpacked, 0);
+});
+
+test('afterPack fails on an app.asar.unpacked it cannot stat, rather than treating it as absent', async () => {
+  const { context } = await fakePackage('win32');
+  const fs = createRequire(import.meta.url)('node:fs') as typeof import('node:fs');
+  const lstat = fs.lstatSync;
+  const denied = mock.method(fs, 'lstatSync', ((file: string, ...rest: unknown[]) => {
+    if (file.endsWith('app.asar.unpacked')) {
+      throw Object.assign(new Error(`EPERM: operation not permitted, lstat '${file}'`), { code: 'EPERM' });
+    }
+    return (lstat as (...args: unknown[]) => unknown)(file, ...rest);
+  }) as typeof fs.lstatSync);
+  try {
+    await assert.rejects(afterPack(context), /EPERM.*app\.asar\.unpacked/);
+  } finally {
+    denied.mock.restore();
+  }
 });
 
 test('afterPack fails when it cannot check', async () => {
