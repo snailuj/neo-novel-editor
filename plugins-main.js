@@ -204,13 +204,13 @@ function listenersOf(event) {
   return out;
 }
 
-// A listener that fails every time it is called would add a line to
-// neo-errors.log, a file in the synced library written on the main thread,
-// on every save. Its first failure is logged, then one a minute at most,
-// with a count of those left out, as plugins.js does in the window.
+// A listener or handler that fails every time it is called would add a line
+// to neo-errors.log, a file in the synced library written on the main
+// thread, on every save. Its first failure is logged, then one a minute at
+// most, with a count of those left out, as plugins.js does in the window.
 const QUIET_MS = 60000;
-let failures = new WeakMap(); // listener -> { at, untold }
-function logFailure(entry, fn, event, err) {
+let failures = new WeakMap(); // listener or handler -> { at, untold }
+function logFailure(entry, fn, event, err, noun = 'listener') {
   const now = performance.now();
   const last = failures.get(fn);
   if (last && now - last.at < QUIET_MS) {
@@ -218,7 +218,7 @@ function logFailure(entry, fn, event, err) {
     return;
   }
   failures.set(fn, { at: now, untold: 0 });
-  const more = last && last.untold ? `${last.untold} more failures of this listener since its last line; the latest: ` : '';
+  const more = last && last.untold ? `${last.untold} more failures of this ${noun} since its last line; the latest: ` : '';
   host.logError(`plugin ${entry.id}: ${event}`, more + textOf(err));
 }
 
@@ -350,8 +350,8 @@ function activateMains() {
 
 // plugin:invoke: waits until the plugin's main half has started, then
 // hands the payload to the handler it took for the channel. A handler's
-// error is logged here, once, and goes back to the window as a rejection
-// naming the plugin and the channel (see answer).
+// error is logged here (see logFailure for how often) and goes back to the
+// window as a rejection naming the plugin and the channel (see answer).
 async function invoke(id, channel, payload) {
   if (typeof channel !== 'string' || !CHANNEL.test(channel)) throw new TypeError(`${textOf(channel)} is not a channel name`);
   const entry = mains.get(id);
@@ -363,7 +363,7 @@ async function invoke(id, channel, payload) {
   try {
     return await fn(payload);
   } catch (err) {
-    report(entry, `invoke ${channel}`, err);
+    logFailure(entry, fn, `invoke ${channel}`, err, 'handler');
     throw new Error(`plugin ${entry.id}: ${channel} failed: ${messageOf(err)}`);
   }
 }

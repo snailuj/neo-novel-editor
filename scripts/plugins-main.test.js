@@ -593,6 +593,42 @@ describe('a plugin\'s main half', { concurrency: 1 }, () => {
     assert.deepEqual(printed, ['[plugin keeper: info] indexed {"chapters":3}', '[plugin keeper: debug] looked']);
   });
 
+  // a window half that invokes from chapter-saved calls its handler on every
+  // save, and the line goes into the same synced file
+  test('a handler that fails every time is logged once, then at most once a minute with a count, and every invoke still rejects', async (t) => {
+    const clock = { now: 0 };
+    t.mock.method(performance, 'now', () => clock.now);
+    const app = withMains({ keeper });
+    const { handlers, logs } = wire({ appRoot: app });
+    plugins.activateMains();
+    const { host } = mainOf(app, 'keeper');
+    host.handle('throws', () => { throw new Error('throws every time'); });
+    host.handle('rejects', async () => { throw new Error('rejects every time'); });
+    const calls = async (n) => {
+      for (let i = 0; i < n; i++) {
+        await assert.rejects(invoke(handlers, 'keeper', 'throws'), /\bkeeper\b.*\bthrows\b.*throws every time/);
+        await assert.rejects(invoke(handlers, 'keeper', 'rejects'), /\bkeeper\b.*\brejects\b.*rejects every time/);
+      }
+    };
+    await calls(100);
+    assert.equal(logs.length, 2, 'the first failure of each handler');
+    assert.match(logs[0], /^\[plugin keeper: invoke throws\] Error: throws every time\n\s+at /);
+    assert.match(logs[1], /^\[plugin keeper: invoke rejects\] Error: rejects every time\n\s+at /);
+    clock.now += 59999;
+    await calls(10);
+    assert.equal(logs.length, 2);
+    clock.now += 1;
+    await calls(1);
+    assert.equal(logs.length, 4);
+    assert.match(logs[2], /^\[plugin keeper: invoke throws\] 109 more failures of this handler since its last line; the latest: Error: throws every time\n\s+at /);
+    assert.match(logs[3], /^\[plugin keeper: invoke rejects\] 109 more failures of this handler since its last line; the latest: Error: rejects every time\n\s+at /);
+    // a minute with none, and the next is logged as a first
+    clock.now += 60000;
+    await calls(1);
+    assert.equal(logs.length, 6);
+    assert.match(logs[4], /^\[plugin keeper: invoke throws\] Error: throws every time\n/);
+  });
+
   test('after-write listeners hear each write on a later turn; one that throws or rejects is logged and the rest still hear it', async () => {
     const app = withMains({ keeper, other: keeper });
     const { logs } = wire({ appRoot: app });
