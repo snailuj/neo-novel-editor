@@ -11,7 +11,7 @@
 
 'use strict';
 
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, dialog, shell } = require('electron');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
@@ -29,6 +29,14 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `neo-plugin-edits-test-${proce
 const LIBRARY = path.join(tmp, 'NEO Library');
 app.setPath('userData', path.join(tmp, 'app'));
 app.setPath('documents', tmp);
+// see plugins.e2e.js for these
+app.setPath('home', tmp);
+app.setPath('appData', path.join(tmp, 'appData'));
+for (const owner of [dialog, shell]) {
+  for (const name of Object.keys(owner)) {
+    owner[name] = () => { throw new Error(`${name} is disabled in tests`); };
+  }
+}
 fs.mkdirSync(LIBRARY);
 fs.writeFileSync(path.join(LIBRARY, 'library.json'), JSON.stringify({
   authorName: '', penNames: [], firstRunDone: true, pageTheme: 'night', hintShown: true,
