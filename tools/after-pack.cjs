@@ -401,11 +401,13 @@ function extraSources(packager) {
 }
 
 // Packed paths (relative to the app) that these entries put there from their sources:
-// extraResources into app.asar.unpacked, and a files set's `to` inside the archive.
-function destinationsOf(sources) {
+// extraResources into app.asar.unpacked, and a files set's `to` inside the archive. A source
+// that is not there put nothing anywhere (electron-builder skips it), so it excuses nothing.
+function destinationsOf(projectDir, sources) {
   const found = [];
-  for (const { label, to } of sources) {
+  for (const { label, from, to } of sources) {
     if (to === null || label === 'extraFiles') continue;
+    if (!exists(path.resolve(projectDir, from))) continue;
     const dest = to.replace(/\\/g, '/').replace(/^\.?\//, '').replace(/\/$/, '');
     if (label === 'files') found.push(dest);
     else if (dest.startsWith('app.asar.unpacked/')) found.push(dest.slice('app.asar.unpacked/'.length));
@@ -499,7 +501,7 @@ function checkSources(context, files, tracked, archive) {
       modulesReal,
       archive,
       copies: lockCopies(packages ?? {}),
-      destinations: destinationsOf(sources),
+      destinations: destinationsOf(projectDir, sources),
     },
     files,
     folders,

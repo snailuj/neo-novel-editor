@@ -989,6 +989,25 @@ test('afterPack fails on a packed path it cannot place in the project', async ()
   await assert.rejects(afterPack(own.context), /generated\/out\.js: cannot check/);
 });
 
+// A destination only accounts for what its source put there. When the source is not there,
+// electron-builder copies nothing, so a packed path under the destination has another origin
+// and no place in the project.
+test('afterPack does not excuse a packed path by a files entry whose source is missing', async () => {
+  const { context } = await fakePackage('win32', {
+    config: { files: [{ from: 'gone', to: 'node_modules/notes' }] },
+    packed: { 'node_modules/notes/private chapter.md': 'words' },
+  });
+  await assert.rejects(afterPack(context), /node_modules\/notes: cannot check/);
+});
+
+test('afterPack does not excuse a packed path by an extraResources entry whose source is missing', async () => {
+  const { context, unpacked } = await fakePackage('win32', {
+    config: { extraResources: [{ from: 'gone', to: 'app.asar.unpacked/node_modules/notes' }] },
+  });
+  put(unpacked, 'node_modules/notes/private chapter.md', 'words');
+  await assert.rejects(afterPack(context), /node_modules\/notes: cannot check/);
+});
+
 test('afterPack places a packed path that an extraResources entry put there', async () => {
   const config = {
     extraResources: [{ from: 'licenses/dictionary-sv', to: 'app.asar.unpacked/node_modules/dictionary-sv' }],
