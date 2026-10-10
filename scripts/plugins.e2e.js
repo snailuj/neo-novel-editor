@@ -376,17 +376,127 @@ const clickTab = async (name, ms = 300) => {
   await tick(ms);
 };
 
-// a snapshot shown on Darlings (SNAPSHOTS in app.js) goes when another tab
-// opens, a pane included, as it does for NEO's own tabs
-test('a pane hides a snapshot shown on Darlings', async () => {
-  const name = await js(`takeSnapshot('k').then((r) => r.snap.name)`);
-  await clickTab('darlings');
-  await js(`showSnapshot(${str(name)})`);
-  assert.equal(await js(`document.getElementById('snap-view').checkVisibility()`), true);
-  await clickTab('plugin:probe:pane');
-  assert.deepEqual(await js(`({ shown: snapShown, view: document.getElementById('snap-view').checkVisibility() })`), { shown: null, view: false });
-  await clickTab('manuscript');
-});
+// What the writer sees of the editor, read from the DOM alone, so any view or
+// mark that a tab leaves behind shows, whichever it is. Scroll and caret are
+// left out.
+const sight = () => js(`(() => {
+  const by = (id) => document.getElementById(id);
+  const label = (el) => el.id || el.localName + (el.classList[0] ? '.' + el.classList[0] : '');
+  const seen = (el) => [...el.children].filter((c) => c.checkVisibility()).map(label);
+  return {
+    body: [...document.body.classList].sort(),
+    manuscript: by('paper').checkVisibility(),
+    paper: seen(by('aux-paper')),
+    title: by('aux-title').textContent,
+    editor: [...by('editor-view').classList].sort(),
+    side: { open: by('side-pane').classList.contains('open'), seen: seen(by('side-pane')) },
+    highlights: [...CSS.highlights.keys()].sort(),
+    tabs: [...document.querySelectorAll('.tab.active')].map((tab) => tab.dataset.tab),
+    snapShown: snapShown && snapShown.name
+  };
+})()`);
+
+const PANE = 'plugin:probe:pane';
+const auxKind = () => js(`document.getElementById('aux-editor').dataset.kind`);
+// NEO's tabs besides the manuscript, each with its data-tab and how to open
+// it. Notes reads its file, so it is open once that lands. The Outline's two
+// views are the library's setting (`library.outlineView`; unset means cards),
+// set directly because the List/Cards switch writes library.json.
+const openOutline = (view) => async () => {
+  await js(`library.outlineView = ${str(view)}`);
+  await clickTab('outline');
+};
+const NEO_TABS = [
+  { name: 'Notes', tab: 'notes', open: async () => {
+    await clickTab('notes', 0);
+    for (let i = 0; i < 40 && (await auxKind()) !== 'notes'; i++) await tick(50);
+    assert.equal(await auxKind(), 'notes', 'the notes never loaded');
+    await tick(100);
+  } },
+  { name: 'Outline as a list', tab: 'outline', open: openOutline('list') },
+  { name: 'Outline as cards', tab: 'outline', open: openOutline('cards') },
+  { name: 'Darlings', tab: 'darlings', open: () => clickTab('darlings') }
+];
+// what the writer sees once `open` has opened a tab, coming from the tab `from`
+const arrive = async (from, open) => {
+  await clickTab(from, 100);
+  await open();
+  return sight();
+};
+// a view reached is a view of its own: it looks like none reached before it
+const distinctViews = (...seen) => {
+  const keys = new Set(seen.map((view) => str(view)));
+  return (view, name) => {
+    assert.ok(!keys.has(str(view)), `${name} was not reached: it looks like a view reached before`);
+    keys.add(str(view));
+  };
+};
+// the library's outline view as a test found it, put back afterwards
+const keepOutlineView = async (run) => {
+  const was = await js('library.outlineView');
+  try { await run(); } finally {
+    await js(`library.outlineView = ${str(was)}`);
+    await clickTab('manuscript');
+  }
+};
+
+// A pane leaves nothing behind: a tab of NEO's opened after it, or after it
+// and the manuscript, looks as it did before any pane showed. This comes
+// before the other pane tests because no earlier test shows a pane; one
+// after them would find a pane shown already.
+test("a pane leaves nothing behind on NEO's tabs", () => keepOutlineView(async () => {
+  const bar = await js(`[...document.querySelectorAll('#tabs .tab')].map((tab) => tab.dataset.tab).filter((tab) => !tab.startsWith('plugin:'))`);
+  assert.deepEqual(bar.sort(), ['manuscript', ...new Set(NEO_TABS.map((t) => t.tab))].sort(),
+    'the tab bar and NEO_TABS differ: add a new tab of NEO to NEO_TABS, with how to open it');
+  assert.equal(await js(`[...document.querySelectorAll('.plugin-pane')].every((el) => el.hidden)`), true, 'a pane has shown already');
+  const reached = distinctViews();
+  const before = [];
+  for (const { name, open } of NEO_TABS) {
+    before.push(await arrive('manuscript', open));
+    reached(before.at(-1), name);
+  }
+  const pane = await arrive('manuscript', () => clickTab(PANE));
+  reached(pane, 'the pane');
+  for (const [i, { name, open }] of NEO_TABS.entries()) {
+    for (const via of ['', 'manuscript']) {
+      await clickTab(PANE);
+      // were the click to fail, this would compare one tab opened after another
+      assert.deepEqual(await sight(), pane, `the pane, before ${name}`);
+      if (via) await clickTab(via, 100);
+      await open();
+      assert.deepEqual(await sight(), before[i], `${name} after the pane${via ? ' and the manuscript' : ''}`);
+    }
+  }
+}));
+
+// Whatever was open before a pane, the writer sees the pane and nothing left
+// from it. That includes a snapshot shown on Darlings (SNAPSHOTS in app.js)
+// with its gone words marked: it goes when another tab opens, a pane among
+// them, as it does for NEO's own tabs.
+test('a pane looks the same whatever was open before it', () => keepOutlineView(async () => {
+  // a snapshot with one word the book has since lost, for something to mark
+  const snap = await js(`takeSnapshot('k', (c) => (chapterHTML[c] || '').replace('</p>', ' gone</p>')).then((r) => r.snap.name)`);
+  const origins = [
+    { name: 'the manuscript', open: async () => {} },
+    ...NEO_TABS,
+    { name: 'Darlings with a snapshot shown', open: async () => {
+      await clickTab('darlings');
+      await js(`showSnapshot(${str(snap)})`);
+      assert.equal(await js('snapShown && snapShown.name'), snap, 'the snapshot never showed');
+      assert.equal(await js(`CSS.highlights.has('neo-snap-gone')`), true, 'no words are marked gone');
+    } }
+  ];
+  const pane = await arrive('manuscript', () => clickTab(PANE));
+  // a view an earlier test left showing would be part of the baseline, and
+  // every pane below would match it
+  assert.deepEqual(pane.paper, ['aux-title', 'div.plugin-pane'], 'the pane shows more than itself');
+  const reached = distinctViews(pane);
+  for (const { name, open } of origins) {
+    reached(await arrive('manuscript', open), name);
+    await clickTab(PANE);
+    assert.deepEqual(await sight(), pane, `the pane after ${name}`);
+  }
+}));
 
 test('pane', async () => {
   await js(`window.neo.writeAux(${str(owls.id)}, 'notes', '<p>Notes about owls.</p>')`);
