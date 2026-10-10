@@ -1024,7 +1024,9 @@ describe('the window half', () => {
     // a script of NEO's own is not the host's
     assert.equal(error('app.js', new Error('not a plugin')), false);
     assert.equal(host.logged.length, 2);
-    // a thrown value that is no Error is logged by the page's message
+    // a thrown value that is no Error is logged by the page's message, once
+    // the minute in which a plugin's errors are logged but once has passed
+    host.clock.now += 60000;
     const plain = { filename: 'plugins/works/renderer.js', lineno: 9, message: 'Uncaught thrown', error: null, stopImmediatePropagation() {} };
     host.fire('error', plain);
     assert.equal(host.logged[2], 'plugin works: Uncaught thrown @ plugins/works/renderer.js:9');
@@ -1055,6 +1057,32 @@ describe('the window half', () => {
     // and an error in plugins.js that holds no stack at all
     const bare = { filename: 'plugins.js', lineno: 1, message: 'Uncaught thrown', error: null, stopImmediatePropagation() { throw new Error('was stopped'); } };
     assert.doesNotThrow(() => host.fire('error', bare));
+  });
+
+  test('a plugin script that errors again and again is logged once, then at most once a minute with a count', () => {
+    const host = windowHalf(['works', 'other'].map((id) => ({ id, apiVersion: 1, rendererUrl: `plugins/${id}/renderer.js`, styleUrl: null })));
+    host.attach();
+    // each error is stopped, so NEO's net never tells the writer, logged or not
+    const error = (filename, message) => {
+      const event = { filename, lineno: 3, message, error: new Error(message), stopped: false, stopImmediatePropagation() { this.stopped = true; } };
+      host.fire('error', event);
+      return event.stopped;
+    };
+    for (let i = 0; i < 110; i++) assert.equal(error('plugins/works/renderer.js', `tick ${i}`), true);
+    assert.equal(host.logged.length, 1);
+    assert.match(host.logged[0], /^plugin works: Error: tick 0\n\s+at /);
+    // another plugin's first is its own line
+    error('plugins/other/renderer.js', 'other ticks');
+    assert.equal(host.logged.length, 2);
+    // a minute on, the next is logged with the count of the 109 left out
+    host.clock.now += 60000;
+    error('plugins/works/renderer.js', 'tick 110');
+    assert.equal(host.logged.length, 3);
+    assert.match(host.logged[2], /^plugin works: 109 more failures of this plugin's script since its last line; the latest: Error: tick 110\n\s+at /);
+    // and a minute with none, the next is a first
+    host.clock.now += 60000;
+    error('plugins/works/renderer.js', 'tick 111');
+    assert.match(host.logged[3], /^plugin works: Error: tick 111\n/);
   });
 
   test('a script that registers under another id than its plugin.json is refused, and its own stylesheet leaves with it', () => {

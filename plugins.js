@@ -115,20 +115,22 @@
 
   // A listener that fails every time it is called would add a line to
   // neo-errors.log, a file in the synced library, every frame the caret
-  // moves. Its first failure is logged, then one a minute at most, with a
-  // count of those left out.
+  // moves; so would a plugin's script that errors on every tick of a timer.
+  // The first failure is logged, then one a minute at most, with a count of
+  // those left out. key is what fails (the listener, or an object standing
+  // for a plugin's script), and what names it in the line.
   const QUIET_MS = 60000;
-  const failures = new WeakMap(); // listener -> { at, untold }
-  function logFailure(entry, fn, err) {
+  const failures = new WeakMap(); // key -> { at, untold }
+  function logFailure(id, key, err, what = 'listener') {
     const now = performance.now();
-    const last = failures.get(fn);
+    const last = failures.get(key);
     if (last && now - last.at < QUIET_MS) {
       last.untold++;
       return;
     }
-    failures.set(fn, { at: now, untold: 0 });
-    const more = last && last.untold ? `${last.untold} more failures of this listener since its last line; the latest: ` : '';
-    log(entry.id, more + text(err));
+    failures.set(key, { at: now, untold: 0 });
+    const more = last && last.untold ? `${last.untold} more failures of this ${what} since its last line; the latest: ` : '';
+    log(id, more + text(err));
   }
 
   // Calls a plugin's function. What it throws, or what its promise rejects
@@ -150,7 +152,7 @@
     if (detail.place) Object.freeze(detail.place);
     Object.freeze(detail);
     for (const { entry, fn } of listeners) {
-      if (!entry.disposed) call(fn, detail, (err) => logFailure(entry, fn, err));
+      if (!entry.disposed) call(fn, detail, (err) => logFailure(entry.id, fn, err));
     }
   }
 
@@ -890,12 +892,15 @@
   // name and goes no further, so NEO's net for errors (app.js, which listens
   // after this file) does not tell the writer. A plugin that never
   // registered loses its stylesheet, as one that fails to activate does.
+  // Only the first of a plugin's errors in a minute is logged (logFailure).
+  const scriptKeys = new Map(); // plugin id -> the key its script's errors count under
   function onScriptError(e) {
     const id = pluginOfError(e);
     if (id === undefined) return;
     e.stopImmediatePropagation();
     if (!registry.has(id)) dropStyle(id);
-    log(id, e.error || `${e.message} @ ${e.filename}:${e.lineno}`);
+    if (!scriptKeys.has(id)) scriptKeys.set(id, {});
+    logFailure(id, scriptKeys.get(id), e.error || `${e.message} @ ${e.filename}:${e.lineno}`, "plugin's script");
   }
   window.addEventListener('error', onScriptError);
 

@@ -742,6 +742,22 @@ test('a TypeError the host throws for a plugin\'s timer is logged under the plug
   assert.equal(await js('errorToastShown'), false, 'nothing was shown to the writer');
 });
 
+// A callback that throws on every tick of a timer would add a line to
+// neo-errors.log, a file in the synced library, for each. The first error of
+// a plugin's script is logged, and the rest of that minute only counted (the
+// timer test above logged this plugin's first); the writer is told nothing.
+test('a plugin script that errors again and again adds no line a tick', async () => {
+  const lines = () => (errorLog().match(/\] \[renderer\] plugin timer: /g) || []).length;
+  const before = lines();
+  const runs = await js('window.__timerRuns');
+  await js('(() => { window.__timerBadStatus(20); window.__timerThrows(20); })()');
+  for (let i = 0; i < 100 && (await js('window.__timerRuns')) < runs + 40; i++) await tick(50);
+  assert.equal(await js('window.__timerRuns'), runs + 40, 'all forty ran');
+  await tick(500); // the log is written through IPC
+  assert.ok(lines() - before <= 1, `${lines() - before} lines for forty errors`);
+  assert.equal(await js('errorToastShown'), false, 'nothing was shown to the writer');
+});
+
 test('a pane whose plugin fails while it shows gives way to the manuscript', async () => {
   // missing-script is listed, but its script never loaded: its id is free
   await js(`NeoPlugins.register({ id: 'missing-script', apiVersion: 1, async activate(neo) {
