@@ -333,17 +333,49 @@ describe('plugin discovery', { concurrency: 1 }, () => {
       assert.ok(logs[0].includes(path.join(app, 'plugins')));
     });
 
-    test('a main entry that is a link leading outside the app folder refuses its plugin, and the next still loads', (t) => {
+    // require follows what it is given: through a link, to a main.js.js beside
+    // a missing main.js, into a folder named main.js by its package.json.
+    // start() checks the file require will load, and requires that path.
+    const ran = 'neoOutsideMainRan';
+    afterEach(() => { delete globalThis[ran]; });
+    function outsideMain() {
+      const file = path.join(tempFolder(), 'outside.cjs');
+      fs.writeFileSync(file, `globalThis.${ran} = true; exports.activate = () => {};`);
+      return file;
+    }
+
+    test('a main entry that is a link leading outside the app folder is never required: its main half fails and is logged, and the next still starts', async (t) => {
       const app = appFolder({ 'plugins/a-sly': plugin('sly', { main: 'main.cjs' }), 'plugins/b-good': plugin('good', { main: 'main.cjs' }) });
-      fs.writeFileSync(path.join(app, 'plugins', 'b-good', 'main.cjs'), 'exports.activate = () => {};');
-      const outside = path.join(tempFolder(), 'main.cjs');
-      fs.writeFileSync(outside, 'exports.activate = () => {};');
-      if (!link(t, outside, path.join(app, 'plugins', 'a-sly', 'main.cjs'), 'file')) return;
+      fs.writeFileSync(path.join(app, 'plugins', 'b-good', 'main.cjs'), 'exports.activate = (host) => host.handle("echo", (p) => p);');
+      if (!link(t, outsideMain(), path.join(app, 'plugins', 'a-sly', 'main.cjs'), 'file')) return;
       const { logs } = wire({ appRoot: app });
-      assert.deepEqual(ids(), ['good']);
+      assert.deepEqual(ids(), ['sly', 'good']);
+      plugins.activateMains();
+      assert.equal(globalThis[ran], undefined, 'the file outside was not run');
       assert.equal(logs.length, 1, logs.join('\n'));
-      assert.match(logs[0], /main entry.*outside the app folder/);
-      assert.ok(logs[0].includes(path.join(app, 'plugins', 'a-sly')), 'the plugin folder is named');
+      assert.match(logs[0], /^\[plugin sly: activate\] .*main entry.*outside the app folder/);
+    });
+
+    test('a main.js.js link to a file outside is not what a missing main.js becomes', (t) => {
+      const app = appFolder({ 'plugins/odd': plugin('odd', { main: 'main.js' }) });
+      if (!link(t, outsideMain(), path.join(app, 'plugins', 'odd', 'main.js.js'), 'file')) return;
+      const { logs } = wire({ appRoot: app });
+      plugins.activateMains();
+      assert.equal(globalThis[ran], undefined, 'the file outside was not run');
+      assert.equal(logs.length, 1, logs.join('\n'));
+      assert.match(logs[0], /^\[plugin odd: activate\] .*ENOENT/);
+    });
+
+    test('a main entry that is a folder is never required, whatever its package.json names', () => {
+      const app = appFolder({ 'plugins/pkg': plugin('pkg', { main: 'main.js' }) });
+      const folder = path.join(app, 'plugins', 'pkg', 'main.js');
+      fs.mkdirSync(folder);
+      fs.writeFileSync(path.join(folder, 'package.json'), JSON.stringify({ main: outsideMain() }));
+      const { logs } = wire({ appRoot: app });
+      plugins.activateMains();
+      assert.equal(globalThis[ran], undefined, 'the file outside was not run');
+      assert.equal(logs.length, 1, logs.join('\n'));
+      assert.match(logs[0], /^\[plugin pkg: activate\] .*main entry is not a file/);
     });
 
     test('a main entry that is not there leads nowhere: its plugin is listed, and activate logs the absence', () => {

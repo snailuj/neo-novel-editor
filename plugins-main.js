@@ -204,10 +204,9 @@ function discover() {
         rendererUrl = urlOf(rel, name, manifest.renderer);
         styleUrl = manifest.style ? urlOf(rel, name, manifest.style) : null;
       } catch (err) { skip(folder, err); continue; }
-      // the folder, and the main entry that NEO will require, are checked
-      // where they really lead: a link anywhere in either could lead out
-      const folderRefusal = refusal(realApp, folder, 'the plugin folder')
-        || (manifest.main && refusal(realApp, path.join(folder, manifest.main), 'its main entry'));
+      // a link anywhere in the folder's path could lead out (the main entry
+      // is checked where it is required, in start)
+      const folderRefusal = refusal(realApp, folder, 'the plugin folder');
       if (folderRefusal) { skip(folder, folderRefusal); continue; }
       byId.set(manifest.id, folder);
       list.push({
@@ -381,6 +380,19 @@ function fail(entry, err) {
   report(entry, 'activate', err);
 }
 
+// The file a main entry will be required from, or why it may not be. require
+// follows what it is given: a link, a main.js.js beside a missing main.js,
+// a package.json in a folder named main.js. So the path is resolved here,
+// must be a file inside the app folder, and is the path that is required.
+function realMain(mainPath) {
+  const real = fs.realpathSync.native(mainPath);
+  if (outsideApp(path.relative(fs.realpathSync.native(host.appRoot), real))) {
+    throw new Error(`its main entry leads outside the app folder, to ${real}`);
+  }
+  if (!fs.statSync(real).isFile()) throw new Error(`its main entry is not a file: ${real}`);
+  return real;
+}
+
 // An activate that awaits what never comes would leave its plugin's invokes
 // waiting for ever, and the log silent. Past activateMs it counts as failed:
 // logged once, and its pending and later invokes are refused, even if it
@@ -389,7 +401,7 @@ function start(entry, mainPath) {
   let result;
   let async;
   try {
-    const exported = require(mainPath);
+    const exported = require(realMain(mainPath));
     if (!exported || typeof exported.activate !== 'function') throw new TypeError(`${mainPath} has no activate function`);
     result = exported.activate(apiFor(entry, path.dirname(mainPath)));
     async = !!result && typeof result.then === 'function';
