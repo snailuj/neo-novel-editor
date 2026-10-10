@@ -84,6 +84,22 @@ function outsideApp(rel) {
   return path.isAbsolute(rel) || rel === '..' || rel.startsWith('..' + path.sep);
 }
 
+// Why p may not be used, or null: a path is followed through every link in
+// it (a symlink, or a junction on Windows) to where it really leads, and
+// that must lie inside the app folder's own real path. A path that will not
+// resolve is refused with the error that says so, except one that is not
+// there: it leads nowhere, and whoever needs the file (activate's require)
+// logs its absence.
+function refusal(realApp, p, what) {
+  let resolved;
+  try {
+    resolved = fs.realpathSync.native(p);
+  } catch (err) {
+    return err.code === 'ENOENT' ? null : err;
+  }
+  return outsideApp(path.relative(realApp, resolved)) ? `skipped: ${what} leads outside the app folder, to ${resolved}` : null;
+}
+
 function urlOf(rel, folderName, file) {
   const segments = rel ? rel.split(path.sep) : [];
   return [...segments, folderName, file].map(encodeURIComponent).join('/');
@@ -100,6 +116,14 @@ function extraRoots() {
 function discover() {
   if (found) return found;
   const { appRoot } = host;
+  let realApp;
+  try {
+    realApp = fs.realpathSync.native(appRoot);
+  } catch (err) {
+    skip(appRoot, err);
+    found = [];
+    return found;
+  }
   const bundled = path.join(appRoot, 'plugins');
   const byId = new Map();
   const list = [];
@@ -115,6 +139,8 @@ function discover() {
       if (!(err.code === 'ENOENT' && root === bundled)) skip(root, err);
       continue;
     }
+    const rootRefusal = refusal(realApp, root, 'the folder');
+    if (rootRefusal) { skip(root, rootRefusal); continue; }
     // a link (a symlink, or a junction on Windows) can lead outside the app
     // folder, so it is refused like a root outside it
     for (const e of entries) if (e.isSymbolicLink()) skip(path.join(root, e.name), 'skipped: a link, which can lead outside the app folder');
@@ -132,6 +158,11 @@ function discover() {
         rendererUrl = urlOf(rel, name, manifest.renderer);
         styleUrl = manifest.style ? urlOf(rel, name, manifest.style) : null;
       } catch (err) { skip(folder, err); continue; }
+      // the folder, and the main entry that NEO will require, are checked
+      // where they really lead: a link anywhere in either could lead out
+      const folderRefusal = refusal(realApp, folder, 'the plugin folder')
+        || (manifest.main && refusal(realApp, path.join(folder, manifest.main), 'its main entry'));
+      if (folderRefusal) { skip(folder, folderRefusal); continue; }
       byId.set(manifest.id, folder);
       list.push({
         ...manifest,

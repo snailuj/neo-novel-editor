@@ -244,6 +244,103 @@ describe('plugin discovery', { concurrency: 1 }, () => {
     assert.deepEqual(ids(), ['real']);
     assert.ok(logs.some((line) => line.includes(link)), 'the link is logged');
   });
+
+  // readdir, readFile and require all follow a link, wherever in a path it
+  // sits, so what is checked is where each path really leads
+  describe('a link further up or down than a plugin folder', () => {
+    const dirLink = process.platform === 'win32' ? 'junction' : 'dir';
+    function link(t, target, at, type = dirLink) {
+      try {
+        fs.symlinkSync(target, at, type);
+        return true;
+      } catch (err) {
+        t.skip(`this system refused the link: ${err.code}`);
+        return false;
+      }
+    }
+    const real = (p) => fs.realpathSync.native(p);
+
+    test('a plugin root that is a link leading outside the app folder is refused and logged', (t) => {
+      const app = appFolder({});
+      const elsewhere = tempFolder();
+      addPlugin(elsewhere, 'out', plugin('out'));
+      if (!link(t, elsewhere, path.join(app, 'dev'))) return;
+      const { logs } = wire({ appRoot: app, dirs: 'dev' });
+      assert.deepEqual(ids(), []);
+      assert.equal(logs.length, 1, logs.join('\n'));
+      assert.match(logs[0], /outside the app folder/);
+      assert.ok(logs[0].includes(path.join(app, 'dev')), 'the root is named');
+      assert.ok(logs[0].includes(real(elsewhere)), 'and where it leads');
+    });
+
+    test('plugins/ itself a link leading outside the app folder is refused and logged', (t) => {
+      const app = appFolder({});
+      const elsewhere = tempFolder();
+      addPlugin(elsewhere, 'out', plugin('out'));
+      if (!link(t, elsewhere, path.join(app, 'plugins'))) return;
+      const { logs } = wire({ appRoot: app });
+      assert.deepEqual(ids(), []);
+      assert.equal(logs.length, 1, logs.join('\n'));
+      assert.match(logs[0], /outside the app folder/);
+      assert.ok(logs[0].includes(path.join(app, 'plugins')));
+    });
+
+    test('a main entry that is a link leading outside the app folder refuses its plugin, and the next still loads', (t) => {
+      const app = appFolder({ 'plugins/a-sly': plugin('sly', { main: 'main.cjs' }), 'plugins/b-good': plugin('good', { main: 'main.cjs' }) });
+      fs.writeFileSync(path.join(app, 'plugins', 'b-good', 'main.cjs'), 'exports.activate = () => {};');
+      const outside = path.join(tempFolder(), 'main.cjs');
+      fs.writeFileSync(outside, 'exports.activate = () => {};');
+      if (!link(t, outside, path.join(app, 'plugins', 'a-sly', 'main.cjs'), 'file')) return;
+      const { logs } = wire({ appRoot: app });
+      assert.deepEqual(ids(), ['good']);
+      assert.equal(logs.length, 1, logs.join('\n'));
+      assert.match(logs[0], /main entry.*outside the app folder/);
+      assert.ok(logs[0].includes(path.join(app, 'plugins', 'a-sly')), 'the plugin folder is named');
+    });
+
+    test('a main entry that is not there leads nowhere: its plugin is listed, and activate logs the absence', () => {
+      const app = appFolder({ 'plugins/hollow': plugin('hollow', { main: 'main.cjs' }) });
+      const { logs } = wire({ appRoot: app });
+      assert.deepEqual(ids(), ['hollow']);
+      assert.deepEqual(logs, []);
+      plugins.activateMains();
+      assert.equal(logs.length, 1, logs.join('\n'));
+      assert.match(logs[0], /^\[plugin hollow: activate\] /);
+    });
+
+    test('a main entry that is a link to nothing is not followed: activate logs it, and no file outside is required', (t) => {
+      const app = appFolder({ 'plugins/dangling': plugin('dangling', { main: 'main.cjs' }) });
+      if (!link(t, path.join(tempFolder(), 'gone.cjs'), path.join(app, 'plugins', 'dangling', 'main.cjs'), 'file')) return;
+      const { logs } = wire({ appRoot: app });
+      assert.deepEqual(ids(), ['dangling']);
+      plugins.activateMains();
+      assert.equal(logs.length, 1, logs.join('\n'));
+      assert.match(logs[0], /^\[plugin dangling: activate\] /);
+    });
+
+    test('a plugin folder that resolves outside the app folder, by whatever means, is refused and logged', (t) => {
+      const app = appFolder({ 'plugins/odd': plugin('odd'), 'plugins/fine': plugin('fine') });
+      const folder = path.join(app, 'plugins', 'odd');
+      const elsewhere = tempFolder();
+      const { native } = fs.realpathSync;
+      t.mock.method(fs.realpathSync, 'native', (p, ...rest) => p === folder ? elsewhere : native(p, ...rest));
+      const { logs } = wire({ appRoot: app });
+      assert.deepEqual(ids(), ['fine']);
+      assert.equal(logs.length, 1, logs.join('\n'));
+      assert.match(logs[0], /outside the app folder/);
+      assert.ok(logs[0].includes(folder));
+    });
+
+    test('an app folder reached through a link is no reason to refuse its plugins', (t) => {
+      const app = appFolder({ 'plugins/full': plugin('full', { main: 'main.cjs' }) });
+      fs.writeFileSync(path.join(app, 'plugins', 'full', 'main.cjs'), 'exports.activate = () => {};');
+      const through = path.join(tempFolder(), 'app');
+      if (!link(t, app, through)) return;
+      const { logs } = wire({ appRoot: through });
+      assert.deepEqual(ids(), ['full']);
+      assert.deepEqual(logs, []);
+    });
+  });
 });
 
 describe('the Plugins menu', { concurrency: 1 }, () => {
