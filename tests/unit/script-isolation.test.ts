@@ -159,6 +159,8 @@ function run(target: Target): Run {
   const synced: { count: number; afterPatching: boolean } = { count: 0, afterPatching: false };
   const fakeWorkerThreads: Anything = { Worker: class {} };
   const moduleLoader: Anything = {
+    // what hideWindows wraps to give main.js a BrowserWindow that opens hidden
+    prototype: { require: () => ({}) },
     registerHooks: (registered: typeof hooks) => { Object.assign(hooks, registered); },
     syncBuiltinESMExports: () => {
       synced.count += 1;

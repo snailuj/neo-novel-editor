@@ -143,13 +143,16 @@ function guardWrites(profile, onRefuse = () => {}) {
 // session that wants to see the window.
 //
 // Mechanism: every BrowserWindow that code loaded afterwards makes is made with show: false and
-// paintWhenInitiallyHidden: true, so it never reaches the screen and still lays out and paints (a
-// test reads the page's layout, and takes its selection and caret). backgroundThrottling stays off, so timers and animation frames
-// in a hidden page keep their rate. The calls that would bring a window forward do nothing, so
-// that code under test cannot undo it: show, showInactive, focus, moveTop, restore and maximize,
-// and app.focus. A window is never shown, rather than shown off every display or shown inactive:
-// Windows gives even an inactive or off-screen window a taskbar button and a place in Alt+Tab.
-// With no window shown, BrowserWindow.getFocusedWindow() is null.
+// webPreferences.offscreen: true, so it is never put on the screen, and its page is drawn into
+// memory at 60 frames a second. Hidden only (show: false, with paintWhenInitiallyHidden and
+// backgroundThrottling off) was tried first: the page's animation frames then came about twice a
+// second in NEO's own window, and the plugin host's selection and chapter-change events, which
+// are sent once a frame, arrived late or not within a test's wait. The calls that would bring a
+// window forward do nothing, so that code under test cannot undo it: show, showInactive, focus,
+// moveTop, restore and maximize, and app.focus. A window is never shown, rather than shown off
+// every display or shown inactive: Windows gives even an inactive or off-screen window a
+// taskbar button and a place in Alt+Tab. With no window shown, BrowserWindow.getFocusedWindow()
+// is null; an offscreen page still reports focus to its own scripts.
 //
 // Every window event that matters is recorded in globalThis.neoTestWindowEvents, and appended as
 // JSON lines to the file NEO_TEST_WINDOW_LOG names, when it is set: a run can be checked for a
@@ -182,7 +185,7 @@ function hideWindows() {
       ...options,
       show: false,
       paintWhenInitiallyHidden: true,
-      webPreferences: { ...options.webPreferences, backgroundThrottling: false }
+      webPreferences: { ...options.webPreferences, backgroundThrottling: false, offscreen: true }
     }])
   });
   // electron's BrowserWindow export cannot be redefined, so a require of 'electron' gets a view

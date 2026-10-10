@@ -1,5 +1,4 @@
-import { test, expect } from '@playwright/test';
-import { _electron as electron } from '@playwright/test';
+import { test, expect, _electron as electron } from '@playwright/test';
 import { launchProfile } from '../support/electron-profile.mjs';
 import { createRequire } from 'node:module';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
@@ -94,6 +93,8 @@ test('the app\'s own window in a test run is never shown or focused', async () =
       if (state.osVisible !== null) expect(state.osVisible).toBe(false);
     }
     expect(await fixture.app.evaluate(({ BrowserWindow }) => BrowserWindow.getFocusedWindow())).toBeNull();
+    // the page itself still counts as focused, which the code that waits for the writer to come back relies on
+    expect(await fixture.page.evaluate(() => document.hasFocus())).toBe(true);
     const events = await fixture.app.evaluate(() => globalThis.neoTestWindowEvents);
     // the record exists and saw the window made
     expect(events.some((entry) => entry.event === 'created')).toBe(true);
