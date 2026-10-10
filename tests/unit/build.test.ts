@@ -353,6 +353,8 @@ async function fakePackage(
     unpack?: boolean;
     // more tracked files in the project, with their text
     files?: Record<string, string>;
+    // more files in the package, with their text (the project need not have them)
+    packed?: Record<string, string>;
     // electron-builder's build config and the running platform's own section of it
     config?: Record<string, unknown>;
     platformOptions?: Record<string, unknown>;
@@ -368,7 +370,10 @@ async function fakePackage(
     execFileSync('git', ['init', '-q'], { cwd: project });
     execFileSync('git', ['add', '-A'], { cwd: project });
   }
+  // built or installed, so untracked: every packed path has a source in the project
+  for (const file of UNTRACKED_FILES) put(project, file);
   for (const file of [...TRACKED_FILES, ...UNTRACKED_FILES, ...(options.extra ?? [])]) put(app, file);
+  for (const [file, text] of Object.entries(options.packed ?? {})) put(app, file, text);
   const appOutDir = path.join(base, 'out');
   const resources = platform === 'darwin'
     ? path.join(appOutDir, 'NEO.app', 'Contents', 'Resources')
@@ -411,7 +416,9 @@ function writeHeaderOnlyAsar(file: string, files: object): void {
 
 // A package whose app.asar holds package.json and node_modules/linked, a link to `target`.
 async function packageWithAsarLink(target: string): Promise<PackContext> {
-  const { context, resources } = await fakePackage('win32', { asar: false });
+  const { context, project, resources } = await fakePackage('win32', { asar: false });
+  // the link as it sits in the project, so the packed path has a source there
+  symlinkSync(path.join(project, 'node_modules', 'dictionary-ro'), path.join(project, 'node_modules', 'linked'), 'junction');
   writeHeaderOnlyAsar(path.join(resources, 'app.asar'), {
     'package.json': { size: 2, offset: '0' },
     node_modules: { files: { linked: { link: target } } },
@@ -735,7 +742,7 @@ test('afterPack refuses a link inside a packed dependency that leaves the projec
 });
 
 test('afterPack checks the folder a nested link points at inside the project', async () => {
-  const files = { 'drafts/a.txt': '' };
+  const files = { 'drafts/a.txt': '', 'drafts/page.txt': '' };
   const inProject = (_context: PackContext, project: string): string => path.join(project, 'drafts');
   await checked((await packageWithNestedLink(inProject, { files })).context);
   const { context, project } = await packageWithNestedLink(inProject, { files });
@@ -906,6 +913,97 @@ test('afterPack checks the folder a tracked symlink points at inside the project
   const { context, project } = await packageWithTrackedLink(inProject);
   put(project, `scripts/${CHAPTER}`);
   await assert.rejects(afterPack(context), /scripts\/Chapter 3\.txt: untracked file/);
+});
+
+// electron-builder copies each production dependency from where the dependency tree puts it
+// and writes it at node_modules/<name> in the package, so a packed path need not exist at the
+// same place in the project: electron-updater's own fs-extra is packed at the top level. The
+// hook finds the copies a packed package can have come from by name and version in the lock
+// file, walks those, and fails on a packed path it cannot place at all.
+const lockWith = (packages: Record<string, unknown>): string =>
+  JSON.stringify({ lockfileVersion: 3, packages: { '': {}, ...packages } });
+const pkgJson = (version: string): string => JSON.stringify({ name: 'dep', version });
+
+test('afterPack reads the source of a files entry like an extraResources source', async () => {
+  const outside = await fakePackage('win32', { config: { files: [{ from: '../vault', to: 'node_modules/notes' }] } });
+  await assert.rejects(afterPack(outside.context), /\.\.\/vault: files source is outside the project/);
+
+  // a glob, or a set with no `from`, names no folder
+  await checked((await fakePackage('win32', { config: { files: ['**/*', '!tests/**', { filter: ['**/*'] }] } })).context);
+
+  const files = { 'drafts/a.txt': '' };
+  const inside = await fakePackage('win32', { files, platformOptions: { files: [{ from: 'drafts', to: 'drafts' }] } });
+  put(inside.project, `drafts/${CHAPTER}`);
+  await assert.rejects(afterPack(inside.context), /drafts\/Chapter 3\.txt: untracked file/);
+});
+
+const UPDATER_FS = 'node_modules/electron-updater/node_modules/fs-extra';
+
+// fs-extra packed at the top level, though the project has it only under electron-updater
+async function rehoistedFsExtra(): Promise<FakePackage> {
+  return fakePackage('win32', {
+    files: {
+      'package-lock.json': lockWith({ [UPDATER_FS]: { version: '10.1.0' } }),
+      [`${UPDATER_FS}/package.json`]: pkgJson('10.1.0'),
+      [`${UPDATER_FS}/lib/index.js`]: '',
+    },
+    packed: { 'node_modules/fs-extra/package.json': pkgJson('10.1.0'), 'node_modules/fs-extra/lib/index.js': '' },
+  });
+}
+
+test('afterPack finds the copy a re-hoisted dependency was packed from', async () => {
+  const line = await checked((await rehoistedFsExtra()).context);
+  assert.equal(line.relocated, 2);
+});
+
+test('afterPack walks the copy a re-hoisted dependency was packed from, and finds a link in it', async () => {
+  const { context, project } = await rehoistedFsExtra();
+  rmSync(path.join(project, UPDATER_FS, 'lib'), { recursive: true });
+  symlinkSync(outsideProject(context), path.join(project, UPDATER_FS, 'lib'), 'junction');
+  await assert.rejects(afterPack(context), /electron-updater\/node_modules\/fs-extra\/lib: .*outside the project/);
+});
+
+test('afterPack looks for the version that was packed, not the one at the same path', async () => {
+  const nested = 'node_modules/electron-updater/node_modules/jsonfile';
+  const { context, project } = await fakePackage('win32', {
+    files: {
+      'package-lock.json': lockWith({
+        'node_modules/jsonfile': { version: '4.0.0' },
+        [nested]: { version: '6.2.1' },
+      }),
+      'node_modules/jsonfile/package.json': pkgJson('4.0.0'),
+      'node_modules/jsonfile/lib/utils.js': '',
+      [`${nested}/package.json`]: pkgJson('6.2.1'),
+      [`${nested}/lib/utils.js`]: '',
+    },
+    packed: { 'node_modules/jsonfile/package.json': pkgJson('6.2.1'), 'node_modules/jsonfile/lib/utils.js': '' },
+  });
+  rmSync(path.join(project, nested, 'lib'), { recursive: true });
+  symlinkSync(outsideProject(context), path.join(project, nested, 'lib'), 'junction');
+  await assert.rejects(afterPack(context), /electron-updater\/node_modules\/jsonfile\/lib: .*outside the project/);
+});
+
+test('afterPack fails on a packed path it cannot place in the project', async () => {
+  const dependency = await fakePackage('win32', { packed: { 'node_modules/ghost/index.js': '' } });
+  await assert.rejects(afterPack(dependency.context), /node_modules\/ghost: cannot check/);
+  const own = await fakePackage('win32', { packed: { 'generated/out.js': '' } });
+  await assert.rejects(afterPack(own.context), /generated\/out\.js: cannot check/);
+});
+
+test('afterPack places a packed path that an extraResources entry put there', async () => {
+  const config = {
+    extraResources: [{ from: 'licenses/dictionary-sv', to: 'app.asar.unpacked/node_modules/dictionary-sv' }],
+  };
+  const files = { 'licenses/dictionary-sv/NOTICE.txt': 'notice' };
+  const clean = await fakePackage('win32', { files, config });
+  put(clean.unpacked, 'node_modules/dictionary-sv/NOTICE.txt');
+  const line = await checked(clean.context);
+  assert.equal(line.extra, 1);
+
+  // with no entry to account for it, the same file has no place
+  const loose = await fakePackage('win32', { files });
+  put(loose.unpacked, 'node_modules/dictionary-sv/NOTICE.txt');
+  await assert.rejects(afterPack(loose.context), /node_modules\/dictionary-sv: cannot check/);
 });
 
 test('afterPack refuses a package-lock.json it cannot read', async () => {

@@ -204,16 +204,68 @@ function linkedPackages(projectDir, projectReal, folders, strays) {
 // against the tracked list when it stays inside the project, and fine inside node_modules.
 // The walk goes on from where a link lands, so a link inside a linked package is found too.
 // Each path component is looked at once, so the cost follows the packed files.
-function packedLinks(projectDir, projectReal, modulesReal, files, folders, strays) {
+//
+// A packed path need not exist at the same place in the project. electron-builder copies each
+// production dependency from where the dependency tree puts it and writes it at
+// node_modules/<name>: electron-updater's own fs-extra, say, is packed at the top level
+// while the project has it under node_modules/electron-updater/node_modules, and the top
+// level may hold a different version of the same name. So a packed package is walked at every
+// project folder it can have come from (the same place when its version matches, and each
+// copy of that name and version in the lock file), and a link in any of them counts. A packed
+// path with no such folder fails the check: there is nothing to compare it with. The one
+// legitimate case is a file an extraResources entry (or a files entry with a `to`) put there,
+// whose source folder is checked on its own; those are counted, not ignored.
+const ABSENT = Symbol('absent');
+const NOT_FOUND = 'cannot check: no copy of it was found in the project to compare it with';
+
+// 'node_modules/a/node_modules/@s/b/lib/x.js' is lib/x.js of the package folder
+// 'node_modules/a/node_modules/@s/b'; a file directly in node_modules has no package.
+function packageOf(file) {
+  const parts = file.split('/');
+  const at = parts.lastIndexOf('node_modules');
+  if (at < 0 || parts[at + 1] === undefined) return null;
+  const size = parts[at + 1].startsWith('@') ? 2 : 1;
+  if (parts.length <= at + 1 + size) return null;
+  return {
+    root: parts.slice(0, at + 1 + size).join('/'),
+    name: parts.slice(at + 1, at + 1 + size).join('/'),
+    rest: parts.slice(at + 1 + size).join('/'),
+  };
+}
+
+function versionOf(text) {
+  try {
+    const { version } = JSON.parse(text);
+    return typeof version === 'string' ? version : null;
+  } catch {
+    return null; // no version to match on: the same place is still tried
+  }
+}
+
+// every lock-file install path of each name@version, e.g. 'fs-extra@10.1.0'
+function lockCopies(packages) {
+  const copies = new Map();
+  for (const [key, entry] of Object.entries(packages)) {
+    const at = key.lastIndexOf('node_modules/');
+    if (at < 0 || !entry || typeof entry.version !== 'string') continue;
+    const id = `${key.slice(at + 'node_modules/'.length)}@${entry.version}`;
+    copies.set(id, [...(copies.get(id) ?? []), key]);
+  }
+  return copies;
+}
+
+function packedSources(ctx, files, folders, strays) {
+  const { projectDir, projectReal, modulesReal, archive, copies, destinations } = ctx;
   const landed = new Map();
 
-  // where a walk continues from `full`, or null when there is nothing more to look at
+  // where a walk continues from `full`; ABSENT when it is not there, null when a link was
+  // reported or leaves nothing more to look at
   const classify = (full, shown) => {
     let stat;
     try {
       stat = fs.lstatSync(full);
     } catch (err) {
-      if (err.code === 'ENOENT') return null;
+      if (err.code === 'ENOENT') return ABSENT;
       throw err;
     }
     if (!stat.isSymbolicLink()) return full;
@@ -224,37 +276,87 @@ function packedLinks(projectDir, projectReal, modulesReal, files, folders, stray
     return target;
   };
 
-  for (const file of files) {
+  // false when a component of `rel` is not in the project
+  const walk = (rel) => {
     let at = projectDir;
     let shown = '';
-    for (const name of file.split('/')) {
+    for (const name of rel.split('/')) {
       const full = path.join(at, name);
       shown = shown ? `${shown}/${name}` : name;
       if (!landed.has(full)) landed.set(full, classify(full, shown));
       at = landed.get(full);
-      if (at === null) break;
+      if (at === ABSENT) return false;
+      if (at === null) return true;
     }
+    return true;
+  };
+
+  const sourcesOf = ({ root, name }) => {
+    let packed = null;
+    try {
+      packed = versionOf(asar.extractFile(archive, path.normalize(`${root}/package.json`)).toString('utf8'));
+    } catch {
+      packed = null; // not packed, or an extraResources file: the same place is still tried
+    }
+    const found = new Set();
+    if (exists(path.join(projectDir, root))) {
+      let here = null;
+      try {
+        here = versionOf(fs.readFileSync(path.join(projectDir, root, 'package.json'), 'utf8'));
+      } catch {
+        here = null;
+      }
+      if (packed === null || here === null || here === packed) found.add(root);
+    }
+    if (packed !== null) for (const copy of copies.get(`${name}@${packed}`) ?? []) found.add(copy);
+    return [...found];
+  };
+
+  const roots = new Map();
+  const unplaced = new Set();
+  let relocated = 0;
+  let extra = 0;
+  for (const file of files) {
+    const pkg = packageOf(file);
+    let reached = false;
+    if (pkg === null) {
+      reached = walk(file);
+    } else {
+      if (!roots.has(pkg.root)) roots.set(pkg.root, sourcesOf(pkg));
+      const sources = roots.get(pkg.root);
+      for (const source of sources) if (walk(`${source}/${pkg.rest}`)) reached = true;
+      if (reached && !sources.includes(pkg.root)) relocated++;
+    }
+    if (reached) continue;
+    if (destinations.some((to) => file === to || file.startsWith(`${to}/`))) extra++;
+    else unplaced.add(pkg === null ? file : pkg.root);
   }
+  for (const item of unplaced) strays.push({ path: item, reason: NOT_FOUND });
+  return { relocated, extra };
 }
 
-// package-lock.json names the same links: `file:` dependencies carry `link: true` and the
-// folder they resolve to.
-function lockedLinks(projectDir, folders, strays) {
+// package-lock.json: every installed package with its path, and the links among them.
+function readLock(projectDir) {
   const file = path.join(projectDir, 'package-lock.json');
-  if (!exists(file)) return;
-  let packages;
+  if (!exists(file)) return null;
   try {
-    packages = JSON.parse(fs.readFileSync(file, 'utf8')).packages ?? {};
+    return JSON.parse(fs.readFileSync(file, 'utf8')).packages ?? {};
   } catch (err) {
     throw new Error(`Packaging check: cannot read package-lock.json: ${err.message}`);
   }
+}
+
+// `file:` dependencies carry `link: true` and the folder they resolve to.
+function lockedLinks(projectDir, packages, folders, strays) {
   for (const [name, entry] of Object.entries(packages)) {
     if (entry && entry.link === true) addSource(projectDir, name, entry.resolved, folders, strays);
   }
 }
 
-// extraResources and extraFiles, from the build config and the platform's own section. An
-// entry is a path or { from, to }; a list or a single one. Both sections must be there:
+// Where files come into the package from a folder of the project: extraResources and
+// extraFiles entries (a path, or { from, to }), and `files` sets that name a `from` (a glob
+// string, or a set with no `from`, names no folder). Read from the build config and the
+// platform's own section, as a list or a single entry. Both sections must be there:
 // electron-builder is a caret range, and a renamed field read as "no extraResources" would
 // turn this check off without an error.
 function extraSources(packager) {
@@ -264,13 +366,28 @@ function extraSources(packager) {
     if (section === null || typeof section !== 'object') {
       throw new Error(`Packaging check: cannot check extraResources: packager.${field} is not an object`);
     }
-    for (const key of ['extraResources', 'extraFiles']) {
-      const value = section[key];
+    for (const label of ['extraResources', 'extraFiles', 'files']) {
+      const value = section[label];
       if (value == null) continue;
       for (const set of Array.isArray(value) ? value : [value]) {
-        found.push([key, typeof set === 'string' ? set : set && set.from]);
+        const from = typeof set === 'string' ? set : set && set.from;
+        if (label === 'files' && (typeof set === 'string' || !from)) continue;
+        found.push({ label, from, to: set && typeof set.to === 'string' ? set.to : null });
       }
     }
+  }
+  return found;
+}
+
+// Packed paths (relative to the app) that these entries put there from their sources:
+// extraResources into app.asar.unpacked, and a files set's `to` inside the archive.
+function destinationsOf(sources) {
+  const found = [];
+  for (const { label, to } of sources) {
+    if (to === null || label === 'extraFiles') continue;
+    const dest = to.replace(/\\/g, '/').replace(/^\.?\//, '').replace(/\/$/, '');
+    if (label === 'files') found.push(dest);
+    else if (dest.startsWith('app.asar.unpacked/')) found.push(dest.slice('app.asar.unpacked/'.length));
   }
   return found;
 }
@@ -327,26 +444,43 @@ function untrackedIn(projectDir, projectReal, modulesReal, folders, tracked, str
   }
 }
 
-// Strays among the project's own sources, and the folders whose untracked files are strays.
-function checkSources(context, files, tracked) {
+// Strays among the project's own sources: links, the folders whose files must all be
+// tracked, and packed paths with no source. Also how many packed paths came from another
+// copy than the one at their path, and how many from an extraResources or files entry.
+function checkSources(context, files, tracked, archive) {
   const { projectDir } = context.packager;
   const projectReal = fs.realpathSync(projectDir);
   const modules = path.join(projectDir, 'node_modules');
   const modulesReal = exists(modules) ? fs.realpathSync(modules) : null;
   const folders = new Set();
   const strays = [];
+  const packages = readLock(projectDir);
+  const sources = extraSources(context.packager);
   linkedPackages(projectDir, projectReal, folders, strays);
-  packedLinks(projectDir, projectReal, modulesReal, files, folders, strays);
-  lockedLinks(projectDir, folders, strays);
-  for (const [label, from] of extraSources(context.packager)) addSource(projectDir, label, from, folders, strays);
+  if (packages) lockedLinks(projectDir, packages, folders, strays);
+  for (const { label, from } of sources) addSource(projectDir, label, from, folders, strays);
+  const found = packedSources(
+    {
+      projectDir,
+      projectReal,
+      modulesReal,
+      archive,
+      copies: lockCopies(packages ?? {}),
+      destinations: destinationsOf(sources),
+    },
+    files,
+    folders,
+    strays,
+  );
   untrackedIn(projectDir, projectReal, modulesReal, folders, tracked, strays);
-  return strays;
+  return { strays, ...found };
 }
 
 module.exports = async function afterPack(context) {
   const start = performance.now();
   const resources = resourcesDir(context);
-  const packed = readAsar(path.join(resources, 'app.asar'));
+  const archive = path.join(resources, 'app.asar');
+  const packed = readAsar(archive);
   const resourcesReal = fs.realpathSync(resources);
   const unpacked = walkTree(path.join(resources, 'app.asar.unpacked'), resourcesReal);
   const other = walkTree(resources, resourcesReal, ['app.asar', 'app.asar.unpacked']);
@@ -357,7 +491,8 @@ module.exports = async function afterPack(context) {
   for (const link of [...packed.links, ...unpacked.links, ...other.links]) {
     if (link.problem) strays.push({ path: link.path, reason: link.problem });
   }
-  strays.push(...checkSources(context, files, tracked));
+  const sources = checkSources(context, files, tracked, archive);
+  strays.push(...sources.strays);
   // one line per path and reason: a link can be found by more than one of the checks
   const found = [...new Map(strays.map((s) => [`${s.path}\0${s.reason}`, s])).values()];
   if (found.length) {
@@ -371,6 +506,8 @@ module.exports = async function afterPack(context) {
     asar: packed.files.length,
     unpacked: unpacked.files.length,
     other: other.files.length,
+    relocated: sources.relocated,
+    extra: sources.extra,
     tracked: tracked.length,
     ms: Math.round(performance.now() - start),
   }));
