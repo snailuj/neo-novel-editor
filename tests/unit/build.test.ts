@@ -1052,6 +1052,43 @@ test('afterPack fails on a lock-file link whose folder is not there', async () =
   await assert.rejects(afterPack(context), /dictionaries\/missing: source folder does not exist/);
 });
 
+// A Finder .DS_Store lands in any folder the owner opens on a Mac and is untracked and
+// git-ignored, so it would stop every build there. electron-builder never copies two names:
+// walk() in builder-util/out/fs.js (line 68) returns before it looks at a .DS_Store or a
+// .gitkeep, and walk() is what copies extraResources, extraFiles and `files` sources; the
+// copier for a linked package skips both as well (app-builder-lib/out/util/
+// NodeModuleCopyHelper.js, excludedFiles, lines 12-23). Those two names are not strays.
+// Thumbs.db is not on either list for these sources (the default exclusion of it,
+// fileMatcher.js lines 16-17, is added only to the app's own files), so it ships and stays one.
+test('afterPack lets a .DS_Store or .gitkeep in a source folder be, as electron-builder never copies them', async () => {
+  const lock = JSON.stringify({
+    packages: { '': {}, 'node_modules/dictionary-hu': { resolved: 'dictionaries/hu', link: true } },
+  });
+  const sources = {
+    'an extraResources source': { files: { 'licenses/hunspell/COPYING': 'mpl' }, config: HUNSPELL, dir: 'licenses/hunspell' },
+    'a linked package': { files: { 'package-lock.json': lock, 'dictionaries/hu/index.dic': 'dic' }, dir: 'dictionaries/hu' },
+  };
+  for (const [name, { dir, ...options }] of Object.entries(sources)) {
+    const { context, project } = await fakePackage('win32', options);
+    put(project, `${dir}/.DS_Store`);
+    put(project, `${dir}/deep/.DS_Store`);
+    put(project, `${dir}/.gitkeep`);
+    await checked(context).catch((err: Error) => {
+      err.message = `${name}: ${err.message}`;
+      throw err;
+    });
+  }
+});
+
+test('afterPack still fails on a Thumbs.db in a source folder, and says the file can be deleted', async () => {
+  const { context, project } = await fakePackage('win32', {
+    files: { 'licenses/hunspell/COPYING': 'mpl' },
+    config: HUNSPELL,
+  });
+  put(project, 'licenses/hunspell/Thumbs.db');
+  await assert.rejects(afterPack(context), /licenses\/hunspell\/Thumbs\.db: untracked file.*can be deleted/);
+});
+
 test('afterPack refuses a package-lock.json it cannot read', async () => {
   const { context } = await fakePackage('win32', { files: { 'package-lock.json': '{not json' } });
   await assert.rejects(afterPack(context), /cannot read package-lock\.json/);

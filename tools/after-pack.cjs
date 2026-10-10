@@ -25,6 +25,18 @@ const UNRESOLVED = 'symbolic link does not resolve';
 const UNTRACKED_SOURCE = 'untracked file in a folder that is copied into the package';
 const NESTED_REPO = 'nested git repository: its files are not tracked by this project';
 const SOURCE_MISSING = 'source folder does not exist, so it cannot be checked';
+const OS_CACHE = `${UNTRACKED_SOURCE}; electron-builder copies it as it is, and the file can be deleted`;
+
+// Names electron-builder never copies from a source folder: walk() in builder-util/out/fs.js
+// (line 68) returns before it looks at a .DS_Store or a .gitkeep, and walk() is what copies
+// extraResources, extraFiles and `files` sources; the copier for a linked package skips both
+// too (app-builder-lib/out/util/NodeModuleCopyHelper.js, excludedFiles, lines 12-23). A Finder
+// .DS_Store appears in any folder opened on a Mac and is git-ignored, so counting it would stop
+// every build there. Thumbs.db is not skipped for these sources (its default exclusion,
+// fileMatcher.js lines 16-17, is added only to the app's own files), so it stays a stray, with
+// a message that says it can be deleted.
+const NEVER_COPIED = new Set(['.DS_Store', '.gitkeep']);
+const OS_CACHE_NAME = /^thumbs\.db$/i;
 
 function resourcesDir({ appOutDir, electronPlatformName, packager }) {
   return electronPlatformName === 'darwin' || electronPlatformName === 'mas'
@@ -453,11 +465,13 @@ function untrackedIn(projectDir, projectReal, modulesReal, folders, optional, tr
         pending.push(within(projectReal, target));
       }
     } else if (!stat.isDirectory()) {
-      if (!known.has(rel)) strays.push({ path: rel, reason: UNTRACKED_SOURCE });
+      if (!known.has(rel)) {
+        strays.push({ path: rel, reason: OS_CACHE_NAME.test(path.posix.basename(rel)) ? OS_CACHE : UNTRACKED_SOURCE });
+      }
     } else {
       const entries = fs.readdirSync(full, { withFileTypes: true });
       if (entries.some((entry) => entry.name === '.git')) strays.push({ path: rel, reason: NESTED_REPO });
-      else for (const entry of entries) pending.push(`${rel}/${entry.name}`);
+      else for (const entry of entries) if (!NEVER_COPIED.has(entry.name)) pending.push(`${rel}/${entry.name}`);
     }
   }
 }
