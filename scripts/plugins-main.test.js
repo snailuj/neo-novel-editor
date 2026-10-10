@@ -135,6 +135,26 @@ describe('plugin discovery', { concurrency: 1 }, () => {
     }
   });
 
+  // a newer API may well add to the manifest too, so the rest of such a
+  // manifest is not judged
+  test('a manifest for a newer plugin API than this NEO knows is refused with a reason that names both versions', () => {
+    const app = appFolder({
+      'plugins/ahead': plugin('ahead', { apiVersion: 3 }),
+      'plugins/far-ahead': plugin('far-ahead', { apiVersion: 12, newKey: true }),
+      'plugins/zero': plugin('zero', { apiVersion: 0 }),
+      'plugins/fraction': plugin('fraction', { apiVersion: 2.5 }),
+      'plugins/text': plugin('text', { apiVersion: '3' }),
+      'plugins/current': plugin('current', { apiVersion: 2 })
+    });
+    const { logs } = wire({ appRoot: app });
+    assert.deepEqual(ids(), ['current']);
+    assert.equal(logs.length, 5, logs.join('\n'));
+    const line = (name) => logs.find((l) => l.includes(path.join(app, 'plugins', name))) || `nothing logged for ${name}`;
+    assert.match(line('ahead'), /needs plugin API 3\b.*\bthis NEO knows up to 2\b/);
+    assert.match(line('far-ahead'), /needs plugin API 12\b.*\bthis NEO knows up to 2\b/);
+    for (const name of ['zero', 'fraction', 'text']) assert.match(line(name), /does not match the manifest format/, name);
+  });
+
   test('a root on another drive is refused and logged', { skip: process.platform !== 'win32' && 'drive letters are Windows only' }, () => {
     const app = appFolder({});
     const other = (/^z/i.test(app) ? 'Y:' : 'Z:') + '\\plugins';

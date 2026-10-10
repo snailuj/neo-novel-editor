@@ -19,6 +19,7 @@ const MANIFEST_KEYS = ['id', 'apiVersion', 'renderer', 'main', 'style', 'command
 const COMMAND_KEYS = ['id', 'title'];
 const PLUGIN_ID = /^[a-z][a-z0-9-]{1,31}$/;
 const FILE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]*\.(js|cjs|css)$/;
+const NEWEST_API = 2; // the newest plugin API this NEO knows (plugins.js has the list)
 const MAX_COMMANDS = 16;
 const MAX_TITLE = 64;
 // how long a main half's activate may take to settle (start)
@@ -34,7 +35,7 @@ const titleOk = (v) => typeof v === 'string' && v.length > 0 && [...v].length <=
 function validManifest(m) {
   if (!isObject(m) || !onlyKeys(m, MANIFEST_KEYS)) return false;
   if (typeof m.id !== 'string' || !PLUGIN_ID.test(m.id)) return false;
-  if (!Number.isInteger(m.apiVersion) || m.apiVersion < 1 || m.apiVersion > 2) return false;
+  if (!Number.isInteger(m.apiVersion) || m.apiVersion < 1 || m.apiVersion > NEWEST_API) return false;
   if (!isFileName(m.renderer) || !optionalFile(m.main) || !optionalFile(m.style)) return false;
   if (m.commands === undefined) return true;
   return Array.isArray(m.commands) && m.commands.length <= MAX_COMMANDS && m.commands.every((c) =>
@@ -150,6 +151,11 @@ function discover() {
       try {
         manifest = JSON.parse(fs.readFileSync(path.join(folder, 'plugin.json'), 'utf8'));
       } catch (err) { skip(folder, err); continue; }
+      if (isObject(manifest) && Number.isInteger(manifest.apiVersion) && manifest.apiVersion > NEWEST_API) {
+        // a newer API may add to the manifest too, so the rest is not judged
+        skip(folder, `skipped: needs plugin API ${manifest.apiVersion}, and this NEO knows up to ${NEWEST_API}`);
+        continue;
+      }
       if (!validManifest(manifest)) { skip(folder, 'skipped: plugin.json does not match the manifest format'); continue; }
       if (byId.has(manifest.id)) { skip(folder, `skipped: the id "${manifest.id}" is already used by ${byId.get(manifest.id)}`); continue; }
       let rendererUrl, styleUrl;
