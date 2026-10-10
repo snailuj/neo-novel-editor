@@ -71,9 +71,10 @@ const DEV_ONLY = [
   [/\.md$/i, '.md file'],
 ];
 
-// A plugin is a manifest and the code it names. Data, maps and notes have no business in it.
+// A plugin is a manifest and the code it names, inside its own plugins/<id>/ folder.
+// Data, maps and notes have no business in it, and nothing sits loose in plugins/.
 function pluginReason(file) {
-  if (/^plugins\/[^/]+\/plugin\.json$/.test(file) || /\.(?:js|cjs|mjs|css)$/.test(file)) return null;
+  if (/^plugins\/[^/]+\/plugin\.json$/.test(file) || /^plugins\/[^/]+\/.*\.(?:js|cjs|mjs|css)$/.test(file)) return null;
   return 'plugin file that is neither plugin.json nor .js, .cjs, .mjs or .css';
 }
 
