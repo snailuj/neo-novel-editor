@@ -477,3 +477,39 @@ test('Restore Whole Book leaves a compact chapter the book did not change as it 
     expect((await onDisk(second)).text).toBe(COMPACT);
   } finally { await fixture.close(); }
 });
+
+// The page drops the whitespace a file's line breaks stand for and no other
+// (paragraphLines writes one only after a block that a block or the end
+// follows). Plain files get edited by hand and by other tools, so a file can
+// hold words outside a paragraph, or whitespace before its first one.
+test('words outside a paragraph keep the space between them', async () => {
+  const fixture = await launchProfile();
+  try {
+    await seedBook(fixture.page, '<p>One.</p><i>two</i> <b>three</b>');
+    expect(await fixture.page.evaluate((chId) => document.querySelector(`.chapter[data-id="${chId}"] .chapter-body`).textContent, CHAPTER)).toBe('One.two three');
+  } finally { await fixture.close(); }
+});
+
+test('a capture of a page whose file starts with whitespace is not an edit', async () => {
+  const fixture = await launchProfile();
+  try {
+    const lead = ['  <p>One.</p>', '<p>Two.</p>', ''].join('\n');
+    const bookId = await seedBook(fixture.page, lead);
+    const file = chapterFile(fixture, bookId);
+    const saved = await onDisk(file);
+    const compact = await fixture.page.evaluate((chId) => {
+      chapterHTML[chId] = captureBody(document.querySelector(`.chapter[data-id="${chId}"] .chapter-body`));
+      wordCache[chId] = null;
+      return chapterHTML[chId] !== savedHTML[chId];
+    }, CHAPTER);
+    expect(compact).toBe(true);
+    await flush(fixture.page);
+    expect(await onDisk(file)).toEqual(saved);
+    expect(saved.text).toBe(lead);
+    const theirs = ['  <p>One.</p>', '<p>Two, from the other device.</p>', ''].join('\n');
+    await writeFile(file, theirs);
+    await fixture.page.evaluate(() => refreshFromDisk());
+    await expect(fixture.page.locator('.chapter-body p').nth(1)).toHaveText('Two, from the other device.');
+    expect(await fixture.page.evaluate(() => book.chapterOrder)).toEqual([CHAPTER]);
+  } finally { await fixture.close(); }
+});

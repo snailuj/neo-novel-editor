@@ -11176,9 +11176,21 @@ function paragraphLines(html) {
 // from a file (or from Darlings, which can keep a chapter's text as its
 // file had it) drops the whitespace-only text between the blocks, so the
 // page is the one drawn from the compact text and the caret code meets
-// paragraphs alone.
+// paragraphs alone. Only what paragraphLines writes goes: whitespace that
+// follows a top-level block and precedes a block or the end. Any other
+// (before the first block, beside words or a list) is the file's own, and a
+// capture of the page must give it back.
 function dropLineBreaks(body) {
-  for (const n of [...body.childNodes]) if (n.nodeType === 3 && !/[^\t\n\f\r ]/.test(n.data)) n.remove();
+  const isBlock = (n) => !!n && n.nodeType === 1 && /^(?:P|DIV|H[1-6]|BLOCKQUOTE)$/.test(n.tagName);
+  const isBlank = (n) => n.nodeType === 3 && !/[^\t\n\f\r ]/.test(n.data);
+  let gap = [];
+  let before = null;
+  for (const n of [...body.childNodes, null]) {
+    if (n && isBlank(n)) { gap.push(n); continue; }
+    if (isBlock(before) && (!n || isBlock(n))) for (const g of gap) g.remove();
+    gap = [];
+    before = n;
+  }
 }
 // True when two copies of a chapter go to disk as the same file. A save
 // sets the page's copy one paragraph per line, but the page itself holds

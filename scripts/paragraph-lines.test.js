@@ -32,15 +32,53 @@ test('blank lines and spaces between paragraphs come down to one line break', ()
 });
 
 // The page keeps a chapter file's blocks, never the line breaks between
-// them: dropLineBreaks, run on a body of paragraphs and text nodes
-test('a page filled from a chapter file keeps its paragraphs and drops the line breaks between them', () => {
-  const dropLineBreaks = vm.runInContext('dropLineBreaks', context);
+// them: dropLineBreaks, run on a body of child nodes. A part that starts
+// with "<" is an element (its text is its html), any other is a text node.
+const dropLineBreaks = vm.runInContext('dropLineBreaks', context);
+function kept(...parts) {
   const body = { childNodes: [] };
-  const node = (nodeType, data) => ({ nodeType, data, remove() { body.childNodes.splice(body.childNodes.indexOf(this), 1); } });
-  body.childNodes.push(node(1, 'First'), node(3, '\n'), node(1, 'Second'), node(3, '\n\n  \t'), node(3, 'loose words'), node(3, '\u00a0'), node(1, 'Third'), node(3, '\n'));
+  for (const data of parts) {
+    const tag = /^<(\w+)/.exec(data);
+    body.childNodes.push({ nodeType: tag ? 1 : 3, tagName: tag && tag[1].toUpperCase(), data, remove() { body.childNodes.splice(body.childNodes.indexOf(this), 1); } });
+  }
   dropLineBreaks(body);
+  return body.childNodes.map((n) => n.data);
+}
+
+test('a page filled from a chapter file keeps its paragraphs and drops the line breaks between them', () => {
+  assert.deepEqual(kept('<p>First</p>', '\n', '<h2>Second</h2>', '\n\n  \t', '<blockquote>Third</blockquote>', '\n', '<div>Fourth</div>', '\n'),
+    ['<p>First</p>', '<h2>Second</h2>', '<blockquote>Third</blockquote>', '<div>Fourth</div>']);
   // a no-break space is the writer's own, and stays
-  assert.deepEqual(body.childNodes.map((n) => n.data), ['First', 'Second', 'loose words', '\u00a0', 'Third']);
+  assert.deepEqual(kept('<p>First</p>', '\u00a0', '<p>Second</p>'), ['<p>First</p>', '\u00a0', '<p>Second</p>']);
+});
+
+// paragraphLines writes a line break only after a top-level block that
+// another block or the end follows, so the page drops no other whitespace.
+// A file with words outside a paragraph, or whitespace first, is not
+// NEO's own, but plain files get edited by hand and by other tools.
+test('whitespace that no chapter file line break stands for stays on the page', () => {
+  const stays = [
+    ['<p>One.</p>', '<i>two</i>', ' ', '<b>three</b>'], // between two inline elements
+    ['  ', '<p>One.</p>', '\n', '<p>Two.</p>', '\n'], // before the first block
+    ['<p>One.</p>', '\n', 'words'], // between a block and words
+    ['words', '\n', '<p>One.</p>'], // between words and a block
+    ['<p>One.</p>', '<i>two</i>', '\n'], // after an inline element at the end
+    ['<p>One.</p>', '\n', '<ul><li>a</li></ul>', '\n', '<p>Two.</p>'] // beside a list
+  ];
+  // the page and the file are the same file on disk (sameOnDisk)
+  for (const parts of stays) assert.equal(paragraphLines(kept(...parts).join('')), paragraphLines(parts.join('')), JSON.stringify(parts));
+  assert.deepEqual(kept('<p>One.</p>', '<i>two</i>', ' ', '<b>three</b>'), ['<p>One.</p>', '<i>two</i>', ' ', '<b>three</b>']);
+  assert.deepEqual(kept('  ', '<p>One.</p>', '\n', '<p>Two.</p>', '\n'), ['  ', '<p>One.</p>', '<p>Two.</p>']);
+  assert.deepEqual(kept('<p>One.</p>', '\n', 'words'), ['<p>One.</p>', '\n', 'words']);
+  assert.deepEqual(kept('words', '\n', '<p>One.</p>'), ['words', '\n', '<p>One.</p>']);
+  assert.deepEqual(kept('<p>One.</p>', '<i>two</i>', '\n'), ['<p>One.</p>', '<i>two</i>', '\n']);
+  assert.deepEqual(kept('<p>One.</p>', '\n', '<ul><li>a</li></ul>', '\n', '<p>Two.</p>'), ['<p>One.</p>', '\n', '<ul><li>a</li></ul>', '\n', '<p>Two.</p>']);
+});
+
+// Insertions beside the body's text (a darling put back at a caret between
+// paragraphs) can leave two whitespace nodes side by side, one gap to the file
+test('whitespace nodes side by side between two blocks all go', () => {
+  assert.deepEqual(kept('<p>One.</p>', '\n', ' ', '<p>Two.</p>'), ['<p>One.</p>', '<p>Two.</p>']);
 });
 
 // A book in memory, saved through persistChapter to a disk that notes what
