@@ -23,6 +23,12 @@ Neo-Hoard replaces hoard for writing projects. Neo gains the librarian's abiliti
 - Marks are made through the pane and selection commands, never typed as `{>> <<}` syntax inside Neo. Librarian-owned pages open in suggest mode by default, with an explicit switch to direct editing.
 - If the plugin host is accepted upstream, other plugins may later share it; the host's namespaced ids and IPC allow for that, and nothing more is designed for it now.
 
+## Chapter file format
+
+A chapter file holds one paragraph per line (`paragraphLines` in `app.js`), so Git blame and diffs follow paragraphs. The page holds no line-break nodes between paragraphs (`dropLineBreaks`), and a chapter the writer did not change keeps the bytes it has on disk, compact or lined.
+
+Known limit: a library shared with a device running upstream Neo, desktop or Pocket, shows the line-break nodes on that device's page, because upstream renders lined files without `dropLineBreaks`. The caret paths that expect paragraphs to stand alone then misbehave there. A darling cut from the start of a paragraph is restored as loose words outside any paragraph, and a script pasted at a caret on the body lands too far down. This stays until paragraph-per-line goes upstream or the fork stops sharing libraries with upstream devices. The review of 10 October 2026 ruled it later.
+
 ## Suggestion and review model
 
 The author's requirement, in their words (10 October 2026):
