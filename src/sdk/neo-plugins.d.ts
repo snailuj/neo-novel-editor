@@ -96,7 +96,8 @@ interface NeoApi {
 /**
  * Why replace changed nothing. A refusal is final: nothing queues or retries it.
  * - busy: an input method is composing a word.
- * - hidden: no book is open, or the writer is off the manuscript.
+ * - hidden: no book is open or it is closing (an edit then would miss the save that
+ *   closes the book), or the writer is off the manuscript.
  * - missing: the place is not on the page, by the rules go uses.
  * - stale: the text at the place is not expectedText.
  * - blocked: the plugin failed to activate; the place is on a ghost line (an outline

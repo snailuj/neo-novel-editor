@@ -743,6 +743,41 @@ test('highlight and go agree on every place', async () => {
   await highlight('agree', []);
 });
 
+// The way to the shelf saves what is waiting and only then tells the plugins
+// the book is closing, and a save asked for after that is dropped: an edit
+// made while the book closes would be lost though replace said it was made.
+// It is refused instead, as hidden, from a book-close listener and from a
+// chapter-change listener that the close sends on.
+test('replace is refused while the book closes', async () => {
+  const [one] = book.chapters;
+  const page = (await lines(one)).slice(0, 2);
+  const refused = await js(`(async () => {
+    const neo = window.__probe.neo;
+    const results = [];
+    const offs = [
+      neo.on('chapter-change', () => results.push(['chapter-change', neo.replace({ chId: ${str(one)}, pIdx: 0, off: 4, len: 9 }, 'paragraph', 'passage')])),
+      neo.on('book-close', () => results.push(['book-close', neo.replace({ chId: ${str(one)}, pIdx: 1, off: 0, len: 4 }, 'Rain', 'Mist')]))
+    ];
+    try {
+      // a change the frame has not sent yet when the book closes
+      document.querySelector('.chapter[data-id="${one}"] .chapter-body').dispatchEvent(new Event('input'));
+      backToShelf();
+    } finally {
+      offs.forEach((off) => off());
+    }
+    return Promise.all(results.map(async ([name, result]) => [name, await result]));
+  })()`);
+  assert.deepEqual(refused, [['chapter-change', { ok: false, reason: 'hidden' }], ['book-close', { ok: false, reason: 'hidden' }]]);
+  assert.deepEqual((await lines(one)).slice(0, 2), page, 'nothing was edited');
+  await tick(1500); // past the save's wait
+  assert.doesNotMatch(chapterFile(one), /passage|Mist/);
+  // and the next book opened takes edits again
+  await js(`openBook(${str(book.id)})`);
+  await tick(500);
+  assert.deepEqual(await replace(word(), 'paragraph', 'passage'), { ok: true });
+  assert.deepEqual(await replace(written(), 'passage', 'paragraph'), { ok: true });
+});
+
 // A place names no book, so a highlight holds for the open book alone: it
 // goes when the book closes, and on the shelf there is nothing to mark.
 test('a book closing clears them', async () => {

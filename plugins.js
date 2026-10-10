@@ -188,7 +188,22 @@
   // save and before its book closes. Nothing done to a book a shelf export
   // borrowed goes out (a paperback's dedication draws and saves it); a save
   // that lands after its open book has closed still does.
+  //
+  // true from the start of a book-close until it is sent: app.js saves
+  // before it says the book closes, and a save asked for after that is
+  // dropped, so replace refuses to edit meanwhile, for the listeners of the
+  // changes sent first as for those of the close itself
+  let closing = false;
   function emit(event, detail) {
+    if (event !== 'book-close') return send(event, detail);
+    closing = true;
+    try {
+      send(event, detail);
+    } finally {
+      closing = false;
+    }
+  }
+  function send(event, detail) {
     if (event !== 'book-open' && borrowed(detail.bookId)) return;
     if (event === 'chapter-change') {
       if (!heard(event)) return;
@@ -432,11 +447,11 @@
   // The text at a place rewritten through the editor, as typing writes it:
   // the engine's undo takes it back, and the input event saves it by NEO's
   // own path. Refused, with nothing changed: busy while an input method
-  // composes, hidden off the manuscript, missing when the place is not on
-  // the page, blocked on a ghost line (an outline note, app.js) or when the
-  // editor would not take it, stale when the text there is not
-  // expectedText. A refusal is final; nothing queues or retries it. The
-  // place's scroll plays no part: the writer's caret and scroll stay.
+  // composes, hidden off the manuscript and while the book closes, missing
+  // when the place is not on the page, blocked on a ghost line (an outline
+  // note, app.js) or when the editor would not take it, stale when the text
+  // there is not expectedText. A refusal is final; nothing queues or retries
+  // it. The place's scroll plays no part: the writer's caret and scroll stay.
   async function replace(entry, place, expectedText, newText) {
     if (!validPlace(place)) throw new TypeError(`replace takes a place, { chId, pIdx, off, len, scroll? } with whole numbers, not ${shown(place)}`);
     if (typeof expectedText !== 'string' || expectedText.length !== place.len) {
@@ -449,7 +464,7 @@
     // a plugin that failed to activate writes nothing
     if (entry.disposed) return refused('blocked');
     if (composing) return refused('busy');
-    if (!openedBook() || get.currentTab() !== 'manuscript') return refused('hidden');
+    if (closing || !openedBook() || get.currentTab() !== 'manuscript') return refused('hidden');
     const range = rangeOfPlace(place);
     if (!range) return refused('missing');
     const body = bodyOf(place.chId);
