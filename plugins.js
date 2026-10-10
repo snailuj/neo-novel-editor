@@ -470,12 +470,14 @@
   // there is not expectedText. A refusal is final; nothing queues or retries
   // it. The place's scroll plays no part: the writer's caret and scroll stay.
   async function replace(entry, place, expectedText, newText) {
-    if (!validPlace(place)) throw new TypeError(`replace takes a place, { chId, pIdx, off, len, scroll? } with whole numbers, not ${shown(place)}`);
+    // these reject the plugin's promise: made for it, whether or not it catches
+    const bad = (message) => madeFor(entry.id, new TypeError(message));
+    if (!validPlace(place)) throw bad(`replace takes a place, { chId, pIdx, off, len, scroll? } with whole numbers, not ${shown(place)}`);
     if (typeof expectedText !== 'string' || expectedText.length !== place.len) {
-      throw new TypeError(`replace takes the text at the place, ${place.len} UTF-16 units long, as expectedText, not ${shown(expectedText)}`);
+      throw bad(`replace takes the text at the place, ${place.len} UTF-16 units long, as expectedText, not ${shown(expectedText)}`);
     }
     if (typeof newText !== 'string' || /[\r\n]/.test(newText)) {
-      throw new TypeError(`replace writes within one paragraph, so newText is a string with no line break, not ${shown(newText)}`);
+      throw bad(`replace writes within one paragraph, so newText is a string with no line break, not ${shown(newText)}`);
     }
     const refused = (reason) => ({ ok: false, reason });
     // a plugin that failed to activate writes nothing
@@ -732,8 +734,14 @@
       // every plugin's script runs in this page and can call
       // window.neo.pluginInvoke with any id.
       async invoke(channel, payload) {
-        if (entry.disposed) throw new Error(`plugin ${entry.id} is not active, so it cannot invoke ${channel}`);
-        return window.neo.pluginInvoke(entry.id, channel, payload);
+        if (entry.disposed) throw madeFor(entry.id, new Error(`plugin ${entry.id} is not active, so it cannot invoke ${channel}`));
+        try {
+          return await window.neo.pluginInvoke(entry.id, channel, payload);
+        } catch (err) {
+          // The Error that crosses the bridge belongs to no plugin. One made
+          // here, with its message, is this plugin's (see madeFor).
+          throw madeFor(entry.id, new Error(err && err.message !== undefined ? err.message : text(err)));
+        }
       },
       on(event, fn) {
         if (!EVENTS.includes(event)) throw new TypeError(`no plugin event is called ${event}`);
@@ -882,8 +890,14 @@
   // that lies in a plugin's script. Any other is NEO's.
   function pluginOfError(e) {
     if (scriptIds.has(e.filename)) return scriptIds.get(e.filename);
-    if (!hostUrl || e.filename !== hostUrl || !e.error || typeof e.error.stack !== 'string') return undefined;
-    for (const line of e.error.stack.split('\n')) {
+    return hostUrl && e.filename === hostUrl && e.error ? pluginOfStack(e.error.stack) : undefined;
+  }
+
+  // the id of the plugin whose script holds the first frame of a stack that
+  // lies in a plugin's script, or undefined
+  function pluginOfStack(stack) {
+    if (typeof stack !== 'string') return undefined;
+    for (const line of stack.split('\n')) {
       const frame = /^\s*at (?:.*? \()?(.*?):\d+:\d+\)?$/.exec(line);
       if (frame && scriptIds.has(frame[1])) return scriptIds.get(frame[1]);
     }
@@ -897,15 +911,43 @@
   // registered loses its stylesheet, as one that fails to activate does.
   // Only the first of a plugin's errors in a minute is logged (logFailure).
   const scriptKeys = new Map(); // plugin id -> the key its script's errors count under
+  function logStray(id, err) {
+    if (!scriptKeys.has(id)) scriptKeys.set(id, {});
+    logFailure(id, scriptKeys.get(id), err, "plugin's script");
+  }
   function onScriptError(e) {
     const id = pluginOfError(e);
     if (id === undefined) return;
     e.stopImmediatePropagation();
     if (!registry.has(id)) dropStyle(id);
-    if (!scriptKeys.has(id)) scriptKeys.set(id, {});
-    logFailure(id, scriptKeys.get(id), e.error || `${e.message} @ ${e.filename}:${e.lineno}`, "plugin's script");
+    logStray(id, e.error || `${e.message} @ ${e.filename}:${e.lineno}`);
   }
   window.addEventListener('error', onScriptError);
+
+  // The Errors the host rejects a plugin's call with (invoke, replace), by the
+  // id of the plugin it was called for. A plugin that drops the promise, as
+  // in a listener that does not await its invoke, leaves the rejection to the
+  // page, where NEO's net would log it every time and tell the writer.
+  const reasons = new WeakMap();
+  function madeFor(id, err) {
+    reasons.set(err, id);
+    return err;
+  }
+
+  // A rejection nobody handles is a plugin's when the host made it for the
+  // plugin, or a plugin's script is in its stack (a callback of its own that
+  // throws). It is logged under the plugin's name, with the limit of its
+  // script's errors, and goes no further. Any other is NEO's, left to its net.
+  function onRejection(e) {
+    const reason = e.reason;
+    const object = !!reason && (typeof reason === 'object' || typeof reason === 'function');
+    const id = object && reasons.has(reason) ? reasons.get(reason) : object ? pluginOfStack(reason.stack) : undefined;
+    if (id === undefined) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    logStray(id, reason);
+  }
+  window.addEventListener('unhandledrejection', onRejection);
 
   // validPlace, for a plugin to check a place before it hands it over
   window.NeoPlugins = Object.freeze({ apiVersions: API_VERSIONS, register, emit, attach, showTab, runCommand, validPlace });

@@ -472,8 +472,10 @@ async function invoke(id, channel, payload) {
 // a plugin's failure is neither a refused save nor main.js's to log.
 // preload.js turns { error } back into the rejection. A refusal (a name
 // that is no channel, a plugin with no main half, a channel with no
-// handler) is not logged either: it rejects to the caller, which handles
-// it, and the window logs what nobody does.
+// handler) is not logged here either: it rejects to the caller. A caller
+// that drops the promise leaves an unhandled rejection in the window, where
+// plugins.js logs it under the plugin's name, at most once a minute, and
+// tells the writer nothing.
 async function answer(id, channel, payload) {
   try {
     return { result: await invoke(id, channel, payload) };

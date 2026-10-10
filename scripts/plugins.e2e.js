@@ -788,6 +788,24 @@ test('a plugin script that errors again and again adds no line a tick', async ()
   assert.equal(await js('errorToastShown'), false, 'nothing was shown to the writer');
 });
 
+// A promise a plugin drops, and that rejects, reaches the page as an
+// unhandled rejection: an invoke its main half refuses, in a listener that
+// does not await it. NEO's net would log "Unhandled:" for each and tell the
+// writer. The host credits the rejection to the plugin, and it is logged
+// under its name, once a minute (the tests above logged this plugin's first).
+test('an invoke a plugin does not await, and that is refused, is logged under the plugin and not shown', async () => {
+  const lines = () => (errorLog().match(/\] \[renderer\] plugin timer: /g) || []).length;
+  const before = lines();
+  const runs = await js('window.__timerRuns');
+  await js('window.__timerInvoke(20)');
+  for (let i = 0; i < 100 && (await js('window.__timerRuns')) < runs + 20; i++) await tick(50);
+  assert.equal(await js('window.__timerRuns'), runs + 20, 'all twenty were refused');
+  await tick(500); // the page reports a dropped rejection a turn later; the log is written through IPC
+  assert.doesNotMatch(errorLog(), /Unhandled:/);
+  assert.ok(lines() - before <= 1, `${lines() - before} lines for twenty refusals`);
+  assert.equal(await js('errorToastShown'), false, 'nothing was shown to the writer');
+});
+
 test('a pane whose plugin fails while it shows gives way to the manuscript', async () => {
   await owlsOpen();
   // missing-script is listed, but its script never loaded: its id is free
