@@ -513,3 +513,16 @@ test('a capture of a page whose file starts with whitespace is not an edit', asy
     expect(await fixture.page.evaluate(() => book.chapterOrder)).toEqual([CHAPTER]);
   } finally { await fixture.close(); }
 });
+
+// A paragraph inside a list is part of the list: a save puts a line break
+// between the body's blocks and leaves what is inside the list as it was.
+test('an edit leaves the paragraphs inside a list on the list\'s line', async () => {
+  const fixture = await launchProfile();
+  try {
+    const list = '<ul><li><p>x</p><p>y</p></li></ul>';
+    const bookId = await seedBook(fixture.page, `<p>a</p>${list}<p>b</p>`);
+    await typeAtEndOf(fixture.page, 3, ' Typed.');
+    await flush(fixture.page);
+    expect((await onDisk(chapterFile(fixture, bookId))).text).toBe(`<p>a</p>${list}<p>b Typed.</p>\n`);
+  } finally { await fixture.close(); }
+});

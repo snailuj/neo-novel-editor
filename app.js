@@ -11147,9 +11147,12 @@ const knowDisk = (bookId, chId, html) => { diskKnown[bookId + '/' + chId] = html
 // A chapter file holds one paragraph per line, so a line-by-line diff or
 // blame of it follows the paragraphs: one line break after each top-level
 // block that a block or the end follows, and no other whitespace between
-// them. Nothing inside a block changes.
+// them. Nothing inside a block changes. A list, table, figure or pre is no
+// block of the page's: it takes no line of its own, and the paragraphs it
+// holds are part of it (the depth counts it, so they get none).
 function paragraphLines(html) {
-  const tag = /<(\/?)(?:p|div|h[1-6]|blockquote)\b[^>]*>/gi;
+  const tag = /<(\/?)(p|div|h[1-6]|blockquote|ul|ol|li|dl|dt|dd|table|caption|thead|tbody|tfoot|tr|th|td|figure|figcaption|pre)\b[^>]*>/gi;
+  const lined = /^(?:p|div|h[1-6]|blockquote)$/i;
   const gap = /[\t\n\f\r ]*/y;
   const block = /<(?:p|div|h[1-6]|blockquote)\b/iy;
   let out = '';
@@ -11159,7 +11162,7 @@ function paragraphLines(html) {
   while ((m = tag.exec(html))) {
     if (!m[1]) { depth++; continue; }
     depth = Math.max(0, depth - 1);
-    if (depth) continue;
+    if (depth || !lined.test(m[2])) continue;
     const close = m.index + m[0].length;
     gap.lastIndex = close;
     gap.exec(html);

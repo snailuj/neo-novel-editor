@@ -31,6 +31,32 @@ test('blank lines and spaces between paragraphs come down to one line break', ()
   assert.equal(paragraphLines('<p>a</p>\n\n  <p>b</p>'), '<p>a</p>\n<p>b</p>\n');
 });
 
+// Only blocks standing on the body get a line. A paragraph inside a list, a
+// table, a figure or a pre is part of that element, and a line break put
+// between two of them changes what is inside it (in a pre, how it is laid out).
+test('paragraphs inside a list, table, figure or pre are left as they are', () => {
+  for (const html of [
+    '<ul><li><p>a</p><p>b</p></li></ul>',
+    '<ol><li><p>a</p></li><li><div>b</div><div>c</div></li></ol>',
+    '<table><tbody><tr><td><p>a</p><p>b</p></td></tr></tbody></table>',
+    '<figure><p>a</p><p>b</p><figcaption><p>c</p><p>d</p></figcaption></figure>',
+    '<pre><p>a</p><p>b</p></pre>'
+  ]) assert.equal(paragraphLines(html), html);
+});
+
+test('the lines between the blocks on the body stay where they were', () => {
+  assert.equal(paragraphLines('<p>a</p><p>b</p><ul><li>x</li></ul><p>c</p><p>d</p>'), '<p>a</p>\n<p>b</p><ul><li>x</li></ul><p>c</p>\n<p>d</p>\n');
+  assert.equal(paragraphLines('<div>a</div><h2>b</h2><blockquote><p>c</p><p>d</p></blockquote>'), '<div>a</div>\n<h2>b</h2>\n<blockquote><p>c</p><p>d</p></blockquote>\n');
+});
+
+test('lines stand after the blocks on the body and not inside the containers between them', () => {
+  assert.equal(paragraphLines('<p>a</p><ul><li><p>x</p><p>y</p></li></ul><p>b</p><p>c</p>'),
+    '<p>a</p><ul><li><p>x</p><p>y</p></li></ul><p>b</p>\n<p>c</p>\n');
+  assert.equal(paragraphLines('<p>a</p><p>b</p><pre><p>x</p><p>y</p></pre>'), '<p>a</p>\n<p>b</p><pre><p>x</p><p>y</p></pre>');
+  // what a file holds after a container is the file's own
+  assert.equal(paragraphLines('<ul><li><p>x</p><p>y</p></li></ul>\n<p>b</p>\n<p>c</p>'), '<ul><li><p>x</p><p>y</p></li></ul>\n<p>b</p>\n<p>c</p>\n');
+});
+
 // The page keeps a chapter file's blocks, never the line breaks between
 // them: dropLineBreaks, run on a body of child nodes. A part that starts
 // with "<" is an element (its text is its html), any other is a text node.
