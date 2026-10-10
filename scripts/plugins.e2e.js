@@ -81,6 +81,9 @@ async function until(check, what, ms = 4000) {
 }
 // the window's next frame, once anything the host holds for a frame has gone out
 const frame = () => js('new Promise((resolve) => requestAnimationFrame(() => resolve()))');
+// Two frames: a tab switch is synchronous but for what it leaves to the next
+// frame (the side cards), and that can leave more.
+const frames = async () => { await frame(); await frame(); };
 const chapterFile = (bookId, chId) => fs.readFileSync(path.join(LIBRARY, bookId, 'chapters', chId + '.html'), 'utf8');
 // what the probe heard, by event name; selection comes every frame the
 // caret moves, so it is left out unless asked for
@@ -433,9 +436,10 @@ const paneView = () => js(`(() => {
     manuscript: document.getElementById('paper').checkVisibility()
   };
 })()`);
-const clickTab = async (name, ms = 300) => {
+// `ms` pauses that long instead, for a tab that reads its file
+const clickTab = async (name, ms) => {
   await js(`document.querySelector('.tab[data-tab="${name}"]').click()`);
-  await tick(ms);
+  if (ms === undefined) await frames(); else await tick(ms);
 };
 
 // What the writer sees of the editor, read from the DOM alone, so any view or
@@ -470,10 +474,10 @@ const openOutline = (view) => async () => {
 };
 const NEO_TABS = [
   { name: 'Notes', tab: 'notes', open: async () => {
-    await clickTab('notes', 0);
+    await clickTab('notes');
     for (let i = 0; i < 40 && (await auxKind()) !== 'notes'; i++) await tick(50);
     assert.equal(await auxKind(), 'notes', 'the notes never loaded');
-    await tick(100);
+    await frames();
   } },
   { name: 'Outline as a list', tab: 'outline', open: openOutline('list') },
   { name: 'Outline as cards', tab: 'outline', open: openOutline('cards') },
@@ -481,7 +485,7 @@ const NEO_TABS = [
 ];
 // what the writer sees once `open` has opened a tab, coming from the tab `from`
 const arrive = async (from, open) => {
-  await clickTab(from, 100);
+  await clickTab(from);
   await open();
   return sight();
 };
@@ -525,7 +529,7 @@ test("a pane leaves nothing behind on NEO's tabs", () => keepOutlineView(async (
       await clickTab(PANE);
       // were the click to fail, this would compare one tab opened after another
       assert.deepEqual(await sight(), pane, `the pane, before ${name}`);
-      if (via) await clickTab(via, 100);
+      if (via) await clickTab(via);
       await open();
       assert.deepEqual(await sight(), before[i], `${name} after the pane${via ? ' and the manuscript' : ''}`);
     }
