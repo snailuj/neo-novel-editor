@@ -4,8 +4,14 @@
 // package it cannot read is a failure too: an unchecked package must not pass.
 //
 // The rule: every packed file under app.asar and app.asar.unpacked is traced to one source
-// file, which must be tracked by git or be a file of a lock-file package; anything that cannot
-// be traced stops the build.
+// file, and anything that cannot be traced stops the build. Outside node_modules the source
+// must be tracked by git. Under node_modules a file counts as traced when it sits at the same
+// path in the project (or in a lock-file copy of the same name and version) with no link on
+// the way. The check does not confirm that the folder is a lock-file package, or that the file
+// belongs to that package. The known route: npm's install-links=true copies a `file:`
+// dependency in as real files, and its lock entry then has no `link: true`, so nothing marks
+// the folder as a source to read. There the ban on writing-file names in
+// tools/stray-files.cjs is the only guard.
 //
 // Three places are read:
 //  - app.asar, by its header, and app.asar.unpacked: every file must be tracked by git.
