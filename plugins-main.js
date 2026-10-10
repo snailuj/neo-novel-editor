@@ -129,8 +129,8 @@ function outsideApp(rel) {
 // it (a symlink, or a junction on Windows) to where it really leads, and
 // that must lie inside the app folder's own real path. A path that will not
 // resolve is refused with the error that says so, except one that is not
-// there: it leads nowhere, and whoever needs the file (activate's require)
-// logs its absence.
+// there: it leads nowhere, and whoever needs the file logs its absence (the
+// window, for a script that will not load).
 function refusal(realApp, p, what) {
   let resolved;
   try {
@@ -204,9 +204,12 @@ function discover() {
         rendererUrl = urlOf(rel, name, manifest.renderer);
         styleUrl = manifest.style ? urlOf(rel, name, manifest.style) : null;
       } catch (err) { skip(folder, err); continue; }
-      // a link anywhere in the folder's path could lead out (the main entry
-      // is checked where it is required, in start)
-      const folderRefusal = refusal(realApp, folder, 'the plugin folder');
+      // a link anywhere in the folder's path, or in the script or stylesheet
+      // the page loads from it, could lead out (the main entry is checked
+      // where it is required, in start)
+      const folderRefusal = refusal(realApp, folder, 'the plugin folder')
+        || refusal(realApp, path.join(folder, manifest.renderer), 'its renderer')
+        || (manifest.style && refusal(realApp, path.join(folder, manifest.style), 'its style'));
       if (folderRefusal) { skip(folder, folderRefusal); continue; }
       byId.set(manifest.id, folder);
       list.push({

@@ -333,6 +333,37 @@ describe('plugin discovery', { concurrency: 1 }, () => {
       assert.ok(logs[0].includes(path.join(app, 'plugins')));
     });
 
+    // the page loads a plugin's script and stylesheet by URL, and Chromium's
+    // answer to a link in the way differs by platform, so the rule is NEO's
+    test('a renderer or a style that is a link leading outside the app folder refuses its plugin, and is logged', (t) => {
+      const app = appFolder({
+        'plugins/a-script': plugin('script'),
+        'plugins/b-sheet': plugin('sheet', { style: 'style.css' }),
+        'plugins/c-fine': plugin('fine', { style: 'style.css' })
+      });
+      const elsewhere = tempFolder();
+      fs.writeFileSync(path.join(elsewhere, 'outside.js'), '');
+      fs.writeFileSync(path.join(elsewhere, 'outside.css'), '');
+      for (const name of ['b-sheet', 'c-fine']) fs.writeFileSync(path.join(app, 'plugins', name, 'renderer.js'), '');
+      fs.writeFileSync(path.join(app, 'plugins', 'c-fine', 'style.css'), '');
+      if (!link(t, path.join(elsewhere, 'outside.js'), path.join(app, 'plugins', 'a-script', 'renderer.js'), 'file')) return;
+      link(t, path.join(elsewhere, 'outside.css'), path.join(app, 'plugins', 'b-sheet', 'style.css'), 'file');
+      const { logs } = wire({ appRoot: app });
+      assert.deepEqual(ids(), ['fine']);
+      assert.equal(logs.length, 2, logs.join('\n'));
+      assert.ok(logs[0].includes(path.join(app, 'plugins', 'a-script')));
+      assert.match(logs[0], /its renderer leads outside the app folder/);
+      assert.ok(logs[1].includes(path.join(app, 'plugins', 'b-sheet')));
+      assert.match(logs[1], /its style leads outside the app folder/);
+    });
+
+    test('a renderer or a style that is not there leads nowhere: the plugin is listed, and the window logs the script that will not load', () => {
+      const app = appFolder({ 'plugins/bare': plugin('bare', { style: 'style.css' }) });
+      const { logs } = wire({ appRoot: app });
+      assert.deepEqual(ids(), ['bare']);
+      assert.deepEqual(logs, []);
+    });
+
     // require follows what it is given: through a link, to a main.js.js beside
     // a missing main.js, into a folder named main.js by its package.json.
     // start() checks the file require will load, and requires that path.
