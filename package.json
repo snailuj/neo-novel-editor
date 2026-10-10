@@ -34,6 +34,7 @@
   },
   "build": {
     "beforeBuild": "tools/before-build.cjs",
+    "afterPack": "tools/after-pack.cjs",
     "appId": "com.hughhowey.neo",
     "productName": "NEO",
     "publish": {
@@ -145,6 +146,13 @@
       "!src/**",
       "!tools/**",
       "!tests/**",
+      "!docs/**",
+      "!.superpowers/**",
+      "!test-results/**",
+      "!tsconfig*.json",
+      "!playwright.config.*",
+      "!.oxlintrc.json",
+      "!print/README.md",
       "!schemas/**",
       "!licenses/**",
       "!Claude outputs/**",

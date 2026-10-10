@@ -91,6 +91,30 @@ test('packaging includes the output', () => {
   }
 });
 
+// afterPack is the net; these keep the files it would reject out of the package to begin with.
+test('packaging leaves development files out', () => {
+  const files: string[] = pkg.build.files;
+  for (const pattern of [
+    'docs/**',
+    '.superpowers/**',
+    'test-results/**',
+    'tsconfig*.json',
+    'playwright.config.*',
+    '.oxlintrc.json',
+    'print/README.md',
+  ]) {
+    assert.ok(files.includes(`!${pattern}`), `${pattern} is excluded`);
+  }
+});
+
+test('packaging checks the package', () => {
+  assert.equal(pkg.build.afterPack, 'tools/after-pack.cjs');
+  assert.ok(existsSync(path.join(root, pkg.build.afterPack)), 'the hook exists');
+  // The hook calls @electron/asar itself, so it is pinned here rather than left to
+  // arrive through app-builder-lib, which could drop it on any update.
+  assert.equal(pkg.devDependencies['@electron/asar'], '3.4.1');
+});
+
 test('no direct bridge calls', () => {
   for (const file of sourceFiles(path.join(root, 'src'))) {
     assert.doesNotMatch(readFileSync(file, 'utf8'), /window\.neo\./, file);
