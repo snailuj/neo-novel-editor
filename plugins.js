@@ -424,13 +424,15 @@
     const scroller = document.getElementById('paper-scroll');
     const scroll = scroller.scrollTop;
     const focused = document.activeElement;
-    // A text control keeps its own selection across a blur, and the page's
-    // selection only names the control's container there: setting it again
-    // would put the control's caret at its start.
-    const ownSelection = focused instanceof HTMLTextAreaElement || (focused instanceof HTMLInputElement && focused.selectionStart !== null);
     const ends = sel.rangeCount
       ? [[sel.anchorNode, sel.anchorOffset], [sel.focusNode, sel.focusOffset]].map(([node, offset]) => ({ node, offset, spot: spotOf(node, offset) }))
       : null;
+    // A text control keeps its own selection across a blur, and the page's
+    // selection only names the control's container there: setting it again
+    // would put the control's caret at its start. The page's selection is
+    // the control's when the control has the focus and no end lies in a
+    // chapter (a number input has no selectionStart to ask, but a caret).
+    const ownSelection = (focused instanceof HTMLTextAreaElement || focused instanceof HTMLInputElement) && (!ends || ends.every(({ spot }) => !spot));
     let change = null;
     try {
       change = edit();

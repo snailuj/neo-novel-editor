@@ -533,6 +533,37 @@ test('composition', async () => {
   assert.deepEqual(await replace(written(), 'passage', 'paragraph'), { ok: true });
 });
 
+// A number input gives no selectionStart, but has a caret of its own all the
+// same (the goals dialog has three of them): a replace leaves it where it was
+test('caret kept in a number input', async () => {
+  const [one] = book.chapters;
+  await select(one, 1, 0);
+  const field = `document.getElementById('plugin-edits-number')`;
+  await js(`(() => {
+    const el = document.createElement('input');
+    el.type = 'number';
+    el.id = 'plugin-edits-number';
+    el.value = '12345';
+    document.body.appendChild(el);
+    el.focus();
+  })()`);
+  try {
+    assert.equal(await js(`${field}.selectionStart`), null, 'a number input has no selection to read');
+    // the caret at the end, as the End key leaves it
+    for (const type of ['keyDown', 'keyUp']) wc.sendInputEvent({ type, keyCode: 'End' });
+    await tick(100);
+    assert.deepEqual(await replace(word(), 'paragraph', 'passage'), { ok: true });
+    assert.equal(await js(`document.activeElement === ${field}`), true, 'the focus');
+    wc.sendInputEvent({ type: 'char', keyCode: '9' });
+    await tick(300);
+    assert.equal(await js(`${field}.value`), '123459', 'the digit lands at the end');
+    assert.deepEqual(await replace(written(), 'passage', 'paragraph'), { ok: true });
+  } finally {
+    await js(`${field}.remove()`);
+  }
+  assert.equal((await lines(one))[0], 'One paragraph.');
+});
+
 // In typewriter mode the page glides to the caret after each selection change
 // while the writer is typing or moving by keyboard, which a wheel or trackpad
 // scroll does not end. A replace changes the selection and puts it back; the
