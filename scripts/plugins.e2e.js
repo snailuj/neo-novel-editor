@@ -74,12 +74,28 @@ async function logWith(text) {
   for (let i = 0; i < 60 && !errorLog().includes(text); i++) await tick(50);
   return errorLog();
 }
+// waits for check() to hold, up to ms
+async function until(check, what, ms = 4000) {
+  for (const end = Date.now() + ms; Date.now() < end; await tick(50)) if (await check()) return;
+  assert.fail(`waited ${ms} ms for ${what}`);
+}
+// the window's next frame, once anything the host holds for a frame has gone out
+const frame = () => js('new Promise((resolve) => requestAnimationFrame(() => resolve()))');
 const chapterFile = (bookId, chId) => fs.readFileSync(path.join(LIBRARY, bookId, 'chapters', chId + '.html'), 'utf8');
 // what the probe heard, by event name; selection comes every frame the
 // caret moves, so it is left out unless asked for
 const heard = (...names) => js(`window.__probe.events.filter(([name]) => ${names.length
   ? `${str(names)}.includes(name)` : `name !== 'selection'`})`);
 const forget = () => js('window.__probe.events.length = 0');
+// Owls open, for a test that needs it: a test that fails partway can leave
+// the shelf or another book, and the tests after it would fail for that. The
+// caret goes back to its last place a frame after openBook, so that frame
+// is waited for too.
+async function owlsOpen() {
+  if (await js(`!!book && book.id === ${str(owls.id)}`)) return;
+  await js(`openBook(${str(owls.id)})`);
+  await frame();
+}
 
 // typed as keys
 async function type(keys) {
@@ -165,6 +181,7 @@ test('events', async () => {
 });
 
 test('selection', async () => {
+  await owlsOpen();
   await forget();
   await select(owls.chapters[0], 0, 4, 13); // "paragraph" in "One paragraph."
   const [, { place }] = (await heard('selection')).pop();
@@ -185,6 +202,7 @@ test('selection', async () => {
 });
 
 test('book-close on the shelf', async () => {
+  await owlsOpen();
   await forget();
   await js('backToShelf()');
   await tick(200);
@@ -242,12 +260,14 @@ test('book switch', async () => {
 });
 
 test('late activation', async () => {
+  await owlsOpen();
   assert.equal(await js('book && book.id'), owls.id);
   await js('window.__registerLate()');
   assert.deepEqual(await js('window.__late.events'), [['book-open', { bookId: owls.id }]]);
 });
 
 test('coalescing', async () => {
+  await owlsOpen();
   await caretAtEnd(owls.chapters[0]);
   // twenty inputs in one burst, each marked in the probe's list as it lands
   const names = await js(`(async () => {
@@ -271,6 +291,7 @@ test('coalescing', async () => {
 });
 
 test('reads', async () => {
+  await owlsOpen();
   const chId = owls.chapters[0];
   const read = await js(`(() => {
     const neo = window.__probe.neo;
@@ -358,12 +379,21 @@ test('a book-open listener reads the chapter as read from the file, not the page
 });
 
 test('a shelf export tells the plugins nothing; the save flushed on the way to the shelf is heard', async () => {
-  // typed just before the shelf: the flush lands after the book has closed
-  await caretAtEnd(owls.chapters[0]);
+  await owlsOpen();
+  // typed just before the shelf: the flush lands after the book has closed.
+  // The typing and backToShelf run in one task. Between keys sent and a later
+  // call, a blur (another window taking the focus), the save's own 800 ms
+  // wait or the 20 s tick could save the book first, and the plugins would
+  // then rightly hear the save before the close.
   await forget();
-  await type('Gnu');
-  await js('backToShelf()');
-  await tick(500);
+  await js(`(() => {
+    const body = document.querySelector('.chapter[data-id="${owls.chapters[0]}"] .chapter-body');
+    body.focus();
+    getSelection().collapse(body.lastElementChild, body.lastElementChild.childNodes.length);
+    document.execCommand('insertText', false, 'Gnu');
+    backToShelf();
+  })()`);
+  await until(async () => (await heard('chapter-saved')).length, 'the save flushed on the way to the shelf');
   const order = (await heard()).map(([name]) => name).filter((name, i, all) => name !== all[i - 1]);
   assert.deepEqual(order, ['chapter-change', 'book-close', 'chapter-saved']);
   assert.match(chapterFile(owls.id, owls.chapters[0]), /Gnu/);
@@ -382,10 +412,11 @@ test('a shelf export tells the plugins nothing; the save flushed on the way to t
       doExport = realExport;
     }
   })()`);
-  await tick(300);
+  // the export waited for its own save, so all that could still come is a
+  // change held for the frame
+  await frame();
   assert.deepEqual(await heard(), []);
-  await js(`openBook(${str(owls.id)})`);
-  await tick(300);
+  await owlsOpen();
 });
 
 // what the writer sees of the probe's pane, and of the tabs around it
@@ -476,6 +507,7 @@ const keepOutlineView = async (run) => {
 // before the other pane tests because no earlier test shows a pane; one
 // after them would find a pane shown already.
 test("a pane leaves nothing behind on NEO's tabs", () => keepOutlineView(async () => {
+  await owlsOpen();
   const bar = await js(`[...document.querySelectorAll('#tabs .tab')].map((tab) => tab.dataset.tab).filter((tab) => !tab.startsWith('plugin:'))`);
   assert.deepEqual(bar.sort(), ['manuscript', ...new Set(NEO_TABS.map((t) => t.tab))].sort(),
     'the tab bar and NEO_TABS differ: add a new tab of NEO to NEO_TABS, with how to open it');
@@ -505,6 +537,7 @@ test("a pane leaves nothing behind on NEO's tabs", () => keepOutlineView(async (
 // with its gone words marked: it goes when another tab opens, a pane among
 // them, as it does for NEO's own tabs.
 test('a pane looks the same whatever was open before it', () => keepOutlineView(async () => {
+  await owlsOpen();
   // a snapshot with one word the book has since lost, for something to mark
   const snap = await js(`takeSnapshot('k', (c) => (chapterHTML[c] || '').replace('</p>', ' gone</p>')).then((r) => r.snap.name)`);
   const origins = [
@@ -530,6 +563,7 @@ test('a pane looks the same whatever was open before it', () => keepOutlineView(
 }));
 
 test('pane', async () => {
+  await owlsOpen();
   await js(`window.neo.writeAux(${str(owls.id)}, 'notes', '<p>Notes about owls.</p>')`);
   await clickTab('plugin:probe:pane');
   assert.equal(await js('currentTab'), 'plugin:probe:pane');
@@ -577,6 +611,7 @@ const findFor = async (q) => {
 };
 
 test('Find on a pane counts nothing in the Notes behind it', async () => {
+  await owlsOpen();
   await clickTab('notes', 600);
   await js('openSearch()');
   await findFor('owls');
@@ -628,6 +663,7 @@ test('already bound', async () => {
 });
 
 test('throwing command', async () => {
+  await owlsOpen();
   await js(`document.getElementById('hint').textContent = ''`);
   try {
     await js(`void (window.__probe.sayFails = () => { throw new Error('a command throws on purpose'); })`);
@@ -656,6 +692,7 @@ const statusSlot = () => js(`(() => {
 })()`);
 
 test('status', async () => {
+  await owlsOpen();
   assert.deepEqual(await statusSlot(), { text: 'Indexed', shown: true });
   await js(`window.__probe.neo.status('')`);
   assert.deepEqual(await statusSlot(), { text: '', shown: false });
@@ -675,6 +712,7 @@ test('status', async () => {
 });
 
 test('broken plugin', async () => {
+  await owlsOpen();
   assert.equal(hintAtLaunch, '', 'nothing was shown to the writer');
   const log = await logWith('plugin broken:');
   assert.match(log, /plugin broken: Error: broken on purpose\r?\n\s+at /);
@@ -751,6 +789,7 @@ test('a plugin script that errors again and again adds no line a tick', async ()
 });
 
 test('a pane whose plugin fails while it shows gives way to the manuscript', async () => {
+  await owlsOpen();
   // missing-script is listed, but its script never loaded: its id is free
   await js(`NeoPlugins.register({ id: 'missing-script', apiVersion: 1, async activate(neo) {
     neo.addPane({ id: 'later', title: 'Fails Later' });
@@ -768,6 +807,7 @@ test('a pane whose plugin fails while it shows gives way to the manuscript', asy
 });
 
 test('listeners that throw or reject', async () => {
+  await owlsOpen();
   const chId = owls.chapters[0];
   // the probe adds listeners as any plugin might: one throws, the next
   // one's promise rejects, and one comes after them. chapter-saved goes out
