@@ -12,8 +12,8 @@
 //
 // <dir> is a library holding one book folder; in chapter mode that book's chapters/ holds
 // one chapter, and that is the file written. --in-place first replaces writeFileDurable in
-// the vm context with fs.writeFileSync, the truncate-then-write that the durable path
-// exists to avoid. The test uses it to show that a kill can leave a torn file.
+// the vm context with writeInPlace, the truncate-then-write that the durable path exists to
+// avoid. The test uses it to show that a kill can leave a torn file.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -27,6 +27,21 @@ const MAX_RUN_MS = Number(process.env.NEO_WRITE_FOREVER_MAX_MS) || 30000;
 function payloads() {
   const body = (c) => '<p>' + c.repeat(SIZE - 7) + '</p>';
   return { A: body('a'), B: body('b') };
+}
+
+// A kill was only ever seen to land between two write calls, never inside one, so
+// fs.writeFileSync, one 4 MiB call, tore the file only when the kill came between its
+// truncate and its write: an empty file in about 1 round in 30 under load. Written in
+// pieces, each encoded after the truncate, the file is part-written for most of the write.
+const PIECE = 64 * 1024;
+function writeInPlace(file, data) {
+  const fd = fs.openSync(file, 'w');
+  try {
+    // the payloads are ASCII, so a slice of the string is a slice of its bytes
+    for (let off = 0; off < data.length; off += PIECE) fs.writeSync(fd, data.slice(off, off + PIECE));
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 function only(names, what) {
@@ -46,7 +61,7 @@ function run(dir, mode, inPlace) {
       return (html) => neo.call('chapter:write', bookId, chapterId, html);
     })()
     : (html) => neo.call('aux:write', bookId, 'notes', html);
-  if (inPlace) neo.context.writeFileDurable = (file, data) => fs.writeFileSync(file, data);
+  if (inPlace) neo.context.writeFileDurable = writeInPlace;
   const { A, B } = payloads();
   // synchronous, so the line is out before the first write starts
   fs.writeSync(1, 'writing\n');

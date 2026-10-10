@@ -21,9 +21,9 @@ const writer = fileURLToPath(new URL('../support/write-forever.cjs', import.meta
 const ROUNDS = 40;
 const KILL_WINDOW_MS = 50;
 // A kill tears an in-place write only if it lands between the truncate and the end of the
-// write, which took 1 round in 8 on the machine this was written on and as few as 1 in 40
-// on a bad run. The control stops at its first torn file, so a high cap costs nothing
-// when the harness works.
+// write. write-forever.cjs writes in pieces so that this is most of the write, about 1
+// round in 2 under load where one write call tore 1 round in 30. The control stops at its
+// first torn file, so a high cap costs nothing when the harness works.
 const CONTROL_ROUNDS = 200;
 // A writer that has not said `writing` by now is stuck (start-up is main.js loaded into a
 // vm, under a second when idle), so the round fails and the child is killed. A whole child
@@ -246,10 +246,11 @@ test('a killed notes save leaves the old or the new file whole', async (t) => {
 
 // Without this the two tests above could pass because the kill never lands in a write.
 // An in-place write truncates first, so some kill must leave a file that is neither payload.
-test('the test can fail', async () => {
+test('the test can fail', async (t) => {
   let torn = false;
-  await rounds('chapter', true, (lib) => {
+  await rounds('chapter', true, (lib, _before, round) => {
     torn = describePayload(readFileSync(lib.chapterFile, 'utf8')).startsWith('neither');
+    if (torn) t.diagnostic(`round ${round + 1} left a torn file`);
     return !torn;
   }, CONTROL_ROUNDS);
   assert.ok(torn, `no round out of ${CONTROL_ROUNDS} left a torn file`);
