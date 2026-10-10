@@ -164,3 +164,14 @@ test('dependencies keep their own docs and configs', () => {
     [],
   );
 });
+
+test('a plugin ships its manifest and its code, nothing else', () => {
+  assertStray('plugins/hoard/notes.md', /plugin/);
+  assertStray('plugins/hoard/renderer.js.map', /plugin/);
+  assertStray('plugins/hoard/data.json', /plugin/);
+  assertStray('plugins/hoard/sub/plugin.json', /plugin/);
+  assert.deepEqual(
+    strays(['plugins/a/plugin.json', 'plugins/a/main.cjs', 'plugins/a/m.mjs', 'plugins/a/ui/style.css', 'plugins/a/ui/r.js']),
+    [],
+  );
+});

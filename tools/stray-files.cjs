@@ -18,7 +18,8 @@ function findStrays(packaged, tracked) {
 }
 
 // node_modules and plugins/ are installed or built, so git does not list them.
-const isGenerated = (file) => file.startsWith('node_modules/') || file.startsWith('plugins/');
+const inNodeModules = (file) => file.startsWith('node_modules/');
+const inPlugins = (file) => file.startsWith('plugins/');
 
 // Tracked, but there to build or test NEO, never to run it.
 const DEV_ONLY = [
@@ -29,8 +30,15 @@ const DEV_ONLY = [
   [/\.md$/i, '.md file'],
 ];
 
+// A plugin is a manifest and the code it names. Data, maps and notes have no business in it.
+function pluginReason(file) {
+  if (/^plugins\/[^/]+\/plugin\.json$/.test(file) || /\.(?:js|cjs|mjs|css)$/.test(file)) return null;
+  return 'plugin file that is neither plugin.json nor .js, .cjs, .mjs or .css';
+}
+
 function why(file, known) {
-  if (isGenerated(file)) return null;
+  if (inNodeModules(file)) return null;
+  if (inPlugins(file)) return pluginReason(file);
   const dev = DEV_ONLY.find(([pattern]) => pattern.test(file));
   if (dev) return `development file: ${dev[1]}`;
   if (!known.has(file)) return 'not tracked by git';
