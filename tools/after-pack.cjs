@@ -183,6 +183,61 @@ function linkedPackages(projectDir, projectReal, folders, strays) {
   }
 }
 
+// A link deeper inside a dependency (node_modules/jszip/notes) is copied by electron-builder
+// as plain files, so the package shows no link and only the markers would apply to what came
+// through it. Every packed node_modules path is therefore walked from the project's
+// node_modules, one component at a time, with lstat. A link is resolved, never read through
+// blindly: it is a stray when it leaves the project, a folder to check for untracked files
+// when it stays inside the project, and fine inside node_modules. The walk goes on from where
+// a link lands, so a link inside a linked package is found too. Each path component is
+// looked at once, so the cost follows the packed files, not the whole of node_modules.
+function nestedLinks(projectDir, projectReal, files, folders, strays) {
+  const modules = path.join(projectDir, 'node_modules');
+  if (!exists(modules)) return;
+  const modulesReal = fs.realpathSync(modules);
+  if (within(projectReal, modulesReal) === null) return; // linkedPackages reports that
+  const landed = new Map();
+
+  // where a walk continues from `full`, or null when there is nothing more to look at
+  const classify = (full, shown) => {
+    let stat;
+    try {
+      stat = fs.lstatSync(full);
+    } catch (err) {
+      if (err.code === 'ENOENT') return null;
+      throw err;
+    }
+    if (!stat.isSymbolicLink()) return full;
+    let target;
+    try {
+      target = fs.realpathSync(full);
+    } catch {
+      strays.push({ path: shown, reason: UNRESOLVED });
+      return null;
+    }
+    const inProject = within(projectReal, target);
+    if (inProject === null) {
+      strays.push({ path: shown, reason: OUTSIDE_PROJECT });
+      return null;
+    }
+    if (within(modulesReal, target) === null) folders.add(inProject);
+    return target;
+  };
+
+  for (const file of files) {
+    if (!file.startsWith('node_modules/')) continue;
+    let at = modules;
+    let shown = 'node_modules';
+    for (const name of file.slice('node_modules/'.length).split('/')) {
+      const full = path.join(at, name);
+      shown += `/${name}`;
+      if (!landed.has(full)) landed.set(full, classify(full, shown));
+      at = landed.get(full);
+      if (at === null) break;
+    }
+  }
+}
+
 // package-lock.json names the same links: `file:` dependencies carry `link: true` and the
 // folder they resolve to.
 function lockedLinks(projectDir, folders, strays) {
@@ -235,11 +290,13 @@ function addSource(projectDir, label, from, folders, strays) {
 }
 
 // Strays among the project's own sources, and the folders whose untracked files are strays.
-function checkSources(context) {
+function checkSources(context, files) {
   const { projectDir } = context.packager;
+  const projectReal = fs.realpathSync(projectDir);
   const folders = new Set();
   const strays = [];
-  linkedPackages(projectDir, fs.realpathSync(projectDir), folders, strays);
+  linkedPackages(projectDir, projectReal, folders, strays);
+  nestedLinks(projectDir, projectReal, files, folders, strays);
   lockedLinks(projectDir, folders, strays);
   for (const [label, from] of extraSources(context.packager)) addSource(projectDir, label, from, folders, strays);
   if (folders.size) {
@@ -262,10 +319,12 @@ module.exports = async function afterPack(context) {
   for (const link of [...packed.links, ...unpacked.links, ...other.links]) {
     if (link.problem) strays.push({ path: link.path, reason: link.problem });
   }
-  strays.push(...checkSources(context));
-  if (strays.length) {
-    const lines = strays.map((s) => `  ${s.path}: ${s.reason}`);
-    throw new Error(`Packaging check: ${strays.length} stray file(s) in ${resources}\n${lines.join('\n')}`);
+  strays.push(...checkSources(context, files));
+  // one line per path and reason: a link can be found by more than one of the checks
+  const found = [...new Map(strays.map((s) => [`${s.path}\0${s.reason}`, s])).values()];
+  if (found.length) {
+    const lines = found.map((s) => `  ${s.path}: ${s.reason}`);
+    throw new Error(`Packaging check: ${found.length} stray file(s) in ${resources}\n${lines.join('\n')}`);
   }
   console.log(JSON.stringify({
     event: 'pack.check',

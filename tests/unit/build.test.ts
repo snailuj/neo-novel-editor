@@ -650,6 +650,84 @@ test('afterPack refuses to run when the build config is not there to read', asyn
   }
 });
 
+// electron-builder copies what a link inside a dependency points at as plain files, so the
+// package shows no link. The hook walks the project's own node_modules for every packed path.
+const JSZIP = ['node_modules/jszip/index.js', 'node_modules/jszip/notes/page.txt'];
+
+async function packageWithNestedLink(
+  target: (context: PackContext, project: string) => string,
+  options: { files?: Record<string, string>; extra?: string[] } = {},
+): Promise<FakePackage> {
+  const made = await fakePackage('win32', {
+    files: { 'node_modules/jszip/index.js': '', ...options.files },
+    extra: options.extra ?? JSZIP,
+  });
+  linkPackage(made.project, 'jszip/notes', target(made.context, made.project));
+  return made;
+}
+
+const outsideProject = (context: PackContext): string => {
+  const vault = path.join(context.appOutDir, '..', 'vault');
+  put(vault, 'page.txt');
+  return vault;
+};
+
+test('afterPack refuses a link inside a packed dependency that leaves the project', async () => {
+  const { context } = await packageWithNestedLink(outsideProject);
+  await assert.rejects(afterPack(context), (err: Error) => {
+    assert.match(err.message, /node_modules\/jszip\/notes: .*outside the project/);
+    assert.match(err.message, /1 stray file/);
+    return true;
+  });
+});
+
+test('afterPack checks the folder a nested link points at inside the project', async () => {
+  const files = { 'drafts/a.txt': '' };
+  const inProject = (_context: PackContext, project: string): string => path.join(project, 'drafts');
+  await checked((await packageWithNestedLink(inProject, { files })).context);
+  const { context, project } = await packageWithNestedLink(inProject, { files });
+  put(project, `drafts/${CHAPTER}`);
+  await assert.rejects(afterPack(context), /drafts\/Chapter 3\.txt: untracked file/);
+});
+
+test('afterPack follows a link in a linked package to find another inside it', async () => {
+  const { context, project } = await fakePackage('win32', {
+    files: { 'package-lock.json': LOCK, 'dictionaries/hu/index.dic': 'dic' },
+    extra: ['node_modules/dictionary-hu/index.dic', 'node_modules/dictionary-hu/inner/page.txt'],
+  });
+  linkPackage(project, 'dictionary-hu', path.join(project, 'dictionaries', 'hu'));
+  symlinkSync(outsideProject(context), path.join(project, 'dictionaries', 'hu', 'inner'), 'junction');
+  await assert.rejects(afterPack(context), /node_modules\/dictionary-hu\/inner: .*outside the project/);
+});
+
+test('afterPack allows a nested link that stays inside node_modules', async () => {
+  const inModules = (_context: PackContext, project: string): string => path.join(project, 'node_modules', 'dictionary-ro');
+  const { context } = await packageWithNestedLink(inModules, {
+    extra: ['node_modules/jszip/index.js', 'node_modules/jszip/notes/index.js'],
+  });
+  await checked(context);
+});
+
+test('afterPack reports a nested link that does not resolve', async () => {
+  const { context } = await packageWithNestedLink((ctx) => {
+    const gone = path.join(ctx.appOutDir, '..', 'gone');
+    mkdirSync(gone);
+    return gone;
+  });
+  rmSync(path.join(context.appOutDir, '..', 'gone'), { recursive: true });
+  await assert.rejects(afterPack(context), /node_modules\/jszip\/notes: .*does not resolve/);
+});
+
+test('afterPack reports a top-level link once when both of its checks find it', async () => {
+  const { context, project } = await fakePackage('win32', { extra: ['node_modules/linked/page.txt'] });
+  linkPackage(project, 'linked', outsideProject(context));
+  await assert.rejects(afterPack(context), (err: Error) => {
+    assert.match(err.message, /1 stray file/);
+    assert.match(err.message, /node_modules\/linked: .*outside the project/);
+    return true;
+  });
+});
+
 test('afterPack refuses a package-lock.json it cannot read', async () => {
   const { context } = await fakePackage('win32', { files: { 'package-lock.json': '{not json' } });
   await assert.rejects(afterPack(context), /cannot read package-lock\.json/);
