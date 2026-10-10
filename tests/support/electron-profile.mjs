@@ -31,7 +31,9 @@ export async function launchProfile(existingProfile, options = {}) {
   try {
     if (!existingProfile) await seedLibrary(profile);
     const startedAt = performance.now();
-    const env = { ...process.env, NEO_TEST_PROFILE: profile, NEO_TEST_VISIBLE: options.visible === true ? '1' : '0' };
+    // Not the developer's NEO_* settings (NEO_PLUGIN_DIRS would load their plugins), only the harness's own.
+    const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('NEO_')));
+    Object.assign(env, { NEO_TEST_PROFILE: profile, NEO_TEST_VISIBLE: options.visible === true ? '1' : '0' });
     delete env.ELECTRON_RUN_AS_NODE;
     app = await electron.launch({
       executablePath: electronPath,
