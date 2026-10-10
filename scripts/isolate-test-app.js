@@ -56,7 +56,15 @@ function refuse(owner, label, { names = Object.keys(owner), answersAtOnce = () =
   }
 }
 
-// Makes every fs function that writes, links or moves refuse a path outside `profile`.
+// Makes every function of fs that writes, links or moves refuse a path outside `profile`. It
+// guards JavaScript's fs and is not a sandbox. What it cannot stop:
+//   - process.binding('fs') and internalBinding, which are the functions under fs;
+//   - native code: addons, process.dlopen and FFI such as the koffi that main.js loads on macOS;
+//   - Chromium's own writes (cache, cookies, crash dumps, downloads) and Electron's native
+//     writers, such as webContents.savePage;
+//   - a function of fs that code took before isolate() ran, which is still the original.
+// Other routes to fs are closed in isolate(): original-fs, import(), getBuiltinModule and
+// worker threads.
 function guardWrites(profile, onRefuse = () => {}) {
   const root = path.resolve(profile);
   // The profile may sit below a link (macOS keeps /var/folders under /private/var), so a path
