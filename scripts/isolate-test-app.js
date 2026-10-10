@@ -162,7 +162,13 @@ function hideWindows() {
   const { app } = electron;
   if (globalThis.neoTestWindowEvents) return; // already done: the patches below do not stack
   const log = process.env.NEO_TEST_WINDOW_LOG;
-  const append = fs.appendFileSync; // taken before guardWrites replaces it: the log is outside the profile
+  // Taken before guardWrites replaces openSync: the log is outside the profile. Not appendFileSync,
+  // which calls the guarded writeFileSync.
+  const { openSync, writeSync, closeSync } = fs;
+  const append = (file, text) => {
+    const fd = openSync(file, 'a');
+    try { writeSync(fd, text); } finally { closeSync(fd); }
+  };
   const events = globalThis.neoTestWindowEvents = [];
   const record = (win, event) => {
     const entry = { t: Date.now(), pid: process.pid, id: win.id, event };
