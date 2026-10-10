@@ -135,6 +135,30 @@ test('a test run is cut off from the developer\'s system', async () => {
   } finally { await fixture.close(); }
 });
 
+// index.html's policy restricts scripts and objects only, so a chapter's image or a plugin's
+// fetch in the window would reach a server but for the block in isolate().
+test('a request the window makes to a server is cancelled before it leaves', async () => {
+  const fixture = await launchProfile();
+  try {
+    const failures = [];
+    fixture.page.on('requestfailed', (request) => failures.push([request.url(), request.failure()?.errorText]));
+    const url = 'https://neo-test.invalid/cover.png';
+    const outcome = await fixture.page.evaluate((src) => Promise.all([
+      fetch(src).then(() => 'sent', () => 'failed'),
+      new Promise((resolve) => {
+        const image = new Image();
+        image.onload = () => resolve('loaded');
+        image.onerror = () => resolve('failed');
+        image.src = src;
+      }),
+    ]), url);
+    expect(outcome).toEqual(['failed', 'failed']);
+    // cancelled by the block, not by a name that would not resolve
+    expect(failures.filter(([, why]) => why !== 'net::ERR_BLOCKED_BY_CLIENT')).toEqual([]);
+    expect(failures.length).toBeGreaterThan(0);
+  } finally { await fixture.close(); }
+});
+
 // A chosen library folder that is gone (an unplugged drive) makes main.js ask a synchronous
 // dialog at launch. In a test that must be refused, not shown, and the app must carry on.
 test('a missing library folder opens no dialog', async () => {

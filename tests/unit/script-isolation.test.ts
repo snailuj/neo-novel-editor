@@ -71,6 +71,8 @@ type Run = {
   switches: Map<string, string | undefined>;
   // The modules utilityProcess.fork was really asked to start.
   forked: string[];
+  setupReady: (() => void)[];
+  requestListeners: { filter: { urls: string[] }; listener: (details: unknown, answer: (a: unknown) => void) => void }[];
   env: Record<string, string>;
   electron: Anything;
   os: Anything;
@@ -103,6 +105,8 @@ function run(target: Target): Run {
   const paths = new Map<string, string>();
   const switches = new Map<string, string | undefined>();
   const forked: string[] = [];
+  const ready: (() => void)[] = [];
+  const requestListeners: { filter: { urls: string[] }; listener: (details: unknown, answer: (a: unknown) => void) => void }[] = [];
   const real = () => 'a real call';
   const electron: Anything = {
     app: {
@@ -113,14 +117,22 @@ function run(target: Target): Run {
         hasSwitch: (name: string) => switches.has(name),
       },
       on() {},
-      whenReady: () => ({ then() {} }),
+      whenReady: () => ({ then: (callback: () => void) => { ready.push(callback); } }),
       requestSingleInstanceLock: () => true,
       getLocale: () => 'en',
       getVersion: () => '0.0.0',
       isPackaged: false,
     },
     BrowserWindow: { prototype: { loadFile() {}, show() {} }, getFocusedWindow: () => null, getAllWindows: () => [] },
-    session: { defaultSession: { webRequest: { onBeforeRequest() {} } } },
+    session: {
+      defaultSession: {
+        webRequest: {
+          onBeforeRequest: (filter: { urls: string[] }, listener: (details: unknown, answer: (a: unknown) => void) => void) => {
+            requestListeners.push({ filter, listener });
+          },
+        },
+      },
+    },
     ipcMain: { on() {}, handle() {} },
     Menu: { buildFromTemplate: (items: unknown) => items, setApplicationMenu() {} },
     MenuItem: class {},
@@ -188,6 +200,9 @@ function run(target: Target): Run {
     { parsingContext: context, filename: file },
   )(requireFrom(path.dirname(file)), file, path.dirname(file));
 
+  // What the setup asked to run once the app is ready, before main.js asks for its own.
+  const setupReady = ready.slice();
+
   // main.js reads os.homedir() when it loads, to start LIBRARY_DIR and LIBRARY_FILE.
   context.require = requireFrom(root);
   context.__dirname = root;
@@ -196,7 +211,7 @@ function run(target: Target): Run {
   const made = readdirSync(systemTmp).filter((name) => /^neo-(plugins|plugin-edits)-test-/.test(name));
   const tempRoot = target.profile ? profileDir : path.join(systemTmp, made[0] ?? 'no-folder-was-made');
   const result: Run = {
-    sandbox, developer, systemTmp, tempRoot, paths, switches, forked, env, electron,
+    sandbox, developer, systemTmp, tempRoot, paths, switches, forked, setupReady, requestListeners, env, electron,
     os: fakeOs, fs: fakeFs, childProcess: fakeChildProcess, moduleLoader, process: fakeProcess, context,
     main: { dir: '', file: '' },
   };
@@ -285,6 +300,17 @@ for (const target of TARGETS) {
     test('keeps safeStorage off the developer\'s keychain', () => {
       assert.ok(r.switches.has('use-mock-keychain'), 'use-mock-keychain');
       assert.equal(r.switches.get('password-store'), 'basic');
+    });
+
+    // The window's own requests: an image in a chapter, a plugin's fetch in the page.
+    test('cancels every request the window makes to a server', () => {
+      for (const callback of r.setupReady) callback();
+      assert.equal(r.requestListeners.length, 1, 'one listener cancels requests');
+      const { filter, listener } = r.requestListeners[0];
+      assert.deepEqual([...filter.urls].sort(), ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*']);
+      let answer: { cancel?: boolean } | undefined;
+      listener({}, (a) => { answer = a as { cancel?: boolean }; });
+      assert.equal(answer?.cancel, true);
     });
 
     test('opens no connection', async () => {

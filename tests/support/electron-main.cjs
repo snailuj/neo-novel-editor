@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, session, shell } = require('electron');
+const { BrowserWindow, dialog, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { isolate, stubbed } = require('../../scripts/isolate-test-app.js');
@@ -22,8 +22,4 @@ shell.trashItem = stubbed(async (target) => {
 });
 // Only an expressly requested manual session shows a labelled synthetic window.
 configureTestWindows(BrowserWindow, path.resolve(__dirname, '../..'), process.env.NEO_TEST_VISIBLE === '1');
-app.whenReady().then(() => session.defaultSession.webRequest.onBeforeRequest(
-  { urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] },
-  (_details, callback) => callback({ cancel: true }),
-));
 require('../../main.js');

@@ -131,7 +131,7 @@ function isolate(profile, {
   userData = path.join(profile, 'userData'),
   documents = path.join(profile, 'documents')
 } = {}) {
-  const { app, dialog, shell, systemPreferences, utilityProcess } = require('electron');
+  const { app, dialog, session, shell, systemPreferences, utilityProcess } = require('electron');
   const env = variables(profile);
 
   Object.assign(process.env, env);
@@ -186,6 +186,13 @@ function isolate(profile, {
     }
     return fork.call(utilityProcess, modulePath, ...args);
   });
+
+  // The window reaches no server either: an image in a chapter, a plugin's fetch in the page.
+  // Pages of the app itself load from files, which these patterns do not match.
+  app.whenReady().then(() => session.defaultSession.webRequest.onBeforeRequest(
+    { urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] },
+    (_details, callback) => callback({ cancel: true })
+  ));
 
   globalThis.fetch = stubbed(async () => { throw new Error('Network access is disabled in tests'); });
   // Electron's original-fs is fs without the guard above, which a plugin's main half could
