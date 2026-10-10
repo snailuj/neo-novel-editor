@@ -49,6 +49,42 @@ test('the lines between the blocks on the body stay where they were', () => {
   assert.equal(paragraphLines('<div>a</div><h2>b</h2><blockquote><p>c</p><p>d</p></blockquote>'), '<div>a</div>\n<h2>b</h2>\n<blockquote><p>c</p><p>d</p></blockquote>\n');
 });
 
+// Depth zero is the body, which is all dropLineBreaks (body children only)
+// takes the line breaks off: so any element that is not void holds what is
+// inside it, whatever its name.
+test('paragraphs inside any other element are left as they are', () => {
+  for (const html of [
+    '<section><p>a</p><p>b</p></section>',
+    '<details><summary>s</summary><p>a</p><p>b</p></details>',
+    '<b><p>a</p><p>b</p></b>',
+    '<span class="x"><div>a</div><div>b</div></span>',
+    '<a href="https://example.org/"><p>a</p><p>b</p></a>',
+    '<custom-box><p>a</p><p>b</p></custom-box>'
+  ]) assert.equal(paragraphLines(html), html);
+  // and the blocks around it are lined as before
+  assert.equal(paragraphLines('<p>a</p><section><p>x</p><p>y</p></section><p>b</p><p>c</p>'),
+    '<p>a</p><section><p>x</p><p>y</p></section><p>b</p>\n<p>c</p>\n');
+});
+
+// void elements have no end tag, so they hold nothing and take no depth
+test('void elements do not hold the blocks after them', () => {
+  assert.equal(paragraphLines('<p>a<br>b <img src="x.png"></p><p>c</p>'), '<p>a<br>b <img src="x.png"></p>\n<p>c</p>\n');
+  assert.equal(paragraphLines('<p>a</p><hr><p>b</p><p>c</p>'), '<p>a</p><hr><p>b</p>\n<p>c</p>\n');
+  assert.equal(paragraphLines('<section><img src="x.png"><p>a</p><p>b</p></section><p>c</p>'), '<section><img src="x.png"><p>a</p><p>b</p></section><p>c</p>\n');
+  assert.equal(paragraphLines('<p>a</p><p>b<wbr>c</p>'), '<p>a</p>\n<p>b<wbr>c</p>\n');
+});
+
+// Files this reads wrong stay as they are rather than gaining a line break
+// where the page would keep it: a comment holding a <p> counts as an open
+// block (fewer lines), <p/> opens one, and a file lined an earlier way is
+// not changed again.
+test('a comment holding a tag, <p/>, and a file lined an earlier way are left as they are', () => {
+  assert.equal(paragraphLines('<!-- <p> --><p>a</p><p>b</p>'), '<!-- <p> --><p>a</p><p>b</p>');
+  assert.equal(paragraphLines('<p/><p>a</p><p>b</p>'), '<p/><p>a</p><p>b</p>');
+  const earlier = '<ul><li><p>a</p>\n<p>b</p></li></ul>\n<p>c</p>\n';
+  assert.equal(paragraphLines(earlier), earlier);
+});
+
 test('lines stand after the blocks on the body and not inside the containers between them', () => {
   assert.equal(paragraphLines('<p>a</p><ul><li><p>x</p><p>y</p></li></ul><p>b</p><p>c</p>'),
     '<p>a</p><ul><li><p>x</p><p>y</p></li></ul><p>b</p>\n<p>c</p>\n');
