@@ -429,6 +429,27 @@ test('afterPack reports a link inside app.asar that leaves it', async () => {
   await assert.rejects(afterPack(await packageWithAsarLink('../outside')), /node_modules\/linked.*outside the package/);
 });
 
+// @electron/asar writes link targets with the OS separator, and a different version may
+// pack an absolute one; either leaves the archive.
+test('afterPack reads link targets with backslashes and absolute targets', async () => {
+  for (const target of [
+    '..\\outside',
+    'node_modules\\..\\..\\outside',
+    'C:\\vault\\hoard',
+    'C:/vault/hoard',
+    '/vault/hoard',
+    '\\\\server\\share',
+  ]) {
+    await assert.rejects(
+      afterPack(await packageWithAsarLink(target)),
+      /node_modules\/linked.*outside the package/,
+      target,
+    );
+  }
+  const line = await checked(await packageWithAsarLink('node_modules\\dictionary-ro'));
+  assert.equal(line.checked, 2);
+});
+
 test('afterPack takes a missing app.asar.unpacked as nothing unpacked', async () => {
   const line = await checked((await fakePackage('win32', { unpack: false })).context);
   assert.equal(line.unpacked, 0);

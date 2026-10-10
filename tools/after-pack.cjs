@@ -100,9 +100,13 @@ function walkUnpacked(dir, root) {
 
 const OUTSIDE = 'symbolic link points outside the package';
 
-// asar stores a link's target relative to the archive root.
+// asar stores a link's target relative to the archive root, with the OS separator. The
+// pinned version refuses to pack a target outside the archive; this holds if that changes.
 function archiveLinkProblem(target) {
-  return /^\.\.(?:\/|$)/.test(path.posix.normalize(target)) ? OUTSIDE : null;
+  const slashed = target.replace(/\\/g, '/');
+  const absolute = path.posix.isAbsolute(slashed) || /^[a-z]:/i.test(slashed);
+  const parent = /^\.\.(?:\/|$)/.test(path.posix.normalize(slashed));
+  return absolute || parent ? OUTSIDE : null;
 }
 
 function diskLinkProblem(link, root) {
