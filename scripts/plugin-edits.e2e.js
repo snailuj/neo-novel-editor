@@ -589,6 +589,27 @@ test('inline marks', async () => {
   assert.equal((await lines(three))[0], 'ab⚑z');
 });
 
+// A caret inside the words a replace rewrites stays inside the new words, as
+// near as it was. Where that would be between the two halves of an astral
+// character in them, it goes to the end of the new words, not the start of
+// the paragraph.
+test('caret kept inside the replaced text', async () => {
+  const [one] = book.chapters;
+  const caretAfter = async (place, expected, text) => {
+    await select(one, 0, 6); // 2 letters into "paragraph"
+    assert.deepEqual(await replace(place, expected, text), { ok: true });
+    return where();
+  };
+  assert.equal((await caretAfter(word(), 'paragraph', 'passage')).off, 6);
+  assert.deepEqual(await replace(written(), 'passage', 'paragraph'), { ok: true });
+  // 6 is between the halves of the emoji in "One x😀yz."
+  const placed = await caretAfter(word(), 'paragraph', 'x\u{1F600}yz');
+  assert.equal((await lines(one))[0], 'One x\u{1F600}yz.');
+  assert.deepEqual(at(placed), { chId: one, pIdx: 0, off: 9, len: 0 });
+  assert.deepEqual(await replace({ ...word(), len: 5 }, 'x\u{1F600}yz', 'paragraph'), { ok: true });
+  assert.equal((await lines(one))[0], 'One paragraph.');
+});
+
 test('bad input', async () => {
   const [one] = book.chapters;
   const thrown = await js(`(async () => {
