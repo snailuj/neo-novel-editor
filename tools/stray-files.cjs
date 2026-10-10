@@ -20,8 +20,19 @@ function findStrays(packaged, tracked) {
 // node_modules and plugins/ are installed or built, so git does not list them.
 const isGenerated = (file) => file.startsWith('node_modules/') || file.startsWith('plugins/');
 
+// Tracked, but there to build or test NEO, never to run it.
+const DEV_ONLY = [
+  [/^docs\//, 'docs/ (plans and specs)'],
+  [/(?:^|\/)tsconfig[^/]*\.json$/, 'tsconfig (TypeScript settings)'],
+  [/(?:^|\/)playwright\.config\.[^/]+$/, 'playwright config'],
+  [/(?:^|\/)\.oxlintrc\.json$/, '.oxlintrc.json (oxlint settings)'],
+  [/\.md$/i, '.md file'],
+];
+
 function why(file, known) {
   if (isGenerated(file)) return null;
+  const dev = DEV_ONLY.find(([pattern]) => pattern.test(file));
+  if (dev) return `development file: ${dev[1]}`;
   if (!known.has(file)) return 'not tracked by git';
   return null;
 }

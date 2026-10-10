@@ -148,3 +148,19 @@ test('a packaged file outside node_modules and plugins must be tracked', () => {
 test('paths are compared as git writes them', () => {
   assert.deepEqual(strays(['fonts\\a.woff2', './main.js', '/package.json']), []);
 });
+
+test('tracked development files are strays too', () => {
+  assertStray('docs/plans/x.md', /development.*docs/);
+  assertStray('tsconfig.json', /development.*tsconfig/);
+  assertStray('tsconfig.build.json', /development.*tsconfig/);
+  assertStray('playwright.config.mjs', /development.*playwright/);
+  assertStray('.oxlintrc.json', /development.*oxlint/);
+  assertStray('README.md', /development.*\.md/);
+});
+
+test('dependencies keep their own docs and configs', () => {
+  assert.deepEqual(
+    strays(['node_modules/foo/README.md', 'node_modules/foo/docs/a.md', 'node_modules/foo/tsconfig.json']),
+    [],
+  );
+});
