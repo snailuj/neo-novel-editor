@@ -414,6 +414,9 @@
     return at >= off + len ? at + text.length - len : Math.min(at, off + text.length);
   }
 
+  // the types of input with nothing to type in, so no caret of their own
+  const NO_CARET = ['checkbox', 'radio', 'range', 'color', 'button', 'submit', 'reset', 'file', 'image'];
+
   // Runs edit() with the selection and the focus free for it, then gives
   // the writer back the selection, focus and scroll they had, even when
   // edit throws. edit returns what it changed, { p, off, len, text }: len
@@ -432,7 +435,9 @@
     // would put the control's caret at its start. The page's selection is
     // the control's when the control has the focus and no end lies in a
     // chapter (a number input has no selectionStart to ask, but a caret).
-    const ownSelection = (focused instanceof HTMLTextAreaElement || focused instanceof HTMLInputElement) && (!ends || ends.every(({ spot }) => !spot));
+    // A checkbox or a button has no caret: the selection is the page's.
+    const control = focused instanceof HTMLTextAreaElement || (focused instanceof HTMLInputElement && !NO_CARET.includes(focused.type));
+    const ownSelection = control && (!ends || ends.every(({ spot }) => !spot));
     let change = null;
     try {
       change = edit();

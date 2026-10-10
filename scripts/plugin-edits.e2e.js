@@ -557,6 +557,34 @@ test('caret kept in a number input', async () => {
   assert.equal((await lines(one))[0], 'One paragraph.');
 });
 
+// A checkbox (and a radio button, a range, a button) can have the focus, as
+// the paperback dialog's does when it is clicked, but has no caret of its own:
+// the selection is the page's, and a replace gives it back as it was, with no
+// selection at all. One left in the chapter would report a place the writer
+// never chose.
+test('selection kept when a checkbox has the focus', async () => {
+  const [one] = book.chapters;
+  await select(one, 1, 0);
+  const field = `document.getElementById('plugin-edits-checkbox')`;
+  await js(`(() => {
+    const el = document.createElement('input');
+    el.type = 'checkbox';
+    el.id = 'plugin-edits-checkbox';
+    document.body.appendChild(el);
+    el.focus();
+    getSelection().removeAllRanges();
+  })()`);
+  try {
+    assert.deepEqual(await replace(word(), 'paragraph', 'passage'), { ok: true });
+    assert.deepEqual(await js(`({ focused: document.activeElement === ${field}, ranges: getSelection().rangeCount })`), { focused: true, ranges: 0 });
+    assert.equal(await where(), null, 'no place the writer never chose');
+    assert.deepEqual(await replace(written(), 'passage', 'paragraph'), { ok: true });
+  } finally {
+    await js(`${field}.remove()`);
+  }
+  assert.equal((await lines(one))[0], 'One paragraph.');
+});
+
 // In typewriter mode the page glides to the caret after each selection change
 // while the writer is typing or moving by keyboard, which a wheel or trackpad
 // scroll does not end. A replace changes the selection and puts it back; the
