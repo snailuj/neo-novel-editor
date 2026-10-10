@@ -29,11 +29,29 @@ afterEach(() => {
   while (made.length) fs.rmSync(made.pop(), { recursive: true, force: true });
 });
 
+// The worktree's own plugins/ holds a build of hoard (git-ignored). A test
+// that discovers it activates it, and then passes or fails on whether the
+// build has run. Every read of that folder is noted, and the file fails if
+// there was one: tests use a temporary app folder.
+const ownPlugins = path.join(root, 'plugins');
+const ownReads = [];
+const readdirSync = fs.readdirSync;
+fs.readdirSync = function (dir, ...rest) {
+  const rel = path.relative(ownPlugins, path.resolve(String(dir)));
+  if (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)) ownReads.push(String(dir));
+  return readdirSync.call(this, dir, ...rest);
+};
+after(() => {
+  fs.readdirSync = readdirSync;
+  assert.deepEqual(ownReads, [], 'a test discovered the worktree\'s own plugins/ folder');
+});
+
 // wires the module to stand-ins; dirs becomes NEO_PLUGIN_DIRS. Electron's
-// folders sit in the app folder, settings.json is saved.settings, and the
-// library folder is whatever library() says
+// folders sit in the app folder (by default a temporary one that holds the
+// fixture plugins), settings.json is saved.settings, and the library folder
+// is whatever library() says
 function wire({
-  appRoot = root, isPackaged = false, dirs,
+  appRoot = fixtureApp(), isPackaged = false, dirs,
   app = { isPackaged, getPath: (name) => path.join(appRoot, name) },
   settings = {}, library = () => path.join(appRoot, 'NEO Library'), activateMs,
   // plugins-main.js starts each main half a turn after activateMains; the
@@ -56,7 +74,7 @@ function wire({
     defer,
     ...(activateMs === undefined ? {} : { activateMs })
   });
-  return { logs, handlers, saved };
+  return { logs, handlers, saved, appRoot };
 }
 
 function tempFolder() {
@@ -74,6 +92,15 @@ function addPlugin(dir, rel, manifest) {
 function appFolder(manifests) {
   const dir = tempFolder();
   for (const [rel, manifest] of Object.entries(manifests)) addPlugin(dir, rel, manifest);
+  return dir;
+}
+
+// an app folder (a new temporary one, unless given) holding a copy of the
+// fixture plugins, where the worktree's own plugins/ cannot be found;
+// locales/ is there, empty, for main.js, which reads it from its own folder
+function fixtureApp(dir = tempFolder()) {
+  fs.cpSync(path.join(root, fixtures), path.join(dir, fixtures), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'locales'));
   return dir;
 }
 
@@ -98,12 +125,12 @@ const find = (id) => plugins.discover().find((m) => m.id === id);
 
 describe('plugin discovery', { concurrency: 1 }, () => {
   test('the probe is listed with its renderer URL relative to the app folder, on every platform', () => {
-    wire({ dirs: fixtures });
+    const { appRoot } = wire({ dirs: fixtures });
     const probe = find('probe');
     assert.ok(probe, 'probe is listed');
     assert.equal(probe.rendererUrl, 'scripts/fixtures/plugins/probe/renderer.js');
     assert.equal(probe.styleUrl, 'scripts/fixtures/plugins/probe/style.css');
-    assert.equal(probe.mainPath, path.join(root, fixtures, 'probe', 'main.js'));
+    assert.equal(probe.mainPath, path.join(appRoot, fixtures, 'probe', 'main.js'));
   });
 
   test('a style gets a URL and a main entry an absolute path', () => {
@@ -186,8 +213,9 @@ describe('plugin discovery', { concurrency: 1 }, () => {
   });
 
   test('the app folder is matched regardless of case on Windows', { skip: process.platform !== 'win32' && 'Windows paths only' }, () => {
-    const shouted = root.toUpperCase() === root ? root.toLowerCase() : root.toUpperCase();
-    wire({ dirs: path.join(shouted, fixtures) });
+    const app = fixtureApp();
+    const shouted = app.toUpperCase() === app ? app.toLowerCase() : app.toUpperCase();
+    wire({ appRoot: app, dirs: path.join(shouted, fixtures) });
     assert.equal(find('probe').rendererUrl, 'scripts/fixtures/plugins/probe/renderer.js');
   });
 
@@ -412,7 +440,7 @@ describe('the Plugins menu', { concurrency: 1 }, () => {
     const localRequire = createRequire(path.join(root, 'main.js'));
     const context = vm.createContext({
       require: (name) => name === 'electron' ? electron : localRequire(name),
-      __dirname: root,
+      __dirname: fixtureApp(),
       process: { platform: process.platform, on() {} },
       console,
       libraryRoot: tempFolder()
@@ -831,7 +859,8 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
   // whose settings.json already holds other settings. ready() runs what
   // main.js does once Electron is ready, with the window, the menu, the
   // spellchecker, the backup and the updater stood in for.
-  const probeMain = path.join(root, fixtures, 'probe', 'main.js');
+  let appDir = null; // main.js's own folder: a temporary one with the fixture plugins
+  let probeMain = null;
   let profile = null;
   let main = null;
   const library = () => path.join(profile, 'documents', 'NEO Library');
@@ -864,7 +893,7 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
     const localRequire = createRequire(path.join(root, 'main.js'));
     const context = vm.createContext({
       require: (name) => name === 'electron' ? electron : localRequire(name),
-      __dirname: root,
+      __dirname: appDir,
       process: { platform: process.platform, on() {} },
       console,
       setInterval: () => ({}),
@@ -886,6 +915,8 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
   }
 
   before(() => {
+    appDir = fixtureApp(fs.mkdtempSync(path.join(os.tmpdir(), 'neo-plugins-app-')));
+    probeMain = path.join(appDir, fixtures, 'probe', 'main.js');
     profile = fs.mkdtempSync(path.join(os.tmpdir(), 'neo-plugins-main-'));
     fs.mkdirSync(path.join(profile, 'userData'));
     fs.writeFileSync(path.join(profile, 'userData', 'settings.json'), JSON.stringify({ pageTheme: 'light', plugins: { other: { kept: true } } }));
@@ -893,7 +924,10 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
     process.env.NEO_PLUGIN_DIRS = fixtures;
     main = loadMain();
   });
-  after(() => fs.rmSync(profile, { recursive: true, force: true }));
+  after(() => {
+    fs.rmSync(profile, { recursive: true, force: true });
+    fs.rmSync(appDir, { recursive: true, force: true });
+  });
 
   // The window's preload asks main.js three things synchronously (sendSync)
   // and the window waits for the answers, which come once the startup
@@ -939,7 +973,7 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
     const { host } = require(probeMain);
     assert.equal(host.paths.library(), library());
     assert.equal(host.paths.userData, path.join(profile, 'userData'));
-    assert.equal(host.paths.plugin, path.join(root, fixtures, 'probe'));
+    assert.equal(host.paths.plugin, path.join(appDir, fixtures, 'probe'));
   });
 
   test('settings.set keeps the other keys of settings.json, other plugins\' among them', () => {
