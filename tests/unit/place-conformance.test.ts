@@ -12,9 +12,11 @@ import { validateHighlightV1, validatePlaceV1 } from '../../src/generated/valida
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const fixtures = path.join(root, 'tests', 'fixtures', 'places');
 
-// plugins.js in a vm of its own: loading it touches nothing but window.NeoPlugins.
+// plugins.js in a vm of its own: loading it touches nothing but window.NeoPlugins. It
+// reads document.currentScript (its own URL) and listens for window's error event (a
+// script's errors), so those two are stubbed as an empty page has them.
 function hostCheck(): (place: unknown) => boolean {
-  const context: Record<string, unknown> = {};
+  const context: Record<string, unknown> = { document: { currentScript: null }, addEventListener() {} };
   context.window = context;
   vm.createContext(context);
   vm.runInContext(readFileSync(path.join(root, 'plugins.js'), 'utf8'), context, { filename: 'plugins.js' });
@@ -28,6 +30,8 @@ type HighlightCall = (name: unknown, places: unknown) => void;
 // TypeError for it, as false. No book is open, so a call taken marks nothing.
 function hostTakesHighlight(): (name: unknown, places: unknown) => boolean {
   const context: Record<string, unknown> = {
+    document: { currentScript: null },
+    addEventListener() {},
     neo: { plugins: [{ id: 'p', apiVersion: 2, rendererUrl: 'plugins/p/renderer.js', styleUrl: null }], logError() {} }
   };
   context.window = context;
