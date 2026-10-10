@@ -9,11 +9,12 @@
 
 'use strict';
 
-const { app, BrowserWindow, Menu, dialog, shell } = require('electron');
+const { app, BrowserWindow, Menu } = require('electron');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { isolate } = require('./isolate-test-app.js');
 
 // A folder of its own for each run. Chromium writes to its profile until
 // the process is gone, so a run can't remove its own; it removes those of
@@ -26,18 +27,9 @@ for (const name of fs.readdirSync(os.tmpdir())) {
 }
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `neo-plugins-test-${process.pid}-`));
 const LIBRARY = path.join(tmp, 'NEO Library');
-app.setPath('userData', path.join(tmp, 'app'));
-app.setPath('documents', tmp);
-// main.js falls back on home for a library, and appData is where Electron keeps the rest
-app.setPath('home', tmp);
-app.setPath('appData', path.join(tmp, 'appData'));
-// no dialog, browser, file manager or trash is reached from a run; a call that answers
-// at once, a synchronous dialog's, must throw at once
-for (const owner of [dialog, shell]) {
-  for (const name of Object.keys(owner)) {
-    owner[name] = () => { throw new Error(`${name} is disabled in tests`); };
-  }
-}
+// before main.js loads: nothing the run does reaches the developer's folders, library,
+// programs or network (see isolate-test-app.js)
+isolate(tmp, { userData: path.join(tmp, 'app'), documents: tmp });
 fs.mkdirSync(LIBRARY);
 // hintShown: the once-per-library Enter hint would otherwise fill #hint
 fs.writeFileSync(path.join(LIBRARY, 'library.json'), JSON.stringify({

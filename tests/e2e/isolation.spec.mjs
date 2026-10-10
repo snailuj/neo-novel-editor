@@ -42,7 +42,8 @@ test('a test run is cut off from the developer\'s system', async () => {
     else process.env.NEO_PLUGIN_DIRS = named;
   }
   try {
-    const seen = await fixture.app.evaluate(({ app, shell, dialog, systemPreferences }, { names, variables, programs, calls }) => {
+    const outsideFile = path.join(tmpdir(), `neo-isolation-outside-${process.pid}.txt`);
+    const seen = await fixture.app.evaluate(({ app, shell, dialog, systemPreferences }, { names, variables, programs, calls, outsideFile }) => {
       // The harness marks each stub; a call Electron implements has no mark.
       const unstubbed = (owner) => Object.entries(owner)
         .filter(([, fn]) => typeof fn === 'function' && fn.neoTestStub !== true)
@@ -51,7 +52,16 @@ test('a test run is cut off from the developer\'s system', async () => {
         typeof owner[name] !== 'function' ? 'missing' : owner[name].neoTestStub === true ? 'stub' : 'real']));
       // evaluate has no require; this is the same module object main.js gets.
       const childProcess = process.getBuiltinModule('node:child_process');
+      const fs = process.getBuiltinModule('node:fs');
+      const os = process.getBuiltinModule('node:os');
+      const writeOutside = () => {
+        try { fs.writeFileSync(outsideFile, 'x'); return 'written'; } catch (error) { return error.code; }
+      };
       return {
+        homedir: os.homedir(),
+        tmpdir: os.tmpdir(),
+        fetchStubbed: globalThis.fetch.neoTestStub === true,
+        outsideWrite: writeOutside(),
         pluginDirs: process.env.NEO_PLUGIN_DIRS ?? null,
         neoVariables: Object.keys(process.env).filter((key) => key.toUpperCase().startsWith('NEO_')).sort(),
         variables: Object.fromEntries(variables.map((name) => [name, process.env[name] ?? null])),
@@ -64,9 +74,13 @@ test('a test run is cut off from the developer\'s system', async () => {
         setUserDefaultStubbed: systemPreferences.setUserDefault?.neoTestStub === true,
         programs: Object.fromEntries(programs.map((name) => [name, childProcess[name]?.neoTestStub === true])),
       };
-    }, { names: PATH_NAMES, variables: VARIABLES, programs: PROGRAMS, calls: { shell: SHELL, dialog: DIALOG } });
+    }, { names: PATH_NAMES, variables: VARIABLES, programs: PROGRAMS, calls: { shell: SHELL, dialog: DIALOG }, outsideFile });
+    await rm(outsideFile, { force: true });
 
     expect.soft(seen.pluginDirs).toBeNull();
+    expect.soft(seen.fetchStubbed).toBe(true);
+    // the write guard: nothing outside the profile can be written
+    expect.soft(seen.outsideWrite).toBe('TEST_WRITE_OUTSIDE_PROFILE');
     expect.soft(seen.neoVariables).toEqual(['NEO_TEST_PROFILE', 'NEO_TEST_VISIBLE']);
     const allStubs = (list) => Object.fromEntries(list.map((name) => [name, 'stub']));
     expect.soft(seen.shell).toEqual(allStubs(SHELL));
@@ -82,6 +96,8 @@ test('a test run is cut off from the developer\'s system', async () => {
       const relative = path.relative(fixture.profile, target);
       return !relative.startsWith('..') && !path.isAbsolute(relative);
     };
+    // main.js starts its library at os.homedir() when it loads
+    expect.soft([seen.homedir, seen.tmpdir].filter((target) => !inProfile(target))).toEqual([]);
     expect.soft(Object.entries(seen.paths).filter(([, target]) => !inProfile(target))).toEqual([]);
     expect.soft(Object.entries(seen.variables).filter(([, target]) => !inProfile(target))).toEqual([]);
   } finally { await fixture.close(); }

@@ -11,11 +11,12 @@
 
 'use strict';
 
-const { app, BrowserWindow, dialog, shell } = require('electron');
+const { app, BrowserWindow } = require('electron');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { isolate } = require('./isolate-test-app.js');
 
 // A folder of its own for each run (see plugins.e2e.js for why earlier
 // runs' folders are the ones removed).
@@ -27,16 +28,8 @@ for (const name of fs.readdirSync(os.tmpdir())) {
 }
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `neo-plugin-edits-test-${process.pid}-`));
 const LIBRARY = path.join(tmp, 'NEO Library');
-app.setPath('userData', path.join(tmp, 'app'));
-app.setPath('documents', tmp);
-// see plugins.e2e.js for these
-app.setPath('home', tmp);
-app.setPath('appData', path.join(tmp, 'appData'));
-for (const owner of [dialog, shell]) {
-  for (const name of Object.keys(owner)) {
-    owner[name] = () => { throw new Error(`${name} is disabled in tests`); };
-  }
-}
+// before main.js loads (see isolate-test-app.js)
+isolate(tmp, { userData: path.join(tmp, 'app'), documents: tmp });
 fs.mkdirSync(LIBRARY);
 fs.writeFileSync(path.join(LIBRARY, 'library.json'), JSON.stringify({
   authorName: '', penNames: [], firstRunDone: true, pageTheme: 'night', hintShown: true,

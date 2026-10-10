@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 const appRoot = fileURLToPath(new URL('../..', import.meta.url));
 // node_modules' Electron: requiring the package returns the path of its binary.
 const electronPath = createRequire(import.meta.url)('electron');
+// The module the main script isolates with; the variables it sets are set at launch too.
+const isolation = createRequire(import.meta.url)('../../scripts/isolate-test-app.js');
 
 // A first-run-complete library with one shelf. outlineView 'list' and hintShown
 // keep the Outline cards and the first-run hint out of the way of the tests.
@@ -36,16 +38,8 @@ export async function launchProfile(existingProfile, options = {}) {
     Object.assign(env, { NEO_TEST_PROFILE: profile, NEO_TEST_VISIBLE: options.visible === true ? '1' : '0' });
     delete env.ELECTRON_RUN_AS_NODE;
     // Where a child process, Chromium or a library looks for the user's folders: the profile's own,
-    // whatever the main script does after it starts.
-    const folders = {
-      HOME: profile,
-      USERPROFILE: profile,
-      APPDATA: path.join(profile, 'appData'),
-      LOCALAPPDATA: path.join(profile, 'localAppData'),
-      TEMP: path.join(profile, 'tmp'),
-      TMP: path.join(profile, 'tmp'),
-      TMPDIR: path.join(profile, 'tmp'),
-    };
+    // from the first moment, before the main script isolates the rest.
+    const folders = isolation.variables(profile);
     for (const dir of new Set(Object.values(folders))) await mkdir(dir, { recursive: true });
     Object.assign(env, folders);
     app = await electron.launch({

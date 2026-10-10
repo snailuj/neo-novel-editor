@@ -1,0 +1,168 @@
+// Cuts a test's Electron main process off from the developer's machine, so that a run reaches
+// none of their folders, library, settings, programs or network.
+//
+// Call isolate() before requiring NEO's main.js. main.js reads os.homedir() when it loads, to
+// start LIBRARY_DIR and LIBRARY_FILE at ~/Documents/NEO Library, and an error logged before it
+// has found the library (an exception or a rejection at launch) makes that folder, seeds
+// library.json in it and appends to neo-errors.log. With the home folder inside the run's temp
+// folder, that library is the run's own.
+//
+// scripts/plugins.e2e.js, scripts/plugin-edits.e2e.js and the Playwright harness
+// (tests/support/electron-main.cjs) all use this, so they are isolated in the same way.
+
+'use strict';
+
+const childProcess = require('node:child_process');
+const fs = require('node:fs');
+const Module = require('node:module');
+const os = require('node:os');
+const path = require('node:path');
+const { fileURLToPath } = require('node:url');
+
+// The variables that name a user's folders. Child processes, Chromium and libraries read these
+// and not Electron's paths.
+function variables(profile) {
+  const tmp = path.join(profile, 'tmp');
+  return {
+    HOME: profile,
+    USERPROFILE: profile,
+    APPDATA: path.join(profile, 'appData'),
+    LOCALAPPDATA: path.join(profile, 'localAppData'),
+    TEMP: tmp,
+    TMP: tmp,
+    TMPDIR: tmp
+  };
+}
+
+// A stub carries a mark, so that a test can tell it from the call Electron implements.
+function stubbed(fn) {
+  return Object.assign(fn, { neoTestStub: true });
+}
+
+// Replaces functions of `owner` (all of them by default) with ones that throw. A call that
+// answers at once must throw at once: a rejected promise in its place would read as an answer
+// (a truthy one).
+function refuse(owner, label, { names = Object.keys(owner), answersAtOnce = () => false } = {}) {
+  for (const name of names) {
+    const fail = () => { throw new Error(label + '.' + name + ' is disabled in tests'); };
+    owner[name] = stubbed(answersAtOnce(name) ? fail : async () => fail());
+  }
+}
+
+// Makes every fs function that writes, links or moves refuse a path outside `profile`.
+function guardWrites(profile, onRefuse = () => {}) {
+  const root = path.resolve(profile);
+  // The profile may sit below a link (macOS keeps /var/folders under /private/var), so a path
+  // is inside if it is inside the profile as named or as the system resolves it.
+  const roots = [...new Set([root, fs.realpathSync(root)])];
+  const deny = (method) => {
+    onRefuse({ event: 'test.write-refused', method });
+    throw Object.assign(new Error('Test write leaves its ordinary disposable profile'), { code: 'TEST_WRITE_OUTSIDE_PROFILE' });
+  };
+  if (fs.lstatSync(root).isSymbolicLink()) deny('profile');
+
+  const check = (target, method) => {
+    if (target instanceof URL) target = fileURLToPath(target);
+    if (Buffer.isBuffer(target)) target = target.toString();
+    if (typeof target !== 'string') deny(method);
+    const absolute = path.resolve(target);
+    const home = roots.find((candidate) => {
+      const suffix = path.relative(candidate, absolute);
+      return !path.isAbsolute(suffix) && suffix !== '..' && !suffix.startsWith('..' + path.sep);
+    });
+    if (!home) deny(method);
+    let current = home;
+    for (const part of path.relative(home, absolute).split(path.sep).filter(Boolean)) {
+      current = path.join(current, part);
+      let stat;
+      try { stat = fs.lstatSync(current); } catch (error) { if (error.code === 'ENOENT') break; throw error; }
+      if (stat.isSymbolicLink()) deny(method);
+    }
+  };
+  const wrap = (owner, name, indices, asynchronous = false) => {
+    const original = owner[name];
+    if (typeof original !== 'function') return;
+    const invoke = (...args) => {
+      for (const index of indices) check(args[index], name);
+      return original.apply(owner, args);
+    };
+    owner[name] = asynchronous ? async (...args) => invoke(...args) : invoke;
+  };
+  for (const name of ['writeFile', 'appendFile', 'mkdir', 'unlink', 'rm', 'rmdir', 'truncate', 'chmod', 'chown', 'utimes']) {
+    wrap(fs, name + 'Sync', [0]);
+    wrap(fs, name, [0]);
+    wrap(fs.promises, name, [0], true);
+  }
+  for (const name of ['rename', 'copyFile', 'cp', 'link']) {
+    wrap(fs, name + 'Sync', [0, 1]);
+    wrap(fs, name, [0, 1]);
+    wrap(fs.promises, name, [0, 1], true);
+  }
+  wrap(fs, 'createWriteStream', [0]);
+  const writable = (flags) => typeof flags === 'string'
+    ? /[wa+]/.test(flags)
+    : !!(flags & (fs.constants.O_WRONLY | fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_APPEND));
+  for (const [owner, name, asynchronous] of [[fs, 'openSync', false], [fs, 'open', false], [fs.promises, 'open', true]]) {
+    const original = owner[name];
+    const invoke = (...args) => {
+      if (writable(args[1])) check(args[0], name);
+      return original.apply(owner, args);
+    };
+    owner[name] = asynchronous ? async (...args) => invoke(...args) : invoke;
+  }
+  for (const name of ['symlinkSync', 'symlink']) fs[name] = () => deny(name);
+  fs.promises.symlink = async () => deny('symlink');
+}
+
+// `profile` is the run's temp folder: everything the run does stays inside it. `userData` and
+// `documents` are where NEO keeps its settings and its default library, inside it by default.
+function isolate(profile, {
+  userData = path.join(profile, 'userData'),
+  documents = path.join(profile, 'documents')
+} = {}) {
+  const { app, dialog, shell, systemPreferences } = require('electron');
+  const env = variables(profile);
+
+  Object.assign(process.env, env);
+  os.homedir = () => profile;
+  os.tmpdir = () => env.TMP;
+  guardWrites(profile, (event) => console.warn(JSON.stringify(event)));
+  for (const dir of new Set([...Object.values(env), userData, documents])) fs.mkdirSync(dir, { recursive: true });
+
+  app.setPath('userData', userData);
+  app.setPath('documents', documents);
+  app.setPath('temp', env.TMP);
+  // main.js falls back on `home` for a library, and a library there would be the real one.
+  // sessionData, logs and crashDumps already follow userData.
+  app.setPath('home', profile);
+  app.setPath('appData', env.APPDATA);
+  for (const name of ['desktop', 'downloads', 'music', 'pictures', 'videos']) {
+    app.setPath(name, path.join(profile, name));
+  }
+  app.commandLine.appendSwitch('disable-background-networking');
+  app.commandLine.appendSwitch('disable-component-update');
+
+  // Every dialog is refused, the synchronous ones included: at launch main.js asks
+  // showMessageBoxSync and showOpenDialogSync when the chosen library folder is missing or
+  // unwritable, and catches the throw. A script that needs an answer replaces one afterwards.
+  refuse(dialog, 'dialog', { answersAtOnce: (name) => name.endsWith('Sync') });
+  // No browser, file manager, file or shortcut is reached, whatever Electron adds to shell.
+  refuse(shell, 'shell');
+  // macOS: main.js sets the app's user defaults at every launch, which would write to the
+  // developer's own. Nothing is written.
+  systemPreferences.setUserDefault = stubbed(() => {});
+  // macOS: email:draft runs osascript. No program starts during a test, by this route.
+  refuse(childProcess, 'child_process', {
+    names: ['exec', 'execFile', 'spawn', 'fork', 'execSync', 'execFileSync', 'spawnSync'],
+    answersAtOnce: () => true
+  });
+
+  globalThis.fetch = stubbed(async () => { throw new Error('Network access is disabled in tests'); });
+  const load = Module._load;
+  Module._load = function (request, ...args) {
+    if (request === 'electron-updater') throw new Error('Updates are disabled in tests');
+    return load.call(this, request, ...args);
+  };
+}
+
+module.exports = { isolate, stubbed, variables };
