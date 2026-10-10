@@ -487,6 +487,34 @@ test('caret kept', async () => {
   assert.equal((await lines(one))[0], 'One paragraph.');
 });
 
+// A text control the writer is typing in, the find bar or the note on a side
+// card, keeps its focus and its own selection through a replace: the next key
+// lands where it would have
+test('caret kept in a text control', async () => {
+  const [one] = book.chapters;
+  await select(one, 1, 0);
+  await until(() => js(`!!document.querySelector('#side-cards textarea')`), 'the side cards');
+  await js('openSearch()');
+  const controls = [
+    ['the find bar', `document.getElementById('search-input')`, 'abcdefgh', [2, 5], 'abZfgh'],
+    ['a side card', `document.querySelector('#side-cards textarea')`, 'hello world', [7, 7], 'hello wZorld']
+  ];
+  try {
+    for (const [name, find, value, [from, to], typed] of controls) {
+      await js(`(() => { const el = ${find}; el.value = ${str(value)}; el.focus(); el.setSelectionRange(${from}, ${to}); })()`);
+      assert.deepEqual(await replace(word(), 'paragraph', 'passage'), { ok: true }, name);
+      assert.deepEqual(await js(`({ focused: document.activeElement === ${find}, from: ${find}.selectionStart, to: ${find}.selectionEnd })`), { focused: true, from, to }, name);
+      wc.sendInputEvent({ type: 'char', keyCode: 'Z' });
+      await until(async () => (await js(`${find}.value`)) === typed, `a key typed in ${name}`);
+      assert.deepEqual(await replace(written(), 'passage', 'paragraph'), { ok: true }, name);
+    }
+  } finally {
+    await tick(300); // past the find bar's wait to search
+    await js('closeSearch()');
+  }
+  assert.equal((await lines(one))[0], 'One paragraph.');
+});
+
 // Review focus: replace while an input method composes is refused, and
 // changes nothing
 test('composition', async () => {

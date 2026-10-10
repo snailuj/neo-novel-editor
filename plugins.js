@@ -402,6 +402,10 @@
     const scroller = document.getElementById('paper-scroll');
     const scroll = scroller.scrollTop;
     const focused = document.activeElement;
+    // A text control keeps its own selection across a blur, and the page's
+    // selection only names the control's container there: setting it again
+    // would put the control's caret at its start.
+    const ownSelection = focused instanceof HTMLTextAreaElement || (focused instanceof HTMLInputElement && focused.selectionStart !== null);
     const ends = sel.rangeCount
       ? [[sel.anchorNode, sel.anchorOffset], [sel.focusNode, sel.focusOffset]].map(([node, offset]) => ({ node, offset, spot: spotOf(node, offset) }))
       : null;
@@ -416,8 +420,10 @@
       };
       if (focused && focused !== document.body && focused.isConnected) focused.focus({ preventScroll: true });
       else if (document.activeElement) document.activeElement.blur();
-      if (ends) sel.setBaseAndExtent(...back(ends[0]), ...back(ends[1]));
-      else sel.removeAllRanges();
+      if (!ownSelection) {
+        if (ends) sel.setBaseAndExtent(...back(ends[0]), ...back(ends[1]));
+        else sel.removeAllRanges();
+      }
       scroller.scrollTop = scroll;
     }
     return change;
