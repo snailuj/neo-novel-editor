@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import childProcess, { execFileSync } from 'node:child_process';
 import {
-  existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync,
+  copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync,
+  symlinkSync, writeFileSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -13,8 +14,25 @@ const root = fileURLToPath(new URL('../..', import.meta.url));
 const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 const hasUnsafeEval = /new Function|\beval\(/;
 
-function build(...args: string[]): string {
-  return execFileSync(process.execPath, [path.join(root, 'tools', 'build.mjs'), ...args], {
+const sandboxes: string[] = [];
+
+// The sources a build reads, copied into a temporary root. A test builds there and never in
+// the repository, whose src/generated and plugins/hoard it must not rewrite or delete.
+function sandbox(): string {
+  const dir = mkdtempSync(path.join(tmpdir(), 'hoard-build-'));
+  sandboxes.push(dir);
+  for (const name of ['schemas', 'src']) cpSync(path.join(root, name), path.join(dir, name), { recursive: true });
+  copyFileSync(path.join(root, 'tsconfig.json'), path.join(dir, 'tsconfig.json'));
+  // The generated validators load Ajv's runtime helpers, and nothing above a temporary
+  // root holds a node_modules. A link to the repository's would reach back into it.
+  const runtime = path.join('node_modules', 'ajv', 'dist', 'runtime');
+  cpSync(path.join(root, runtime), path.join(dir, runtime), { recursive: true });
+  return dir;
+}
+
+// The root comes first so that no call can leave it out.
+function build(dir: string, ...args: string[]): string {
+  return execFileSync(process.execPath, [path.join(root, 'tools', 'build.mjs'), '--root', dir, ...args], {
     cwd: root,
     encoding: 'utf8',
   });
@@ -27,6 +45,17 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
+// Every file under the repository's src/generated and plugins/hoard, with its size and
+// modification time, so that a write to any of them shows.
+function repositoryOutputs(): string[] {
+  return ['src/generated', 'plugins/hoard'].flatMap((dir) => {
+    const full = path.join(root, dir);
+    return existsSync(full)
+      ? sourceFiles(full).map((file) => `${path.relative(root, file)}:${statSync(file).size}:${statSync(file).mtimeMs}`)
+      : [];
+  }).sort();
+}
+
 test('start builds first', () => {
   assert.equal(pkg.scripts.start, 'node tools/build.mjs && electron .');
   assert.equal(pkg.scripts['test:e2e'], 'npm run build && playwright test');
@@ -35,51 +64,75 @@ test('start builds first', () => {
 test('packaging builds first', () => {
   assert.equal(pkg.build.beforeBuild, 'tools/before-build.cjs');
   // electron-builder calls the hook from CI's bare `npx electron-builder`, so the
-  // plugin must exist afterwards without any other step having run.
-  const out = path.join(root, 'plugins', 'hoard');
-  rmSync(out, { recursive: true, force: true });
-  const hook = createRequire(import.meta.url)(path.join(root, pkg.build.beforeBuild));
-  // electron-builder reads any falsy result as "node_modules is handled externally" and
-  // skips the dependency rebuild, so the hook must return true.
-  assert.equal(hook(), true);
+  // plugin must exist afterwards without any other step having run. The hook runs the
+  // repository's build.mjs; the test points that build at a temporary root.
+  const dir = sandbox();
+  const calls: string[][] = [];
+  const require = createRequire(import.meta.url);
+  const hookFile = require.resolve(path.join(root, pkg.build.beforeBuild));
+  // The hook binds execFileSync when it is loaded, so the mock goes in first.
+  mock.method(childProcess, 'execFileSync', ((file: string, args: string[], options: object) => {
+    calls.push([file, ...args]);
+    return execFileSync(file, [...args, '--root', dir], { ...options, stdio: 'pipe' });
+  }) as never);
+  try {
+    delete require.cache[hookFile];
+    const hook = require(hookFile);
+    // electron-builder reads any falsy result as "node_modules is handled externally" and
+    // skips the dependency rebuild, so the hook must return true.
+    assert.equal(hook(), true);
+  } finally {
+    mock.restoreAll();
+    delete require.cache[hookFile];
+  }
+  assert.deepEqual(calls, [[process.execPath, path.join(root, 'tools', 'build.mjs')]]);
   for (const file of ['renderer.js', 'main.cjs', 'plugin.json']) {
-    assert.ok(existsSync(path.join(out, file)), `${file} is written`);
+    assert.ok(existsSync(path.join(dir, 'plugins', 'hoard', file)), `${file} is written`);
   }
 });
 
 test('clean build', () => {
-  const out = mkdtempSync(path.join(tmpdir(), 'hoard-build-'));
-  try {
-    const log = build('--out', out);
-    for (const file of ['renderer.js', 'main.cjs', 'plugin.json']) {
-      assert.ok(statSync(path.join(out, 'hoard', file)).size > 0, `${file} is written`);
-    }
-    const events = log.trim().split('\n').map((line) => JSON.parse(line));
-    assert.deepEqual(
-      events.map((e) => e.name).sort(),
-      ['main', 'manifest', 'renderer'],
-    );
-    for (const e of events) {
-      assert.equal(e.event, 'build.target');
-      assert.equal(typeof e.ms, 'number');
-      assert.ok(e.bytes > 0);
-    }
-  } finally {
-    rmSync(out, { recursive: true, force: true });
+  const dir = sandbox();
+  const log = build(dir);
+  for (const file of ['renderer.js', 'main.cjs', 'plugin.json']) {
+    assert.ok(statSync(path.join(dir, 'plugins', 'hoard', file)).size > 0, `${file} is written`);
+  }
+  const events = log.trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(
+    events.map((e) => e.name).sort(),
+    ['main', 'manifest', 'renderer'],
+  );
+  for (const e of events) {
+    assert.equal(e.event, 'build.target');
+    assert.equal(typeof e.ms, 'number');
+    assert.ok(e.bytes > 0);
   }
 });
 
 test('CSP', () => {
-  const out = mkdtempSync(path.join(tmpdir(), 'hoard-build-'));
-  try {
-    build('--out', out);
-    for (const file of ['renderer.js', 'main.cjs']) {
-      const text = readFileSync(path.join(out, 'hoard', file), 'utf8');
-      assert.doesNotMatch(text, hasUnsafeEval, `${file} avoids eval and new Function`);
-    }
-  } finally {
-    rmSync(out, { recursive: true, force: true });
+  const dir = sandbox();
+  const out = path.join(dir, 'elsewhere');
+  build(dir, '--out', out);
+  for (const file of ['renderer.js', 'main.cjs']) {
+    const text = readFileSync(path.join(out, 'hoard', file), 'utf8');
+    assert.doesNotMatch(text, hasUnsafeEval, `${file} avoids eval and new Function`);
   }
+});
+
+test('a build in another root reads and writes that root only', () => {
+  const dir = sandbox();
+  // A schema changed with no `npm run gen`: the build regenerates, in its own root.
+  const schemaFile = path.join(dir, 'schemas', 'plugin-manifest-v1.json');
+  const schema = JSON.parse(readFileSync(schemaFile, 'utf8'));
+  schema.properties.homepage = { type: 'string' };
+  writeFileSync(schemaFile, JSON.stringify(schema, null, 2) + '\n');
+  const before = repositoryOutputs();
+
+  build(dir);
+
+  assert.match(readFileSync(path.join(dir, 'src', 'generated', 'plugin-manifest-v1.d.ts'), 'utf8'), /homepage/);
+  assert.ok(existsSync(path.join(dir, 'plugins', 'hoard', 'main.cjs')), 'the output is under the root');
+  assert.deepEqual(repositoryOutputs(), before, 'src/generated and plugins/hoard are as they were');
 });
 
 test('packaging includes the output', () => {
@@ -384,7 +437,7 @@ async function checked(context: PackContext): Promise<Record<string, unknown>> {
 }
 
 afterEach(() => {
-  for (const dir of fakePackages.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of [...fakePackages.splice(0), ...sandboxes.splice(0)]) rmSync(dir, { recursive: true, force: true });
 });
 
 test('afterPack passes a clean package and logs what it checked', async () => {
