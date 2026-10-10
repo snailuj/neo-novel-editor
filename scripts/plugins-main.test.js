@@ -661,18 +661,27 @@ describe('a plugin\'s main half', { concurrency: 1 }, () => {
     });
   });
 
-  // the window's first requests (sendSync) wait on main.js's startup callback,
-  // which calls activateMains: a main entry's require and the synchronous
-  // start of its activate must not run inside it
-  test('activateMains runs no plugin code itself: each main half starts a turn later, and an invoke sent before waits for it', async () => {
-    const app = withMains({ later: "exports.activate = (host) => { exports.started = true; host.handle('echo', (p) => p); };" });
+  // The window's preload asks main.js three things with sendSync, plugins:list
+  // the last, and the window waits for the answers. A main entry's require
+  // and the start of its activate run plugin code of any length, so no main
+  // half starts before the window has its plugin list.
+  test('a main half does not start until the window has its plugin list, and an invoke sent before waits for it', async () => {
+    const app = withMains({ later: "let n = 0; exports.activate = (host) => { exports.starts = ++n; host.handle('echo', (p) => p); };" });
     const { handlers, logs } = wire({ appRoot: app, defer: null });
     plugins.activateMains();
     plugins.activateMains();
     const answer = invoke(handlers, 'later', 'echo', 7);
-    assert.equal(mainOf(app, 'later').started, undefined, 'activate has not run');
+    await turn();
+    assert.equal(mainOf(app, 'later').starts, undefined, 'activate has not run');
+    const event = {};
+    handlers.get('plugins:list')(event);
+    assert.deepEqual(event.returnValue.map((m) => m.id), ['later']);
+    assert.equal(mainOf(app, 'later').starts, undefined, 'nor while the list is being answered');
     assert.equal(await answer, 7);
-    assert.equal(mainOf(app, 'later').started, true);
+    // a second window asking starts nothing again
+    handlers.get('plugins:list')({});
+    await turn();
+    assert.equal(mainOf(app, 'later').starts, 1);
     assert.deepEqual(logs, []);
   });
 
@@ -854,11 +863,67 @@ describe('a plugin\'s main half', { concurrency: 1 }, () => {
   });
 });
 
+// main.js in a vm, as filesystem.test.js loads it, on the profile folder
+// and app folder given. ready() runs what main.js does once Electron is
+// ready, with the window, the menu, the spellchecker, the backup and the
+// updater stood in for; ask() is a window's sendSync to a listener main.js
+// registered with ipcMain.on. Loading main.js wires plugins-main.js anew,
+// so only the last one loaded works.
+function loadMain(profile, appDir) {
+  const handlers = new Map();
+  const listeners = new Map();
+  const dialogs = [];
+  let whenReady = null;
+  const electron = {
+    app: {
+      isPackaged: false,
+      commandLine: { appendSwitch() {} },
+      getPath: (name) => path.join(profile, name),
+      getLocale: () => 'en',
+      requestSingleInstanceLock: () => true,
+      whenReady: () => ({ then: (fn) => { whenReady = fn; } }),
+      on() {}
+    },
+    ipcMain: { on: (channel, fn) => listeners.set(channel, fn), handle: (channel, fn) => handlers.set(channel, fn) },
+    BrowserWindow: { getFocusedWindow: () => null, getAllWindows: () => [] },
+    Menu: { buildFromTemplate: (items) => items, setApplicationMenu() {} },
+    dialog: { showMessageBox: async (...args) => { dialogs.push(args); return {}; } },
+    utilityProcess: { fork: () => ({ on() {}, postMessage() {} }) },
+    screen: {}
+  };
+  const localRequire = createRequire(path.join(root, 'main.js'));
+  const libraryRoot = path.join(profile, 'documents', 'NEO Library');
+  const context = vm.createContext({
+    require: (name) => name === 'electron' ? electron : localRequire(name),
+    __dirname: appDir,
+    process: { platform: process.platform, on() {} },
+    console,
+    setInterval: () => ({}),
+    libraryRoot
+  });
+  vm.runInContext(fs.readFileSync(path.join(root, 'main.js'), 'utf8'), context, { filename: path.join(root, 'main.js') });
+  // nothing is logged into the real Documents folder before ready() moves the library
+  vm.runInContext('LIBRARY_DIR = libraryRoot; LIBRARY_FILE = require("path").join(libraryRoot, "library.json");', context);
+  return {
+    dialogs,
+    call: (channel, ...args) => handlers.get(channel)(null, ...args),
+    ask(channel) {
+      const event = {};
+      listeners.get(channel)(event);
+      return event.returnValue;
+    },
+    ready(order) {
+      for (const name of ['createWindow', 'announceLibraryFallback', 'initSpell', 'buildMenu', 'dailyBackup', 'checkForUpdates']) {
+        context[name] = () => { order.push(name); };
+      }
+      whenReady();
+    }
+  };
+}
+
 describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
-  // main.js in a vm, as filesystem.test.js loads it, on a temporary profile
-  // whose settings.json already holds other settings. ready() runs what
-  // main.js does once Electron is ready, with the window, the menu, the
-  // spellchecker, the backup and the updater stood in for.
+  // main.js in a vm (loadMain), on a temporary profile whose settings.json
+  // already holds other settings
   let appDir = null; // main.js's own folder: a temporary one with the fixture plugins
   let probeMain = null;
   let profile = null;
@@ -869,51 +934,6 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
   };
   const turn = () => new Promise((resolve) => setImmediate(resolve));
 
-  function loadMain() {
-    const handlers = new Map();
-    const dialogs = [];
-    let whenReady = null;
-    const electron = {
-      app: {
-        isPackaged: false,
-        commandLine: { appendSwitch() {} },
-        getPath: (name) => path.join(profile, name),
-        getLocale: () => 'en',
-        requestSingleInstanceLock: () => true,
-        whenReady: () => ({ then: (fn) => { whenReady = fn; } }),
-        on() {}
-      },
-      ipcMain: { on() {}, handle: (channel, fn) => handlers.set(channel, fn) },
-      BrowserWindow: { getFocusedWindow: () => null, getAllWindows: () => [] },
-      Menu: { buildFromTemplate: (items) => items, setApplicationMenu() {} },
-      dialog: { showMessageBox: async (...args) => { dialogs.push(args); return {}; } },
-      utilityProcess: { fork: () => ({ on() {}, postMessage() {} }) },
-      screen: {}
-    };
-    const localRequire = createRequire(path.join(root, 'main.js'));
-    const context = vm.createContext({
-      require: (name) => name === 'electron' ? electron : localRequire(name),
-      __dirname: appDir,
-      process: { platform: process.platform, on() {} },
-      console,
-      setInterval: () => ({}),
-      libraryRoot: library()
-    });
-    vm.runInContext(fs.readFileSync(path.join(root, 'main.js'), 'utf8'), context, { filename: path.join(root, 'main.js') });
-    // nothing is logged into the real Documents folder before ready() moves the library
-    vm.runInContext('LIBRARY_DIR = libraryRoot; LIBRARY_FILE = require("path").join(libraryRoot, "library.json");', context);
-    return {
-      dialogs,
-      call: (channel, ...args) => handlers.get(channel)(null, ...args),
-      ready(order) {
-        for (const name of ['createWindow', 'announceLibraryFallback', 'initSpell', 'buildMenu', 'dailyBackup', 'checkForUpdates']) {
-          context[name] = () => { order.push(name); };
-        }
-        whenReady();
-      }
-    };
-  }
-
   before(() => {
     appDir = fixtureApp(fs.mkdtempSync(path.join(os.tmpdir(), 'neo-plugins-app-')));
     probeMain = path.join(appDir, fixtures, 'probe', 'main.js');
@@ -922,7 +942,7 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
     fs.writeFileSync(path.join(profile, 'userData', 'settings.json'), JSON.stringify({ pageTheme: 'light', plugins: { other: { kept: true } } }));
     // read once, by the first test's ready()
     process.env.NEO_PLUGIN_DIRS = fixtures;
-    main = loadMain();
+    main = loadMain(profile, appDir);
   });
   after(() => {
     fs.rmSync(profile, { recursive: true, force: true });
@@ -930,10 +950,9 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
   });
 
   // The window's preload asks main.js three things synchronously (sendSync)
-  // and the window waits for the answers, which come once the startup
-  // callback has returned. A main entry's require and the start of its
-  // activate run plugin code of any length, so none of it runs in that callback.
-  test('the window is created and the rest of startup done before any main half activates, and plugin:invoke answers from main.js', async (t) => {
+  // and the window waits for the answers; plugins:list is the last. Plugin
+  // code of any length must run after them, not in the startup callback.
+  test('the startup callback returns before any plugin code runs, and the main halves start a turn after the window has its plugin list', async (t) => {
     const order = [];
     const probe = require(probeMain);
     const activate = probe.activate;
@@ -941,11 +960,17 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
     main.ready(order);
     assert.equal(order[0], 'createWindow');
     assert.ok(order.length > 1, 'the rest of the startup ran');
-    assert.ok(!order.includes('activate probe'), 'no plugin code ran inside the startup callback');
+    await turn();
+    await turn();
+    assert.ok(!order.includes('activate probe'), 'no plugin code runs before the window asks for its plugin list');
+    const listed = main.ask('plugins:list');
+    assert.ok(listed.some((m) => m.id === 'probe'), 'the list holds the probe');
+    assert.ok(!order.includes('activate probe'), 'none runs while the list is being answered');
+    await turn();
+    assert.equal(order.at(-1), 'activate probe');
     const neo = windowNeo((channel, ...args) => main.call(channel, ...args));
     assert.deepEqual(await neo.pluginInvoke('probe', 'echo', { a: 1 }), { a: 1 });
-    assert.equal(order.at(-1), 'activate probe');
-    assert.doesNotMatch(errorLog(), /\[(startup|plugins)\]/);
+    assert.doesNotMatch(errorLog(), /[(startup|plugins)]/);
   });
 
   // main.js wraps every ipcMain.handle: a rejection is logged under the
@@ -1053,6 +1078,39 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
     } finally {
       off();
     }
+  });
+});
+
+describe('main halves when no window asks for the plugin list', { concurrency: 1 }, () => {
+  const turn = () => new Promise((resolve) => setImmediate(resolve));
+
+  // a window whose preload failed to load never asks, and nothing may wait
+  // on it for ever
+  test('they start 5 s after startup all the same, and an invoke sent before waits for that', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    process.env.NEO_PLUGIN_DIRS = fixtures;
+    const appDir = fixtureApp();
+    const profile = tempFolder();
+    fs.mkdirSync(path.join(profile, 'userData'));
+    const probe = require(path.join(appDir, fixtures, 'probe', 'main.js'));
+    const order = [];
+    const activate = probe.activate;
+    t.mock.method(probe, 'activate', (host) => { order.push('activate probe'); return activate(host); });
+    const main = loadMain(profile, appDir);
+    main.ready(order);
+    await turn();
+    t.mock.timers.tick(4999);
+    await turn();
+    assert.ok(!order.includes('activate probe'), 'not before the time is up');
+    const neo = windowNeo((channel, ...args) => main.call(channel, ...args));
+    const answer = neo.pluginInvoke('probe', 'echo', 3);
+    t.mock.timers.tick(1);
+    assert.equal(await answer, 3);
+    assert.equal(order.at(-1), 'activate probe');
+    // the window that asks late starts nothing twice
+    main.ask('plugins:list');
+    await turn();
+    assert.equal(order.filter((name) => name === 'activate probe').length, 1);
   });
 });
 

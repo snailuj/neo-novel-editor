@@ -3024,8 +3024,8 @@ app.whenReady().then(() => {
     try { checkLibraryWritable(); } catch (err) { logError('library check', err); }
     try { ensureLibrary(); } catch (err) { logError('library', err); }
     createWindow();
-    // after the window; the main halves start a turn later, so no plugin's code
-    // runs before the window's first requests are answered
+    // after the window; the main halves start a turn after it has its plugin
+    // list (or 5 s on), so no plugin's code runs before its first requests are answered
     try { plugins.activateMains(); } catch (err) { logError('plugins', err); }
     try { announceLibraryFallback(); } catch (err) { logError('library notice', err); }
     try { initSpell(); } catch (err) { logError('spell', err); }

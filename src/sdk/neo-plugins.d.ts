@@ -209,8 +209,8 @@ interface NeoAfterWrite {
 }
 
 /**
- * What a main entry's activate(host) receives. NEO calls activate a turn after it creates
- * the window, on its main thread: what runs before activate's first await delays NEO's
+ * What a main entry's activate(host) receives. NEO calls activate once the window has its
+ * plugin list, on its main thread: what runs before activate's first await delays NEO's
  * other work, so heavy work belongs after it. An activate that returns a promise has
  * 10 s to settle. Past that, NEO logs once that the plugin did not finish activating and
  * refuses its invokes from then on, with an Error that says so, even if the promise

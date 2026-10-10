@@ -24,6 +24,8 @@ const MAX_COMMANDS = 16;
 const MAX_TITLE = 64;
 // how long a main half's activate may take to settle (start)
 const ACTIVATE_MS = 10000;
+// how long the main halves wait for a window to ask for its plugin list
+const ASK_MS = 5000;
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const onlyKeys = (o, keys) => Object.keys(o).every((k) => keys.includes(k));
@@ -44,7 +46,7 @@ function validManifest(m) {
 
 // { app, ipcMain, logError, appRoot, readSettings, writeSettings,
 // libraryDir }, from wire(), and, where a test needs another, activateMs
-// (ACTIVATE_MS) and defer (see activateMains). readSettings answers {} when
+// (ACTIVATE_MS) and defer (see holdUntilAsked). readSettings answers {} when
 // there is no settings.json yet and throws when it cannot read or parse the
 // one there.
 let host = null;
@@ -56,9 +58,13 @@ let found = null; // discover()'s answer, kept for the life of the process
 let mains = new Map();
 
 function wire(deps) {
-  host = { ...deps, activateMs: deps.activateMs ?? ACTIVATE_MS, defer: deps.defer ?? setImmediate };
+  host = { ...deps, activateMs: deps.activateMs ?? ACTIVATE_MS, defer: deps.defer ?? holdUntilAsked };
   found = null;
   mains = new Map();
+  waiting = [];
+  released = false;
+  clearTimeout(askTimer);
+  askTimer = null;
   failures = new WeakMap();
   // a plugin's window half calls its own main half (neo.invoke in plugins.js)
   host.ipcMain.handle('plugin:invoke', (_e, id, channel, payload) => answer(id, channel, payload));
@@ -72,7 +78,41 @@ function wire(deps) {
       host.logError('plugins', err);
       e.returnValue = [];
     }
+    // this is the last of the window's sendSync calls at load (preload.js),
+    // and its answer is sent when this listener returns: the main halves
+    // start on the next turn
+    setImmediate(release);
   });
+}
+
+// The main halves start once the window has its plugin list, not before: a
+// main entry's require, or the part of an activate before its first await,
+// is plugin code of any length, and the window's preload waits on its
+// sendSync answers, so all of it runs after them. A window that never asks
+// (its preload failed to load) must not leave the main halves, and the
+// invokes waiting on them, stuck: ASK_MS after the first is held, they start
+// all the same.
+let waiting = []; // the starts held back, until release()
+let released = false;
+let askTimer = null;
+function holdUntilAsked(go) {
+  if (released) {
+    go();
+    return;
+  }
+  waiting.push(go);
+  if (!askTimer) {
+    askTimer = setTimeout(release, ASK_MS);
+    askTimer.unref();
+  }
+}
+
+// once, however many windows ask
+function release() {
+  if (released) return;
+  released = true;
+  clearTimeout(askTimer);
+  for (const go of waiting.splice(0)) go();
 }
 
 function skip(folder, why) {
@@ -374,13 +414,10 @@ function start(entry, mainPath) {
 }
 
 // Registers the main half of each plugin that has one, once, and starts it
-// a turn later (host.defer, setImmediate unless a test says otherwise).
-// main.js calls it from its startup callback, and the window's first
-// requests (the preload's sendSync) are answered only once that returns, so
-// a main entry's require, or the part of an activate before its first
-// await, must not run inside it. None is awaited: an activate that returns
-// a promise runs on while NEO starts. An invoke that comes before a main
-// half has started waits for it, as for one still activating.
+// when the window has its plugin list (host.defer; see holdUntilAsked). None
+// is awaited: an activate that returns a promise runs on while NEO starts.
+// An invoke that comes before a main half has started waits for it, as for
+// one still activating.
 function activateMains() {
   for (const m of discover()) {
     if (!m.mainPath || mains.has(m.id)) continue;
