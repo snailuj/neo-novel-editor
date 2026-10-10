@@ -180,6 +180,11 @@ interface NeoPluginBase {
  * activate is called once the plugin registers. A throw, or a rejected promise, is
  * logged and takes away everything the plugin added. When a book is already open, the
  * plugin then hears book-open for it; an async activate hears it after it settles.
+ * A rejection the plugin leaves unhandled is logged under its name, at most once a
+ * minute, and kept from the writer only when the host made it (an invoke or a replace
+ * the host refused) or it is an Error thrown in the plugin's script. Anything else (a
+ * thrown string, a plain object, a direct window.neo call) is logged by NEO every time
+ * and shows the writer a notice.
  */
 interface NeoPluginV1 extends NeoPluginBase {
   apiVersion: 1;
