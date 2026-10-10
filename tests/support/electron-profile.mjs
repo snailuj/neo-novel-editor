@@ -35,6 +35,19 @@ export async function launchProfile(existingProfile, options = {}) {
     const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('NEO_')));
     Object.assign(env, { NEO_TEST_PROFILE: profile, NEO_TEST_VISIBLE: options.visible === true ? '1' : '0' });
     delete env.ELECTRON_RUN_AS_NODE;
+    // Where a child process, Chromium or a library looks for the user's folders: the profile's own,
+    // whatever the main script does after it starts.
+    const folders = {
+      HOME: profile,
+      USERPROFILE: profile,
+      APPDATA: path.join(profile, 'appData'),
+      LOCALAPPDATA: path.join(profile, 'localAppData'),
+      TEMP: path.join(profile, 'tmp'),
+      TMP: path.join(profile, 'tmp'),
+      TMPDIR: path.join(profile, 'tmp'),
+    };
+    for (const dir of new Set(Object.values(folders))) await mkdir(dir, { recursive: true });
+    Object.assign(env, folders);
     app = await electron.launch({
       executablePath: electronPath,
       args: ['tests/support/electron-main.cjs'],

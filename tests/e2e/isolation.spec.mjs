@@ -11,6 +11,13 @@ const PATH_NAMES = [
   'music', 'pictures', 'videos', 'logs', 'crashDumps',
 ];
 
+// The variables that name a user's folders. Child processes and Chromium read these, not
+// Electron's paths; the harness points them into the profile.
+const VARIABLES = ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP', 'TMPDIR'];
+
+// Every way for the app to start a program.
+const PROGRAMS = ['exec', 'execFile', 'spawn', 'fork', 'execSync', 'execFileSync', 'spawnSync'];
+
 test('a test run is cut off from the developer\'s system', async () => {
   // A developer's shell can name plugin folders; their plugins must not load in a test.
   const named = process.env.NEO_PLUGIN_DIRS;
@@ -23,29 +30,40 @@ test('a test run is cut off from the developer\'s system', async () => {
     else process.env.NEO_PLUGIN_DIRS = named;
   }
   try {
-    const seen = await fixture.app.evaluate(({ app, shell, dialog }, names) => {
+    const seen = await fixture.app.evaluate(({ app, shell, dialog, systemPreferences }, { names, variables, programs }) => {
       // The harness marks each stub; a call Electron implements has no mark.
       const unstubbed = (owner) => Object.entries(owner)
         .filter(([, fn]) => typeof fn === 'function' && fn.neoTestStub !== true)
         .map(([name]) => name);
+      // evaluate has no require; this is the same module object main.js gets.
+      const childProcess = process.getBuiltinModule('node:child_process');
       return {
         pluginDirs: process.env.NEO_PLUGIN_DIRS ?? null,
         neoVariables: Object.keys(process.env).filter((key) => key.toUpperCase().startsWith('NEO_')).sort(),
+        variables: Object.fromEntries(variables.map((name) => [name, process.env[name] ?? null])),
         paths: Object.fromEntries(names.map((name) => [name, app.getPath(name)])),
         unstubbedShell: unstubbed(shell),
         unstubbedDialog: unstubbed(dialog),
+        // macOS writes the app's defaults at every launch.
+        setUserDefaultStubbed: systemPreferences.setUserDefault?.neoTestStub === true,
+        programs: Object.fromEntries(programs.map((name) => [name, childProcess[name]?.neoTestStub === true])),
       };
-    }, PATH_NAMES);
+    }, { names: PATH_NAMES, variables: VARIABLES, programs: PROGRAMS });
 
     expect.soft(seen.pluginDirs).toBeNull();
     expect.soft(seen.neoVariables).toEqual(['NEO_TEST_PROFILE', 'NEO_TEST_VISIBLE']);
     expect.soft(seen.unstubbedShell).toEqual([]);
     expect.soft(seen.unstubbedDialog).toEqual([]);
-    const outside = Object.entries(seen.paths).filter(([, target]) => {
+    expect.soft(seen.setUserDefaultStubbed).toBe(true);
+    // email:draft runs osascript on macOS; nothing in a test starts a program.
+    expect.soft(seen.programs).toEqual(Object.fromEntries(PROGRAMS.map((name) => [name, true])));
+    const inProfile = (target) => {
+      if (typeof target !== 'string') return false;
       const relative = path.relative(fixture.profile, target);
-      return relative.startsWith('..') || path.isAbsolute(relative);
-    });
-    expect.soft(outside).toEqual([]);
+      return !relative.startsWith('..') && !path.isAbsolute(relative);
+    };
+    expect.soft(Object.entries(seen.paths).filter(([, target]) => !inProfile(target))).toEqual([]);
+    expect.soft(Object.entries(seen.variables).filter(([, target]) => !inProfile(target))).toEqual([]);
   } finally { await fixture.close(); }
 });
 
