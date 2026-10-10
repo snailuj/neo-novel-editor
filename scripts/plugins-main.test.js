@@ -1607,17 +1607,38 @@ describe('the window half', () => {
     // the Error from invoking after a failed activate is the failed plugin's
     assert.equal(taken(dropped(await dead.invoke('index').catch((err) => err))), true);
     assert.match(logged()[2], /^plugin broken: Error: plugin broken is not active, so it cannot invoke index\n\s+at /);
-    // a plugin's own callback that throws: its script is in the stack, by any frame
-    const stack = ['Error: a then callback throws', '    at plugins/works/renderer.js:12:30', '    at async Promise.all (index 0)'].join('\n');
+    // A plugin's own callback that throws: the first frame that names a
+    // script is the plugin's (one that names none, a builtin's, is passed
+    // over). V8's frame for an anonymous async function has no name to
+    // parse.
+    const thrown = (message, ...frames) => Object.assign(new Error(message), { stack: [`Error: ${message}`, ...frames.map((frame) => `    at ${frame}`)].join('\n') });
     host.clock.now += 60000;
-    assert.equal(taken(dropped(Object.assign(new Error('a then callback throws'), { stack }))), true);
-    assert.match(logged()[3], /^plugin works: Error: a then callback throws\n\s+at plugins\/works\/renderer\.js:12:30/);
-    // anything else is NEO's: left to its net, and not logged here
-    for (const reason of [new Error('NEO\'s own'), Object.assign(new Error('app'), { stack: 'Error: app\n    at app.js:1:1' }), 'a string', undefined, null]) {
+    assert.equal(taken(dropped(thrown('a then callback throws', 'new Promise (<anonymous>)', 'plugins/works/renderer.js:12:30', 'async Promise.all (index 0)'))), true);
+    assert.match(logged()[3], /^plugin works: Error: a then callback throws\n\s+at new Promise/);
+    assert.equal(taken(dropped(thrown('after an await', 'async plugins/broken/renderer.js:7:5'))), true);
+    assert.match(logged()[4], /^plugin broken: Error: after an await\n/);
+    // the host answering a plugin's call (plugins.js frames) is the plugin's call, even with NEO's frames between
+    host.clock.now += 60000;
+    assert.equal(taken(dropped(thrown('status takes a string', 'setStatus (plugins.js:697:11)', 'Object.status (plugins.js:760:20)', 'plugins/works/renderer.js:3:3'))), true);
+    assert.match(logged()[5], /^plugin works: Error: status takes a string\n/);
+    assert.equal(taken(dropped(thrown('through NEO', 'showTab (plugins.js:640:5)', 'switchTab (app.js:7889:5)', 'go (plugins.js:359:9)', 'async plugins/broken/renderer.js:7:5'))), true);
+    assert.match(logged()[6], /^plugin broken: Error: through NEO\n/);
+    // Anything else is NEO's, left to its net and not logged here: not an
+    // Error with a stack, or NEO's script is the first to name itself,
+    // whatever plugin awaits it below (a dropped reopen() that finds a NEO bug)
+    const neos = [
+      new Error('NEO\'s own'),
+      Object.assign(new Error('app'), { stack: 'Error: app\n    at app.js:1:1' }),
+      thrown('a NEO bug', 'openBook (app.js:2513:9)', 'async reopen (plugins/works/renderer.js:7:5)'),
+      thrown('a NEO bug under a native frame', 'new Promise (<anonymous>)', 'openBook (app.js:2513:9)', 'async plugins/works/renderer.js:7:5'),
+      thrown('NEO calls the host', 'emit (plugins.js:200:5)', 'run (app.js:11236:39)'),
+      'a string', undefined, null
+    ];
+    for (const reason of neos) {
       const event = dropped(reason);
-      assert.deepEqual([event.prevented, event.stopped], [false, false], String(reason));
+      assert.deepEqual([event.prevented, event.stopped], [false, false], String(reason && reason.stack || reason));
     }
-    assert.equal(logged().length, 4);
+    assert.equal(logged().length, 7);
   });
 
   test('one function that listens to two events is logged for each, once a minute, and each line names its event', () => {

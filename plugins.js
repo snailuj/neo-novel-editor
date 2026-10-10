@@ -901,15 +901,25 @@
     return hostUrl && e.filename === hostUrl && e.error ? pluginOfStack(e.error.stack) : undefined;
   }
 
-  // the id of the plugin whose script holds the first frame of a stack that
-  // lies in a plugin's script, or undefined
+  // The id of the plugin a stack belongs to, or undefined. The first frame
+  // that names a script decides: a plugin's script is that plugin's, and this
+  // file is the host answering a call, which is the plugin's whose script is
+  // the first below it. Any other script (NEO's own) makes the stack NEO's,
+  // whatever plugin awaits it further down.
   function pluginOfStack(stack) {
     if (typeof stack !== 'string') return undefined;
+    // a frame is "at fn (url:line:col)", "at url:line:col" or, for an
+    // anonymous async function, "at async url:line:col"; one that names no
+    // script ("at new Promise (<anonymous>)") has no url to give
+    const urls = [];
     for (const line of stack.split('\n')) {
-      const frame = /^\s*at (?:.*? \()?(.*?):\d+:\d+\)?$/.exec(line);
-      if (frame && scriptIds.has(frame[1])) return scriptIds.get(frame[1]);
+      const frame = /^\s*at (?:async )?(?:.*? \()?(.*?):\d+:\d+\)?$/.exec(line);
+      if (frame && !frame[1].startsWith('<')) urls.push(frame[1]);
     }
-    return undefined;
+    if (scriptIds.has(urls[0])) return scriptIds.get(urls[0]);
+    if (!hostUrl || urls[0] !== hostUrl) return undefined;
+    const below = urls.find((url) => scriptIds.has(url));
+    return below === undefined ? undefined : scriptIds.get(below);
   }
 
   // An error thrown in a plugin's script outside the host's calls, such as
@@ -943,9 +953,10 @@
   }
 
   // A rejection nobody handles is a plugin's when the host made it for the
-  // plugin, or a plugin's script is in its stack (a callback of its own that
-  // throws). It is logged under the plugin's name, with the limit of its
-  // script's errors, and goes no further. Any other is NEO's, left to its net.
+  // plugin, or its stack is the plugin's (pluginOfStack: a callback of its
+  // own that throws). It is logged under the plugin's name, with the limit of
+  // its script's errors, and goes no further. Any other is NEO's, left to its
+  // net.
   function onRejection(e) {
     const reason = e.reason;
     const object = !!reason && (typeof reason === 'object' || typeof reason === 'function');
