@@ -12,12 +12,13 @@
 
 'use strict';
 
-const childProcess = require('node:child_process');
-const fs = require('node:fs');
-const Module = require('node:module');
-const os = require('node:os');
-const path = require('node:path');
-const { fileURLToPath } = require('node:url');
+const childProcess = require('child_process');
+const fs = require('fs');
+const Module = require('module');
+const os = require('os');
+const path = require('path');
+const { fileURLToPath } = require('url');
+const workerThreads = require('worker_threads');
 
 // The variables that name a user's folders. Child processes, Chromium and libraries read these
 // and not Electron's paths.
@@ -49,12 +50,24 @@ function stubbed(fn) {
 // (a truthy one).
 function refuse(owner, label, { names = Object.keys(owner), answersAtOnce = () => false } = {}) {
   for (const name of names) {
-    const fail = () => { throw new Error(label + '.' + name + ' is disabled in tests'); };
+    // a function and not an arrow, so that `new` on a refused class reaches the throw
+    const fail = function () { throw new Error(label + '.' + name + ' is disabled in tests'); };
     owner[name] = stubbed(answersAtOnce(name) ? fail : async () => fail());
   }
 }
 
-// Makes every fs function that writes, links or moves refuse a path outside `profile`.
+// Makes every function of fs that writes, links or moves refuse a path outside `profile`. It
+// guards JavaScript's fs and is not a sandbox. What it cannot stop:
+//   - process.binding('fs') and internalBinding, which are the functions under fs;
+//   - native code: addons, process.dlopen and FFI such as the koffi that main.js loads on macOS;
+//   - Chromium's own writes (cache, cookies, crash dumps, downloads) and Electron's native
+//     writers, such as webContents.savePage;
+//   - a function of fs that code took before isolate() ran, which is still the original;
+//   - writers that call no fs function: node:sqlite DatabaseSync(path), v8.writeHeapSnapshot(path)
+//     and process.report.writeReport(path);
+//   - the spell worker's utility process, which has an fs of its own, unguarded.
+// Other routes to fs are closed in isolate(): original-fs, import(), getBuiltinModule and
+// worker threads.
 function guardWrites(profile, onRefuse = () => {}) {
   const root = path.resolve(profile);
   // The profile may sit below a link (macOS keeps /var/folders under /private/var), so a path
@@ -84,6 +97,8 @@ function guardWrites(profile, onRefuse = () => {}) {
       if (stat.isSymbolicLink()) deny(method);
     }
   };
+  // A guarded function carries a mark, so that a test can tell it from one the guard missed.
+  const guarded = (fn) => Object.assign(fn, { neoTestGuard: true });
   const wrap = (owner, name, indices, asynchronous = false) => {
     const original = owner[name];
     if (typeof original !== 'function') return;
@@ -91,9 +106,13 @@ function guardWrites(profile, onRefuse = () => {}) {
       for (const index of indices) check(args[index], name);
       return original.apply(owner, args);
     };
-    owner[name] = asynchronous ? async (...args) => invoke(...args) : invoke;
+    owner[name] = guarded(asynchronous ? async (...args) => invoke(...args) : invoke);
   };
-  for (const name of ['writeFile', 'appendFile', 'mkdir', 'unlink', 'rm', 'rmdir', 'truncate', 'chmod', 'chown', 'utimes']) {
+  // mkdtemp and mkdtempDisposable take the path their folder's name starts with.
+  for (const name of [
+    'writeFile', 'appendFile', 'mkdir', 'mkdtemp', 'mkdtempDisposable', 'unlink', 'rm', 'rmdir', 'truncate',
+    'chmod', 'lchmod', 'chown', 'lchown', 'utimes', 'lutimes'
+  ]) {
     wrap(fs, name + 'Sync', [0]);
     wrap(fs, name, [0]);
     wrap(fs.promises, name, [0], true);
@@ -113,10 +132,10 @@ function guardWrites(profile, onRefuse = () => {}) {
       if (writable(args[1])) check(args[0], name);
       return original.apply(owner, args);
     };
-    owner[name] = asynchronous ? async (...args) => invoke(...args) : invoke;
+    owner[name] = guarded(asynchronous ? async (...args) => invoke(...args) : invoke);
   }
-  for (const name of ['symlinkSync', 'symlink']) fs[name] = () => deny(name);
-  fs.promises.symlink = async () => deny('symlink');
+  for (const name of ['symlinkSync', 'symlink']) fs[name] = guarded(() => deny(name));
+  fs.promises.symlink = guarded(async () => deny('symlink'));
 }
 
 // `profile` is the run's temp folder: everything the run does stays inside it. `userData` and
@@ -125,7 +144,7 @@ function isolate(profile, {
   userData = path.join(profile, 'userData'),
   documents = path.join(profile, 'documents')
 } = {}) {
-  const { app, dialog, shell, systemPreferences, utilityProcess } = require('electron');
+  const { app, dialog, session, shell, systemPreferences, utilityProcess } = require('electron');
   const env = variables(profile);
 
   Object.assign(process.env, env);
@@ -165,6 +184,8 @@ function isolate(profile, {
     names: ['exec', 'execFile', 'spawn', 'fork', 'execSync', 'execFileSync', 'spawnSync'],
     answersAtOnce: () => true
   });
+  // A worker thread has an fs of its own, which no patch to this one reaches.
+  refuse(workerThreads, 'worker_threads', { names: ['Worker'], answersAtOnce: () => true });
 
   // main.js forks one utility process, the spell worker. No other process starts, by this
   // route either; that one is the only module the fork is let through for.
@@ -181,12 +202,41 @@ function isolate(profile, {
     return fork.call(utilityProcess, modulePath, ...args);
   });
 
+  // The window reaches no server either: an image in a chapter, a plugin's fetch in the page.
+  // Pages of the app itself load from files, which these patterns do not match.
+  app.whenReady().then(() => session.defaultSession.webRequest.onBeforeRequest(
+    { urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] },
+    (_details, callback) => callback({ cancel: true })
+  ));
+
   globalThis.fetch = stubbed(async () => { throw new Error('Network access is disabled in tests'); });
-  const load = Module._load;
-  Module._load = function (request, ...args) {
-    if (request === 'electron-updater') throw new Error('Updates are disabled in tests');
-    return load.call(this, request, ...args);
-  };
+  // Electron's original-fs is fs without the guard above, which a plugin's main half could load
+  // by require, by import() or by getBuiltinModule; electron-updater would look for an update.
+  const isOriginalFs = (id) => /^(node:)?original-fs(\/|$)/.test(String(id));
+  if (typeof Module.registerHooks !== 'function') {
+    throw new Error('isolate() needs module.registerHooks, from Node 22.15, to refuse original-fs');
+  }
+  // A resolve hook sees every require and every import, in any module, which no wrapper of
+  // require or import() does.
+  Module.registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (isOriginalFs(specifier)) throw new Error('original-fs is disabled in tests');
+      if (specifier === 'electron-updater') throw new Error('Updates are disabled in tests');
+      return nextResolve(specifier, context);
+    }
+  });
+  // getBuiltinModule loads a builtin without resolving it
+  const getBuiltinModule = process.getBuiltinModule;
+  if (typeof getBuiltinModule === 'function') {
+    process.getBuiltinModule = stubbed((id) => {
+      if (isOriginalFs(id)) throw new Error('original-fs is disabled in tests');
+      return getBuiltinModule.call(process, id);
+    });
+  }
+
+  // import gives a builtin's named exports from a copy made when it was first imported, so
+  // `import { writeFileSync } from 'fs'` would still be the function patched out above.
+  Module.syncBuiltinESMExports();
 }
 
 module.exports = { isolate, stubbed, variables };
