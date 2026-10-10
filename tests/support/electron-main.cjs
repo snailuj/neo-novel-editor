@@ -24,20 +24,32 @@ for (const name of ['appData', 'desktop', 'downloads', 'music', 'pictures', 'vid
 }
 app.commandLine.appendSwitch('disable-background-networking');
 app.commandLine.appendSwitch('disable-component-update');
-dialog.showOpenDialog = async () => ({ canceled: true, filePaths: [] });
-dialog.showSaveDialog = async (_window, options) => ({ canceled: false, filePath: path.join(profile, 'exports', path.basename(options.defaultPath)) });
-dialog.showMessageBox = async () => ({ response: 0 });
-dialog.showErrorBox = (_title, message) => { throw new Error(message); };
+// A stub carries a mark, so that tests/e2e/isolation.spec.mjs can tell it from the real call.
+const stubbed = (fn) => Object.assign(fn, { neoTestStub: true });
+// Replaces every function of `owner` with one that throws. A call that answers at once must
+// throw at once: a rejected promise in its place would read as an answer (a truthy one).
+const refuse = (owner, label, answersAtOnce = () => false) => {
+  for (const name of Object.keys(owner)) {
+    const fail = () => { throw new Error(label + '.' + name + ' is disabled in tests'); };
+    owner[name] = stubbed(answersAtOnce(name) ? fail : async () => fail());
+  }
+};
+// Every dialog is refused first, the synchronous ones included: at launch main.js asks
+// showMessageBoxSync and showOpenDialogSync when the chosen library folder is missing or
+// unwritable, and catches the throw. The four answered since the harness began follow.
+refuse(dialog, 'dialog', (name) => name.endsWith('Sync'));
+dialog.showOpenDialog = stubbed(async () => ({ canceled: true, filePaths: [] }));
+dialog.showSaveDialog = stubbed(async (_window, options) => ({ canceled: false, filePath: path.join(profile, 'exports', path.basename(options.defaultPath)) }));
+dialog.showMessageBox = stubbed(async () => ({ response: 0 }));
+dialog.showErrorBox = stubbed((_title, message) => { throw new Error(message); });
 // The window never opens a browser, a file manager or a file, and writes no shortcut,
 // during a test: every shell call is refused, whatever Electron adds, except trashItem.
 // That moves the item into the profile's trash, so a test of book:delete can see the
 // folder go there; the write guard refuses an item from outside the profile.
-for (const name of Object.keys(shell)) {
-  shell[name] = async () => { throw new Error('shell.' + name + ' is disabled in tests'); };
-}
-shell.trashItem = async (target) => {
+refuse(shell, 'shell');
+shell.trashItem = stubbed(async (target) => {
   fs.renameSync(target, path.join(profile, 'trash', Date.now() + '-' + path.basename(target)));
-};
+});
 globalThis.fetch = async () => { throw new Error('Network access is disabled in tests'); };
 const originalLoad = Module._load;
 Module._load = function (request, ...args) {

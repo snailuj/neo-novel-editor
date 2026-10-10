@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { launchProfile } from '../support/electron-profile.mjs';
-import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -23,25 +23,50 @@ test('a test run is cut off from the developer\'s system', async () => {
     else process.env.NEO_PLUGIN_DIRS = named;
   }
   try {
-    const seen = await fixture.app.evaluate(({ app, shell }, names) => ({
-      pluginDirs: process.env.NEO_PLUGIN_DIRS ?? null,
-      neoVariables: Object.keys(process.env).filter((key) => key.toUpperCase().startsWith('NEO_')).sort(),
-      paths: Object.fromEntries(names.map((name) => [name, app.getPath(name)])),
-      // A function Electron implements is native code; a stub is not.
-      realShellCalls: Object.entries(shell)
-        .filter(([, fn]) => typeof fn === 'function' && /\[native code\]/.test(Function.prototype.toString.call(fn)))
-        .map(([name]) => name),
-    }), PATH_NAMES);
+    const seen = await fixture.app.evaluate(({ app, shell, dialog }, names) => {
+      // The harness marks each stub; a call Electron implements has no mark.
+      const unstubbed = (owner) => Object.entries(owner)
+        .filter(([, fn]) => typeof fn === 'function' && fn.neoTestStub !== true)
+        .map(([name]) => name);
+      return {
+        pluginDirs: process.env.NEO_PLUGIN_DIRS ?? null,
+        neoVariables: Object.keys(process.env).filter((key) => key.toUpperCase().startsWith('NEO_')).sort(),
+        paths: Object.fromEntries(names.map((name) => [name, app.getPath(name)])),
+        unstubbedShell: unstubbed(shell),
+        unstubbedDialog: unstubbed(dialog),
+      };
+    }, PATH_NAMES);
 
     expect.soft(seen.pluginDirs).toBeNull();
     expect.soft(seen.neoVariables).toEqual(['NEO_TEST_PROFILE', 'NEO_TEST_VISIBLE']);
-    expect.soft(seen.realShellCalls).toEqual([]);
+    expect.soft(seen.unstubbedShell).toEqual([]);
+    expect.soft(seen.unstubbedDialog).toEqual([]);
     const outside = Object.entries(seen.paths).filter(([, target]) => {
       const relative = path.relative(fixture.profile, target);
       return relative.startsWith('..') || path.isAbsolute(relative);
     });
     expect.soft(outside).toEqual([]);
   } finally { await fixture.close(); }
+});
+
+// A chosen library folder that is gone (an unplugged drive) makes main.js ask a synchronous
+// dialog at launch. In a test that must be refused, not shown, and the app must carry on.
+test('a missing library folder opens no dialog', async () => {
+  const profile = await mkdtemp(path.join(tmpdir(), 'neo-test-'));
+  let fixture;
+  try {
+    await mkdir(path.join(profile, 'userData'), { recursive: true });
+    const unplugged = path.join(profile, 'unplugged', 'NEO Library');
+    await writeFile(path.join(profile, 'userData', 'settings.json'), JSON.stringify({ libraryDir: unplugged }));
+    fixture = await launchProfile(profile);
+    const library = path.join(profile, 'documents', 'NEO Library');
+    expect(await fixture.page.evaluate(() => neo.libraryPath())).toBe(library);
+    expect(await readFile(path.join(library, 'neo-errors.log'), 'utf8'))
+      .toContain('dialog.showMessageBoxSync is disabled in tests');
+  } finally {
+    if (fixture) await fixture.close();
+    else await rm(profile, { recursive: true, force: true });
+  }
 });
 
 // book:delete sends a book folder to the system trash. In a test that is the profile's own.
