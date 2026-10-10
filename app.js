@@ -11302,6 +11302,8 @@ function scheduleChapterSave(chId) {
     // above while this save waited: its words are already where they belong,
     // and writing now would only leave an empty stray file in chapters/
     if (book.id !== bookId || !book.chapterOrder.includes(chId)) return;
+    // a flush (a blur, the 20 s tick) wrote these words while this save waited
+    if (sameOnDisk(chapterHTML[chId], savedHTML[chId])) return;
     persistChapter(chId);
   }, 800);
 }

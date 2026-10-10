@@ -148,6 +148,7 @@ test('whitespace nodes side by side between two blocks all go', () => {
 // and undone by structuralUndo; the page's drawing is left out.
 const SLICES = [
   ['const diskKnown = {};', '// Another device\'s version of a chapter'],
+  ['function scheduleChapterSave(', '// book.json minus the parts'],
   ['function metaSig(', 'function scheduleMetaSave('],
   ['function flushAllSaves(', '/*  SNAPSHOTS'],
   ['function mergeSidecar(', 'function writeSidecar('],
@@ -323,6 +324,57 @@ test('a capture of the page with nothing typed is not written again before the b
   await page.duplicateBook({ id: 'b', title: 'Book' });
   await settled(page);
   assert.deepEqual(writes, []);
+});
+
+// The book's timers held by the test: run() runs those due, as 800 ms
+// passing would, and says how many ran
+function heldTimers(page) {
+  const due = new Map();
+  let next = 0;
+  page.setTimeout = (fn) => { due.set(++next, fn); return next; };
+  page.clearTimeout = (id) => { due.delete(id); };
+  return { run() { const fns = [...due.values()]; due.clear(); fns.forEach((fn) => fn()); return fns.length; } };
+}
+// what the plugins hear of chapters, as 'event chId'
+function pluginsHear(page) {
+  const heard = [];
+  // app.js asks window.NeoPlugins whether there is a host, then calls NeoPlugins
+  page.NeoPlugins = page.window.NeoPlugins = { emit: (event, { chId }) => heard.push(event + ' ' + chId) };
+  return heard;
+}
+
+// A flush (a blur, the 20 s tick) writes a chapter whose 800 ms save is still
+// waiting. That save, come due, has nothing left to write: writing again would
+// rewrite the file unchanged and tell the plugins of one change saved twice.
+test('a save that comes due after a flush wrote its words writes nothing', async () => {
+  const { page, writes } = bookInMemory({ x: F });
+  const timers = heldTimers(page);
+  const heard = pluginsHear(page);
+  page.chapterHTML.x = F + '<p>Typed.</p>';
+  page.scheduleChapterSave('x');
+  page.flushAllSaves();
+  await settled(page);
+  assert.deepEqual(writes, [{ chId: 'x', html: F + '<p>Typed.</p>\n' }], 'the flush wrote the words');
+  assert.equal(timers.run(), 1, 'the save was still waiting');
+  await settled(page);
+  assert.deepEqual({ writes, heard }, {
+    writes: [{ chId: 'x', html: F + '<p>Typed.</p>\n' }],
+    heard: ['chapter-change x', 'chapter-saved x']
+  });
+});
+
+test('a save that comes due with words typed since the flush writes them', async () => {
+  const { page, writes } = bookInMemory({ x: F });
+  const timers = heldTimers(page);
+  page.chapterHTML.x = F + '<p>Typed.</p>';
+  page.scheduleChapterSave('x');
+  page.flushAllSaves();
+  await settled(page);
+  page.chapterHTML.x += '<p>More.</p>';
+  page.scheduleChapterSave('x');
+  assert.equal(timers.run(), 1);
+  await settled(page);
+  assert.deepEqual(writes.map((w) => w.html), [F + '<p>Typed.</p>\n', F + '<p>Typed.</p>\n<p>More.</p>\n']);
 });
 
 // structural undo hands back chapters whose files the action deleted, and
