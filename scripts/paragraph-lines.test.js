@@ -137,6 +137,32 @@ test('the page\'s copy takes the saved form, so the flush finds nothing left to 
   assert.equal(page.chapterHTML.twin, page.savedHTML.twin);
 });
 
+// A file written compact (a book from before the switch, an import) is
+// rewritten by structural undo and Restore Whole Book with the text they
+// hold, which is lined when it came from a snapshot.
+const C = '<p>Beta one.</p><p>Beta two.</p>';
+
+test('text that is the saved text in all but line breaks goes to disk as the saved bytes', async () => {
+  const { page, writes } = bookInMemory({ x: C });
+  await page.persistChapter('x', paragraphLines(C));
+  await page.persistChapter('x', C);
+  assert.deepEqual(writes, [{ chId: 'x', html: C }, { chId: 'x', html: C }]);
+  assert.equal(page.savedHTML.x, C);
+});
+
+test('the page\'s copy takes the saved bytes when the text is the same', async () => {
+  const { page } = bookInMemory({ x: C });
+  page.chapterHTML.x = paragraphLines(C);
+  await page.persistChapter('x');
+  assert.equal(page.chapterHTML.x, C);
+});
+
+test('a chapter with a change goes to disk one paragraph per line', async () => {
+  const { page, writes } = bookInMemory({ x: C });
+  await page.persistChapter('x', C + '<p>Beta three.</p>');
+  assert.deepEqual(writes, [{ chId: 'x', html: '<p>Beta one.</p>\n<p>Beta two.</p>\n<p>Beta three.</p>\n' }]);
+});
+
 test('text handed in that the page no longer holds leaves the page alone', async () => {
   const { page } = bookInMemory({ x: '<p>Newer.</p>' });
   await page.persistChapter('x', '<p>Older.</p>');

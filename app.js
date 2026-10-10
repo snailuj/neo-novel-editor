@@ -11196,11 +11196,14 @@ function persistChapter(chId, html) {
   const key = bookId + '/' + chId;
   // The file is written one paragraph per line. The page's copy takes that
   // form too when it holds the same text, or the flush, which compares the
-  // two, would ask for this write again every twenty seconds. A write equal
-  // to savedHTML is not skipped: structural undo hands back chapters whose
+  // two, would ask for this write again every twenty seconds. Text that is
+  // savedHTML in line breaks alone goes out as savedHTML's own bytes: a file
+  // the writer did not change keeps its form (a compact one stays compact),
+  // and structural undo and Restore Whole Book save every chapter. It is
+  // still written, not skipped: structural undo hands back chapters whose
   // files it deleted, and savedHTML still holds their last write.
-  html = paragraphLines(html);
-  if (chapterHTML[chId] !== undefined && paragraphLines(chapterHTML[chId]) === html) chapterHTML[chId] = html;
+  html = sameOnDisk(html, savedHTML[chId]) ? savedHTML[chId] : paragraphLines(html);
+  if (chapterHTML[chId] !== undefined && sameOnDisk(chapterHTML[chId], html)) chapterHTML[chId] = html;
   savedHTML[chId] = html;
   writing[chId] = (writing[chId] || 0) + 1;
   // the disk is told what this device last knew of the chapter: if another

@@ -397,3 +397,83 @@ test('a page opened in its sheet has no line break between paragraphs', async ()
     expect(await blankChildren(fixture.page, '.ps-body')).toEqual([]);
   } finally { await fixture.close(); }
 });
+
+// A chapter file written compact (every book from before the switch, an
+// import, a page's starter) is not the writer's change to put right: while
+// another chapter is edited, or the book goes back to a snapshot, the bytes
+// of the compact chapter stay what they were. Structural undo and Restore
+// Whole Book save every chapter of the book.
+const SECOND = 'chapter-second';
+const COMPACT = '<p>Beta one.</p><p>Beta two.</p>';
+
+// seedBook with a second chapter, whose file is written just as given
+async function seedWithSecond(page, html, second) {
+  return page.evaluate(async ({ html, chId, second }) => {
+    const meta = await neo.createBook({ title: 'Synthetic book', author: 'Test author' });
+    meta.chapterOrder = ['chapter-synthetic', chId];
+    await neo.writeBookMeta(meta.id, meta);
+    await neo.writeChapter(meta.id, 'chapter-synthetic', html);
+    await neo.writeChapter(meta.id, chId, second);
+    const lib = await neo.readLibrary();
+    lib.shelves[0].bookIds.push(meta.id);
+    await neo.writeLibrary(lib);
+    await openBook(meta.id);
+    return meta.id;
+  }, { html, chId: SECOND, second });
+}
+
+test('a structural undo leaves a compact chapter that was not touched as it is on disk', async () => {
+  const fixture = await launchProfile();
+  try {
+    const bookId = await seedWithSecond(fixture.page, F, COMPACT);
+    const second = chapterFile(fixture, bookId, SECOND);
+    expect((await onDisk(second)).text).toBe(COMPACT);
+    await typeAtEndOf(fixture.page, 2, '');
+    for (let i = 0; i < 2; i++) await fixture.page.keyboard.press('Enter'); // a section break
+    expect(await fixture.page.evaluate(() => undoStack.length)).toBe(1);
+    await fixture.page.keyboard.press('Control+z');
+    await expect.poll(() => fixture.page.evaluate(() => undoStack.length)).toBe(0);
+    await flush(fixture.page);
+    expect((await onDisk(second)).text).toBe(COMPACT);
+    expect((await onDisk(chapterFile(fixture, bookId))).text).toBe(F);
+    expect(await fixture.page.evaluate(() => ({ order: book.chapterOrder, darlings }))).toEqual({ order: [CHAPTER, SECOND], darlings: [] });
+  } finally { await fixture.close(); }
+});
+
+test('undo of a quiet delete of a compact chapter writes its file back as it was', async () => {
+  const fixture = await launchProfile();
+  try {
+    const bookId = await seedWithSecond(fixture.page, F, COMPACT);
+    const second = chapterFile(fixture, bookId, SECOND);
+    await fixture.page.evaluate(async (chId) => {
+      snapshotStructure('chapter delete');
+      await deleteChapterQuiet(chId);
+    }, SECOND);
+    await expect(access(second)).rejects.toThrow();
+    await fixture.page.evaluate(() => structuralUndo());
+    await flush(fixture.page);
+    expect(await fixture.page.evaluate(() => book.chapterOrder)).toContain(SECOND);
+    expect((await onDisk(second)).text).toBe(COMPACT);
+  } finally { await fixture.close(); }
+});
+
+test('Restore Whole Book leaves a compact chapter the book did not change as it is on disk', async () => {
+  const fixture = await launchProfile();
+  try {
+    const bookId = await seedWithSecond(fixture.page, F, COMPACT);
+    const second = chapterFile(fixture, bookId, SECOND);
+    const first = chapterFile(fixture, bookId);
+    const name = await fixture.page.evaluate(async () => (await takeSnapshot('k')).snap.name);
+    await typeAtEndOf(fixture.page, 1, ' Typed.');
+    await flush(fixture.page);
+    expect((await onDisk(first)).text).toContain('Typed.');
+    await fixture.page.evaluate(async (name) => {
+      switchTab('darlings');
+      await showSnapshot(name);
+      await restoreSnapshot(null);
+    }, name);
+    await flush(fixture.page);
+    expect((await onDisk(first)).text).toBe(F);
+    expect((await onDisk(second)).text).toBe(COMPACT);
+  } finally { await fixture.close(); }
+});
