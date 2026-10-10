@@ -94,3 +94,57 @@ test('no direct bridge calls', () => {
     assert.doesNotMatch(readFileSync(file, 'utf8'), /window\.neo\./, file);
   }
 });
+
+type Stray = { path: string; reason: string };
+
+// The tracked list git would give for this repo, cut down to what the cases need.
+const TRACKED = [
+  'package.json',
+  'main.js',
+  'locales/fr.json',
+  'fonts/a.woff2',
+  'README.md',
+  'docs/plans/x.md',
+  'tsconfig.json',
+  'tsconfig.build.json',
+  'playwright.config.mjs',
+  '.oxlintrc.json',
+];
+const CLEAN = [
+  'package.json',
+  'main.js',
+  'locales/fr.json',
+  'fonts/a.woff2',
+  'plugins/hoard/plugin.json',
+  'plugins/hoard/renderer.js',
+  'plugins/hoard/main.cjs',
+  'node_modules/foo/README.md',
+  'node_modules/foo/index.js',
+];
+
+function strays(packaged: string[], tracked: string[] = TRACKED): Stray[] {
+  const { findStrays } = createRequire(import.meta.url)(path.join(root, 'tools', 'stray-files.cjs')) as {
+    findStrays(packaged: string[], tracked: string[]): Stray[];
+  };
+  return findStrays(packaged, tracked);
+}
+
+// The file is the only stray in an otherwise clean package, with a reason of the given kind.
+function assertStray(file: string, reason: RegExp, tracked: string[] = TRACKED): void {
+  const found = strays([...CLEAN, file], tracked);
+  assert.deepEqual(found.map((s) => s.path), [file]);
+  assert.match(found[0].reason, reason);
+}
+
+test('a clean package has no strays', () => {
+  assert.deepEqual(strays(CLEAN), []);
+});
+
+test('a packaged file outside node_modules and plugins must be tracked', () => {
+  assertStray('stray.txt', /not tracked/);
+  assertStray('test-results/.last-run.json', /not tracked/);
+});
+
+test('paths are compared as git writes them', () => {
+  assert.deepEqual(strays(['fonts\\a.woff2', './main.js', '/package.json']), []);
+});
