@@ -25,6 +25,11 @@ function hostCheck(): (place: unknown) => boolean {
 
 type HighlightCall = (name: unknown, places: unknown) => void;
 
+// What highlight in plugins.js says when it refuses: a name that is not a lower-case name, a
+// list that is not a list of places (or holds an item that is not a place), and a name another
+// plugin holds.
+const HIGHLIGHT_REFUSAL = /a highlight's name is a lower-case name|takes a list of places|needs another name/;
+
 // plugins.js in a vm with one plugin, p, listed, written for API 2 and
 // registered: whether the host takes a highlight call, as true, or throws a
 // TypeError for it, as false. No book is open, so a call taken marks nothing.
@@ -50,8 +55,9 @@ function hostTakesHighlight(): (name: unknown, places: unknown) => boolean {
       highlight(name, places);
       return true;
     } catch (err) {
-      // the vm's TypeError is not this realm's, so it is known by its name
-      if ((err as Error).name === 'TypeError') return false;
+      // the vm's TypeError is not this realm's, so it is known by its name; a refusal is one
+      // of highlight's own, so a TypeError from elsewhere (the stubbed page, say) is a fault
+      if ((err as Error).name === 'TypeError' && HIGHLIGHT_REFUSAL.test((err as Error).message)) return false;
       throw err;
     }
   };
