@@ -68,7 +68,7 @@ function readAsar(archive) {
       }
       files.push(file);
       // asar stores a link's target relative to the archive root
-      if (typeof node.link === 'string') links.push({ path: file, leaves: /^\.\.(?:\/|$)/.test(path.posix.normalize(node.link)) });
+      if (typeof node.link === 'string') links.push({ path: file, problem: archiveLinkProblem(node.link) });
     }
   }
   return { files, links };
@@ -86,7 +86,7 @@ function walkUnpacked(dir, root) {
     for (const entry of fs.readdirSync(path.join(dir, folder), { withFileTypes: true })) {
       const file = folder ? `${folder}/${entry.name}` : entry.name;
       if (entry.isSymbolicLink()) {
-        links.push({ path: file, leaves: leavesRoot(path.join(dir, file), root) });
+        links.push({ path: file, problem: diskLinkProblem(path.join(dir, file), root) });
         files.push(file);
       } else if (entry.isDirectory()) {
         pending.push(file);
@@ -98,12 +98,20 @@ function walkUnpacked(dir, root) {
   return { files, links };
 }
 
-function leavesRoot(link, root) {
+const OUTSIDE = 'symbolic link points outside the package';
+
+// asar stores a link's target relative to the archive root.
+function archiveLinkProblem(target) {
+  return /^\.\.(?:\/|$)/.test(path.posix.normalize(target)) ? OUTSIDE : null;
+}
+
+function diskLinkProblem(link, root) {
   try {
     const rel = path.relative(root, fs.realpathSync(link));
-    return rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
+    return rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel) ? OUTSIDE : null;
   } catch {
-    return true; // a link that does not resolve cannot be shown to stay inside
+    // a link that does not resolve cannot be shown to stay inside
+    return 'symbolic link does not resolve';
   }
 }
 
@@ -117,7 +125,7 @@ module.exports = async function afterPack(context) {
   const checked = [...new Set([...packed.files, ...unpacked.files])];
   const strays = findStrays(checked, tracked);
   for (const link of [...packed.links, ...unpacked.links]) {
-    if (link.leaves) strays.push({ path: link.path, reason: 'symbolic link points outside the package' });
+    if (link.problem) strays.push({ path: link.path, reason: link.problem });
   }
   if (strays.length) {
     const lines = strays.map((s) => `  ${s.path}: ${s.reason}`);

@@ -320,6 +320,31 @@ async function fakePackage(
   return { context, project, resources, unpacked: path.join(resources, 'app.asar.unpacked') };
 }
 
+// An archive that is only a header, to hold link entries @electron/asar itself would refuse
+// to pack. Layout: a pickle with the header's size, then a pickle with the header's JSON.
+function writeHeaderOnlyAsar(file: string, files: object): void {
+  const json = Buffer.from(JSON.stringify({ files }));
+  const padded = Math.ceil(json.length / 4) * 4;
+  const header = Buffer.alloc(8 + padded);
+  header.writeUInt32LE(4 + padded, 0);
+  header.writeUInt32LE(json.length, 4);
+  json.copy(header, 8);
+  const size = Buffer.alloc(8);
+  size.writeUInt32LE(4, 0);
+  size.writeUInt32LE(header.length, 4);
+  writeFileSync(file, Buffer.concat([size, header]));
+}
+
+// A package whose app.asar holds package.json and node_modules/linked, a link to `target`.
+async function packageWithAsarLink(target: string): Promise<PackContext> {
+  const { context, resources } = await fakePackage('win32', { asar: false });
+  writeHeaderOnlyAsar(path.join(resources, 'app.asar'), {
+    'package.json': { size: 2, offset: '0' },
+    node_modules: { files: { linked: { link: target } } },
+  });
+  return context;
+}
+
 const fakePackages: string[] = [];
 const asarApi = () => createRequire(import.meta.url)('@electron/asar') as typeof import('@electron/asar');
 const afterPack = (context: PackContext): Promise<void> =>
@@ -386,6 +411,24 @@ test('afterPack does not follow a link out of the package', async () => {
   });
 });
 
+test('afterPack reports a link that does not resolve', async () => {
+  const { context, unpacked } = await fakePackage('win32');
+  const gone = path.join(context.appOutDir, '..', 'gone');
+  mkdirSync(gone);
+  symlinkSync(gone, path.join(unpacked, 'node_modules', 'dangling'), 'junction');
+  rmSync(gone, { recursive: true });
+  await assert.rejects(afterPack(context), /node_modules\/dangling.*does not resolve/);
+});
+
+test('afterPack allows a link inside app.asar that stays inside it', async () => {
+  const line = await checked(await packageWithAsarLink('node_modules/dictionary-ro'));
+  assert.equal(line.checked, 2);
+});
+
+test('afterPack reports a link inside app.asar that leaves it', async () => {
+  await assert.rejects(afterPack(await packageWithAsarLink('../outside')), /node_modules\/linked.*outside the package/);
+});
+
 test('afterPack takes a missing app.asar.unpacked as nothing unpacked', async () => {
   const line = await checked((await fakePackage('win32', { unpack: false })).context);
   assert.equal(line.unpacked, 0);
@@ -410,7 +453,8 @@ test('afterPack fails on an app.asar.unpacked it cannot stat, rather than treati
 
 test('afterPack fails when it cannot check', async () => {
   await assert.rejects(afterPack((await fakePackage('win32', { asar: false })).context), /app\.asar/);
-  await assert.rejects(afterPack((await fakePackage('win32', { git: false })).context), /git/);
+  // not /git/: "not tracked by git" matches that, so a swallowed git failure would pass
+  await assert.rejects(afterPack((await fakePackage('win32', { git: false })).context), /cannot read the tracked files/);
   const { context, resources } = await fakePackage('win32');
   writeFileSync(path.join(resources, 'app.asar'), 'not an archive');
   await assert.rejects(afterPack(context), /app\.asar/);
