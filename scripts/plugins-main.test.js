@@ -29,10 +29,11 @@ afterEach(() => {
   while (made.length) fs.rmSync(made.pop(), { recursive: true, force: true });
 });
 
-// The worktree's own plugins/ holds a build of hoard (git-ignored). A test
-// that discovers it activates it, and then passes or fails on whether the
-// build has run. Every read of that folder is noted, and the file fails if
-// there was one: tests use a temporary app folder.
+// The checkout's own plugins/ holds whatever has been built or installed
+// there (it is git-ignored). A test that discovers it activates that, and
+// then passes or fails on what happens to be in it. Every read of that
+// folder is noted, and the file fails if there was one: tests use a
+// temporary app folder.
 const ownPlugins = path.join(root, 'plugins');
 const ownReads = [];
 const readdirSync = fs.readdirSync;

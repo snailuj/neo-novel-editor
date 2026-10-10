@@ -470,7 +470,10 @@ async function invoke(id, channel, payload) {
 // rejection: main.js logs every rejected handler again and, for an EPERM,
 // EACCES or EROFS inside the library, tells the writer NEO can't save, and
 // a plugin's failure is neither a refused save nor main.js's to log.
-// preload.js turns { error } back into the rejection.
+// preload.js turns { error } back into the rejection. A refusal (a name
+// that is no channel, a plugin with no main half, a channel with no
+// handler) is not logged either: it rejects to the caller, which handles
+// it, and the window logs what nobody does.
 async function answer(id, channel, payload) {
   try {
     return { result: await invoke(id, channel, payload) };

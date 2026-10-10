@@ -91,6 +91,8 @@ interface NeoApi {
    * The plugin's id is filled in for it, which prevents mistakes but is no wall: every
    * plugin's script runs in NEO's page, and any of them can reach any main half.
    * Rejects without calling when the plugin is not active (its activate failed).
+   * NEO does not log a refusal (a bad channel, a channel the main half never took); it
+   * rejects to the caller.
    */
   invoke(channel: string, payload?: unknown): Promise<unknown>;
 }
