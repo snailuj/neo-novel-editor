@@ -254,3 +254,40 @@ test('a path that is not there is refused, and no path or an unknown option is a
   assert.equal(run().status, 2);
   assert.equal(run('--wrtie', missing).status, 2);
 });
+
+test('a chapters folder or a book folder that is a junction or symlink is not followed out of the library', () => {
+  const lined = '<p>a</p>\n<p>b</p>\n';
+  for (const linkAt of ['chapters', 'book']) {
+    const root = folder();
+    const outside = path.join(root, 'outside');
+    const lib = path.join(root, 'lib');
+    fs.mkdirSync(path.join(outside, 'chapters'), { recursive: true });
+    const secret = path.join(outside, 'chapters', 'x.html');
+    put(secret, lined);
+    if (linkAt === 'chapters') {
+      fs.mkdirSync(path.join(lib, 'book-x'), { recursive: true });
+      fs.symlinkSync(path.join(outside, 'chapters'), path.join(lib, 'book-x', 'chapters'), 'junction');
+    } else {
+      fs.mkdirSync(lib);
+      fs.symlinkSync(outside, path.join(lib, 'book-x'), 'junction');
+    }
+    assert.ok(fs.lstatSync(linkAt === 'chapters' ? path.join(lib, 'book-x', 'chapters') : path.join(lib, 'book-x')).isSymbolicLink(), 'the link must really be a link');
+    const r = run('--write', lib);
+    assert.equal(r.status, 0, `${linkAt}\n${r.all}`);
+    assert.deepEqual(bytes(secret), Buffer.from(lined), linkAt);
+    assert.equal(mtime(secret), new Date('2020-01-01T00:00:00Z').getTime(), linkAt);
+  }
+});
+
+test('a diff3 base marker also marks a file as unsettled', () => {
+  const text = '<p>one</p>\n<<<<<<< ours\n<p>two</p>\n||||||| base\n<p>deux</p>\n=======\n<p>zwei</p>\n>>>>>>> theirs\n';
+  const noOthers = '<p>one</p>\n||||||| base\n<p>two</p>\n';
+  for (const body of [text, noOthers]) {
+    const file = path.join(folder(), 'c1.html');
+    put(file, body);
+    const r = run('--write', file);
+    assert.notEqual(r.status, 0, r.all);
+    assert.match(r.all, /conflict markers/);
+    assert.deepEqual(bytes(file), Buffer.from(body, 'utf8'));
+  }
+});

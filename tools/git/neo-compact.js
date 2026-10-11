@@ -24,8 +24,8 @@ const USAGE = `usage: node neo-compact.js [--write] <file-or-folder>...
   exit status is 1 if any file was refused, 2 for a usage error
 `;
 
-// git's own markers, at the start of a line
-const CONFLICT = /^(?:<{7}|={7}|>{7})(?![<=>])/m;
+// git's own markers (|||||||  is diff3's base), at the start of a line
+const CONFLICT = /^(?:<{7}|={7}|>{7}|\|{7})(?![<=>|])/m;
 
 // The file goes through a temp file in its own folder and a rename, so a
 // crash leaves either the old chapter or the new one, never half of one.
@@ -69,7 +69,8 @@ function chapterFiles(library) {
   for (const book of dirents(library)) {
     if (!book.isDirectory() || !book.name.startsWith('book-')) continue;
     const chapters = path.join(library, book.name, 'chapters');
-    if (!fs.existsSync(chapters)) continue;
+    // lstat, not exists: a junction or symlink here would lead out of the library
+    if (!fs.lstatSync(chapters, { throwIfNoEntry: false })?.isDirectory()) continue;
     for (const f of dirents(chapters)) {
       if (f.isFile() && f.name.endsWith('.html') && !f.name.startsWith('.')) found.push(path.join(chapters, f.name));
     }
