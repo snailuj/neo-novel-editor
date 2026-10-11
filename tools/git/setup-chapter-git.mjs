@@ -67,7 +67,10 @@ function printPlan() {
   ];
   for (const [key, value] of settings()) lines.push(`  git config --global ${key} ${shellQuote(value)}`);
   lines.push('', 'or set them for one repo only with --apply --repo <path>. Then, in the library repo,',
-    'add this line to its .gitattributes (it covers every book\'s chapters):', '', ATTRIBUTES, '');
+    'add this line to its .gitattributes (it covers every book\'s chapters):', '', ATTRIBUTES, '',
+    'A chapter left lined on disk (a settled merge conflict, or a library saved by an earlier build of this fork)',
+    'is made compact again by the next command. It lists what would change; add --write to apply it:', '',
+    `  node "${toolsDir}/neo-compact.js" <library folder>`, '');
   process.stdout.write(lines.join('\n') + '\n');
 }
 

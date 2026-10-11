@@ -46,8 +46,8 @@ Limits:
 - GitHub's web view, and any hosted review, runs no textconv. It shows one line per chapter.
 - A clone without the setting shows whole-chapter diffs and one-line blame. The stored files and history are the same as with the setting, so nothing is lost.
 - The merge driver needs its own config entry on each machine. A clone without it conflicts on any two edits to one chapter.
-- A chapter with a merge conflict holds the lined text with conflict markers, so the writer can settle it. Once settled, the file is still lined, and upstream Neo loads the line breaks between paragraphs as text nodes. The chapter is compact again after a conversion with `compactLines` from `tools/git/neo-lines.js`; no command runs it yet.
-- Libraries last saved by an earlier build of this fork hold lined chapters, which load the same way until converted.
+- A chapter with a merge conflict holds the lined text with conflict markers, so the writer can settle it. Once settled, the file is still lined, and upstream Neo loads the line breaks between paragraphs as text nodes. `node tools/git/neo-compact.js <library folder>` makes it compact again with `compactLines` from `tools/git/neo-lines.js`: it lists the chapters it would change, `--write` rewrites them in place (through a temp file and a rename), and it refuses a file that still holds conflict markers or would not line back to what it was.
+- Libraries last saved by an earlier build of this fork hold lined chapters, which load the same way until `neo-compact.js` has converted them.
 
 ## Suggestion and review model
 

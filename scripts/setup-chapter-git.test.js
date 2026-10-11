@@ -122,3 +122,10 @@ test('with the tools in a folder whose name has a space, the applied settings st
   const changed = git(repo, ['diff']).stdout.split('\n').filter((l) => /^[-+]</.test(l));
   assert.deepEqual(changed, ['-<p>Paragraph 4.</p>', '+<p>Paragraph 4 EDITED.</p>']);
 });
+
+test('the printed help says how to compact a chapter left lined, with the absolute script path', () => {
+  const r = run([]);
+  const tools = slash(path.dirname(SETUP));
+  assert.ok(r.stdout.includes(`node "${tools}/neo-compact.js" <library folder>`), r.stdout);
+  assert.match(r.stdout, /--write/);
+});

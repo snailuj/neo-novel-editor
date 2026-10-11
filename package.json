@@ -24,7 +24,7 @@
     "check": "npm run gen:check && npm run typecheck && npm run lint:fork && npm test && npm run test:unit",
     "test:coverage": "node --test --experimental-test-coverage \"scripts/*.test.js\"",
     "lint": "oxlint",
-    "lint:fork": "oxlint --ignore-pattern \"src/generated/**\" plugins.js plugins-main.js playwright.config.mjs src tools tests scripts/plugins.e2e.js scripts/plugin-edits.e2e.js scripts/plugins-main.test.js scripts/save-guard.test.js scripts/chapter-git.test.js scripts/setup-chapter-git.test.js scripts/isolate-test-app.js scripts/fixtures/plugins",
+    "lint:fork": "oxlint --ignore-pattern \"src/generated/**\" plugins.js plugins-main.js playwright.config.mjs src tools tests scripts/plugins.e2e.js scripts/plugin-edits.e2e.js scripts/plugins-main.test.js scripts/save-guard.test.js scripts/chapter-git.test.js scripts/setup-chapter-git.test.js scripts/neo-compact.test.js scripts/isolate-test-app.js scripts/fixtures/plugins",
     "release": "node scripts/release.js",
     "bundle": "node scripts/bundle.js",
     "package": "npm run package:mac",
