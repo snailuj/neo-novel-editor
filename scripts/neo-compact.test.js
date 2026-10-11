@@ -146,3 +146,111 @@ test('a file that does not survive lining after compacting is refused and left a
     assert.deepEqual(bytes(file), Buffer.from(text, 'utf8'), name);
   }
 });
+
+const { writeAtomic } = require('../tools/git/neo-compact.js');
+
+// A library with chapters to find and look-alikes that must be left alone.
+function library() {
+  const lib = folder();
+  const lined = '<p>a</p>\n<p>b</p>\n';
+  const files = {
+    'book-a/chapters/c1.html': lined,
+    'book-a/chapters/c2.html': '<p>a</p><p>b</p>',
+    'book-b/chapters/c1.html': lined,
+    'book-a/chapters/c3.txt': lined,
+    'book-a/chapters/sub/c9.html': lined,
+    'book-a/notes.html': lined,
+    'book-a/snapshots/s1/c1.html': lined,
+    'other/chapters/c1.html': lined,
+    'chapters/c1.html': lined
+  };
+  for (const [rel, text] of Object.entries(files)) {
+    const file = path.join(lib, ...rel.split('/'));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    put(file, text);
+  }
+  return { lib, lined, files };
+}
+
+test('a folder walk finds only book-*/chapters/*.html', () => {
+  const { lib, files } = library();
+  const r = run('--write', lib);
+  assert.equal(r.status, 0, r.all);
+  assert.match(r.out, /3 files: 2 changed, 1 unchanged, 0 refused/);
+  const touched = ['book-a/chapters/c1.html', 'book-b/chapters/c1.html'];
+  for (const [rel, text] of Object.entries(files)) {
+    const now = bytes(path.join(lib, ...rel.split('/'))).toString('utf8');
+    assert.equal(now, touched.includes(rel) ? '<p>a</p><p>b</p>' : text, rel);
+  }
+});
+
+test('a second run changes nothing', () => {
+  const { lib } = library();
+  assert.equal(run('--write', lib).status, 0);
+  const snapshot = () => {
+    const seen = {};
+    for (const rel of ['book-a/chapters/c1.html', 'book-a/chapters/c2.html', 'book-b/chapters/c1.html']) {
+      const file = path.join(lib, ...rel.split('/'));
+      seen[rel] = { data: bytes(file).toString('latin1'), time: mtime(file) };
+    }
+    return seen;
+  };
+  const first = snapshot();
+  const r = run('--write', lib);
+  assert.equal(r.status, 0, r.all);
+  assert.match(r.out, /3 files: 0 changed, 3 unchanged, 0 refused/);
+  assert.deepEqual(snapshot(), first);
+  assert.doesNotMatch(run(lib).out, /would change \S/);
+});
+
+test('a file given twice, or by folder and by name, is handled once', () => {
+  const { lib } = library();
+  const file = path.join(lib, 'book-a', 'chapters', 'c1.html');
+  const r = run(lib, file, file);
+  assert.match(r.out, /3 files: 2 would change, 1 unchanged, 0 refused/);
+});
+
+test('writeAtomic writes through a temp file in the same folder and leaves no temp behind', () => {
+  const dir = folder();
+  const file = path.join(dir, 'c1.html');
+  put(file, 'old');
+  const renames = [];
+  writeAtomic(file, '<p>new é</p>', (from, to) => {
+    renames.push([from, to]);
+    assert.equal(fs.readFileSync(file, 'latin1'), 'old', 'target is untouched until the rename');
+    fs.renameSync(from, to);
+  });
+  assert.equal(renames.length, 1);
+  assert.equal(path.dirname(renames[0][0]), dir);
+  assert.equal(renames[0][1], file);
+  assert.notEqual(renames[0][0], file);
+  assert.deepEqual(fs.readdirSync(dir), ['c1.html']);
+  assert.equal(fs.readFileSync(file, 'latin1'), '<p>new é</p>');
+});
+
+test('a write that fails before the rename leaves the chapter as it was and no temp file', () => {
+  const dir = folder();
+  const file = path.join(dir, 'c1.html');
+  put(file, '<p>a</p>\n<p>b</p>\n');
+  assert.throws(() => writeAtomic(file, '<p>a</p><p>b</p>', () => { throw new Error('disk gone'); }), /disk gone/);
+  assert.equal(fs.readFileSync(file, 'utf8'), '<p>a</p>\n<p>b</p>\n');
+  assert.deepEqual(fs.readdirSync(dir), ['c1.html']);
+});
+
+test('a real run leaves no temp files in the library', () => {
+  const { lib } = library();
+  const list = () => fs.readdirSync(lib, { recursive: true }).sort();
+  const before = list();
+  assert.equal(run('--write', lib).status, 0);
+  assert.deepEqual(list(), before);
+});
+
+test('a path that is not there is refused, and no path or an unknown option is a usage error', () => {
+  const missing = path.join(folder(), 'nope.html');
+  const r = run(missing);
+  assert.notEqual(r.status, 0);
+  assert.match(r.all, /refused/);
+  assert.ok(r.all.includes(missing));
+  assert.equal(run().status, 2);
+  assert.equal(run('--wrtie', missing).status, 2);
+});
