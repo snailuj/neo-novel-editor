@@ -1,0 +1,101 @@
+'use strict';
+
+// tools/git/neo-compact.js turns a lined chapter file (left by a settled merge
+// conflict or an earlier build of this fork) back into the compact HTML Neo
+// writes. The rule: compacting a chapter gives exactly the bytes Neo would
+// write for that page, and never changes a file that is already compact.
+// Every test runs the CLI on files in a temp folder, never on a real library.
+
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const { test, before, after } = require('node:test');
+const { paragraphLines } = require('../tools/git/neo-lines.js');
+
+const TOOL = path.join(__dirname, '..', 'tools', 'git', 'neo-compact.js');
+
+let sandbox;
+let counter = 0;
+before(() => {
+  sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'neo-compact-test-'));
+});
+after(() => fs.rmSync(sandbox, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
+
+// A fresh folder per test, so no test sees another's files.
+function folder() {
+  const dir = path.join(sandbox, `t${++counter}`);
+  fs.mkdirSync(dir);
+  return dir;
+}
+function run(...args) {
+  const r = spawnSync(process.execPath, [TOOL, ...args], { encoding: 'utf8', windowsHide: true });
+  return { status: r.status, out: r.stdout, err: r.stderr, all: r.stdout + r.stderr };
+}
+function put(file, text) {
+  fs.writeFileSync(file, text, 'utf8');
+  fs.utimesSync(file, new Date('2020-01-01T00:00:00Z'), new Date('2020-01-01T00:00:00Z'));
+}
+const bytes = (file) => fs.readFileSync(file);
+const mtime = (file) => fs.statSync(file).mtimeMs;
+
+// What Neo writes: compact. Shapes taken from the chapter-git spike.
+const EDGE = {
+  single: '<p>only one</p>',
+  'blank paragraph': '<p><br></p><p>x</p>',
+  'nested lists': '<p>a</p><ul><li>x<ul><li>y</li><li><p>deep</p><p>deeper</p></li></ul></li><li>z</li></ul><p>b</p><p>c</p><ol><li><p>p1</p><p>p2</p></li></ol><p>d</p>',
+  blockquote: '<p>a</p><blockquote><p>q1</p><p>q2</p></blockquote><p>b</p><blockquote>bare quote</blockquote>',
+  br: '<p>line<br>two<br></p><p>x<br><br></p><p><br><br></p>',
+  'pre and code': '<p>a</p><pre>code\n  line2\n\n    line4 <p>not a tag</p></pre><p>b</p><p>c</p><pre><code>x\n</code></pre>',
+  'non-ASCII': '<p>café 日本語 😀 naïve</p><p>Жук nbsp char</p>',
+  'newline inside a paragraph': '<p>a <i>b</i>\nc</p><p>d</p>',
+  'scene break': '<p>a</p><p class="scene-break">***</p><p><br></p>'
+};
+
+test('a lined file becomes the compact bytes Neo writes', () => {
+  const file = path.join(folder(), 'c1.html');
+  put(file, '<p>one</p>\n<p>two <b>bold</b></p>\n<p>three</p>\n');
+  const r = run('--write', file);
+  assert.equal(r.status, 0, r.all);
+  assert.deepEqual(bytes(file), Buffer.from('<p>one</p><p>two <b>bold</b></p><p>three</p>', 'utf8'));
+  assert.match(r.out, /changed/);
+});
+
+test('every edge shape lined by paragraph compacts to the bytes Neo wrote', () => {
+  for (const [name, html] of Object.entries(EDGE)) {
+    const file = path.join(folder(), 'c1.html');
+    const lined = paragraphLines(html);
+    assert.notEqual(lined, html, `${name}: fixture must be lined`);
+    put(file, lined);
+    const r = run('--write', file);
+    assert.equal(r.status, 0, `${name}\n${r.all}`);
+    assert.deepEqual(bytes(file), Buffer.from(html, 'utf8'), name);
+  }
+});
+
+test('a compact file is left alone, bytes and mtime', () => {
+  for (const [name, html] of Object.entries(EDGE)) {
+    const file = path.join(folder(), 'c1.html');
+    put(file, html);
+    const before = { data: bytes(file), time: mtime(file) };
+    const r = run('--write', file);
+    assert.equal(r.status, 0, `${name}\n${r.all}`);
+    assert.match(r.out, /unchanged/, `${name}: must have reached the unchanged path`);
+    assert.deepEqual(bytes(file), before.data, name);
+    assert.equal(mtime(file), before.time, name);
+  }
+});
+
+test('a dry run lists the file that would change and writes nothing', () => {
+  const file = path.join(folder(), 'c1.html');
+  const lined = '<p>one</p>\n<p>two</p>\n';
+  put(file, lined);
+  const before = { data: bytes(file), time: mtime(file) };
+  const r = run(file);
+  assert.equal(r.status, 0, r.all);
+  assert.match(r.out, /would change/);
+  assert.ok(r.out.includes(file), r.out);
+  assert.deepEqual(bytes(file), before.data);
+  assert.equal(mtime(file), before.time);
+});
