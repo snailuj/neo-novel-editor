@@ -1623,7 +1623,6 @@ async function openPageSheet(shelf, meta, label) {
   const body = bd.querySelector('.ps-body');
   body.setAttribute('aria-label', label);
   body.innerHTML = html && html.trim() ? html : '<p><br></p>';
-  dropLineBreaks(body);
   if (PAGE_PLACEHOLDERS[live.kind]) body.dataset.ph = PAGE_PLACEHOLDERS[live.kind]();
   // the page shows what it will print: a line that opens with a dash is set
   // as the name of whoever said the lines above it
@@ -2059,7 +2058,7 @@ function bookTile(meta, opts = {}) {
 // words go to disk first, so the copy has them.
 async function duplicateBook(meta) {
   if (book && book.id === meta.id) {
-    await Promise.all(book.chapterOrder.filter((c) => chapterHTML[c] !== undefined && !sameOnDisk(chapterHTML[c], savedHTML[c])).map((c) => persistChapter(c)));
+    await Promise.all(book.chapterOrder.filter((c) => chapterHTML[c] !== undefined && chapterHTML[c] !== savedHTML[c]).map((c) => persistChapter(c)));
     flushAllSaves();
     await saveMeta();
     await new Promise((resolve) => setTimeout(resolve, 300)); // notes and sidecars, written alongside
@@ -2664,7 +2663,6 @@ function renderChapters() {
     // a script's lines are set as they print (styles.css, SCREENPLAYS)
     if (isScript()) body.classList.add('script-body', $('#paper').classList.contains('narrow') ? 'sp-narrow' : 'sp-geom', 'no-cap');
     body.innerHTML = chapterHTML[chId] || '<p><br></p>';
-    dropLineBreaks(body);
     markDialogueOpening(body);
     if (PAGE_PROMPTS[kind]) {
       body.dataset.ph = PAGE_PROMPTS[kind]();
@@ -10907,7 +10905,6 @@ async function restoreDarling(id) {
           // inline content: slot it right where the caret was
           at.insertNode(document.createRange().createContextualFragment(d.html || d.text));
         }
-        dropLineBreaks(body);
         syncChapter(body, d.chapterId);
         // the chapter holding it again is saved before Darlings lets it go
         if (!(await savedBeforeLettingGo(d.chapterId))) return;
@@ -10928,7 +10925,6 @@ async function restoreDarling(id) {
   const body = document.querySelector(`.chapter[data-id="${chId}"] .chapter-body`);
   const frag = d.html ? d.html : '<p>' + d.text.replace(/\n+/g, '</p><p>') + '</p>';
   body.insertAdjacentHTML('beforeend', frag);
-  dropLineBreaks(body);
   chapterHTML[chId] = captureBody(body);
   if (!(await savedBeforeLettingGo(chId))) return;
   darlings = darlings.filter((x) => x.id !== id);
@@ -11144,67 +11140,6 @@ let shelfExport = false; // see exportFromShelf
 // is never taken for another device's.
 const diskKnown = {};
 const knowDisk = (bookId, chId, html) => { diskKnown[bookId + '/' + chId] = html; };
-// A chapter file holds one paragraph per line, so a line-by-line diff or
-// blame of it follows the paragraphs: one line break after each top-level
-// block that a block or the end follows, and no other whitespace between
-// them. Nothing inside a block changes. Any other element (a list, a
-// table, a section, a link) takes no line of its own, and the blocks it
-// holds are part of it: the depth counts every element that has an end tag,
-// so depth zero is the body, the only level dropLineBreaks looks at.
-function paragraphLines(html) {
-  const tag = /<(\/?)([a-z][a-z0-9-]*)\b[^>]*>/gi;
-  const lined = /^(?:p|div|h[1-6]|blockquote)$/i;
-  const empty = /^(?:area|base|br|col|embed|hr|img|input|link|meta|source|track|wbr)$/i;
-  const gap = /[\t\n\f\r ]*/y;
-  const block = /<(?:p|div|h[1-6]|blockquote)\b/iy;
-  let out = '';
-  let from = 0;
-  let depth = 0;
-  let m;
-  while ((m = tag.exec(html))) {
-    if (empty.test(m[2])) continue;
-    if (!m[1]) { depth++; continue; }
-    depth = Math.max(0, depth - 1);
-    if (depth || !lined.test(m[2])) continue;
-    const close = m.index + m[0].length;
-    gap.lastIndex = close;
-    gap.exec(html);
-    const next = gap.lastIndex;
-    block.lastIndex = next;
-    if (next !== html.length && !block.test(html)) continue;
-    out += html.slice(from, close) + '\n';
-    from = next;
-    tag.lastIndex = next;
-  }
-  return out + html.slice(from);
-}
-// The page never holds those line breaks: whatever fills a chapter body
-// from a file (or from Darlings, which can keep a chapter's text as its
-// file had it) drops the whitespace-only text between the blocks, so the
-// page is the one drawn from the compact text and the caret code meets
-// paragraphs alone. Only what paragraphLines writes goes: whitespace that
-// follows a top-level block and precedes a block or the end. Any other
-// (before the first block, beside words or a list) is the file's own, and a
-// capture of the page must give it back.
-function dropLineBreaks(body) {
-  const isBlock = (n) => !!n && n.nodeType === 1 && /^(?:P|DIV|H[1-6]|BLOCKQUOTE)$/.test(n.tagName);
-  const isBlank = (n) => n.nodeType === 3 && !/[^\t\n\f\r ]/.test(n.data);
-  let gap = [];
-  let before = null;
-  for (const n of [...body.childNodes, null]) {
-    if (n && isBlank(n)) { gap.push(n); continue; }
-    if (isBlock(before) && (!n || isBlock(n))) for (const g of gap) g.remove();
-    gap = [];
-    before = n;
-  }
-}
-// True when two copies of a chapter go to disk as the same file. A save
-// sets the page's copy one paragraph per line, but the page itself holds
-// no line breaks between paragraphs, so a capture of the page with nothing
-// typed differs from savedHTML in line breaks alone.
-function sameOnDisk(a, b) {
-  return a === b || (typeof a === 'string' && typeof b === 'string' && paragraphLines(a) === paragraphLines(b));
-}
 // One write at a time per chapter, in the order they were asked for
 const chapterChain = {};
 function persistChapter(chId, html) {
@@ -11212,16 +11147,6 @@ function persistChapter(chId, html) {
   if (html === undefined) html = chapterHTML[chId] || '';
   const bookId = book.id;
   const key = bookId + '/' + chId;
-  // The file is written one paragraph per line. The page's copy takes that
-  // form too when it holds the same text, or the flush, which compares the
-  // two, would ask for this write again every twenty seconds. Text that is
-  // savedHTML in line breaks alone goes out as savedHTML's own bytes: a file
-  // the writer did not change keeps its form (a compact one stays compact),
-  // and structural undo and Restore Whole Book save every chapter. It is
-  // still written, not skipped: structural undo hands back chapters whose
-  // files it deleted, and savedHTML still holds their last write.
-  html = sameOnDisk(html, savedHTML[chId]) ? savedHTML[chId] : paragraphLines(html);
-  if (chapterHTML[chId] !== undefined && sameOnDisk(chapterHTML[chId], html)) chapterHTML[chId] = html;
   savedHTML[chId] = html;
   writing[chId] = (writing[chId] || 0) + 1;
   // the disk is told what this device last knew of the chapter: if another
@@ -11304,7 +11229,6 @@ function scheduleChapterSave(chId) {
     if (book.id !== bookId || !book.chapterOrder.includes(chId)) return;
     // a flush (a blur, the 20 s tick) wrote these words while this save
     // waited; a write still on its way may yet fail, so this one queues behind.
-    // Plain equality is enough: persistChapter leaves the page's copy as the bytes it wrote.
     if (!writing[chId] && chapterHTML[chId] === savedHTML[chId]) return;
     persistChapter(chId);
   }, 800);
@@ -11372,7 +11296,7 @@ function flushAllSaves(e) {
     if (!writing) book.lastPosition.tabScroll = tabScroll;
   }
   for (const chId of book.chapterOrder) {
-    if (chapterHTML[chId] !== undefined && !sameOnDisk(chapterHTML[chId], savedHTML[chId])) {
+    if (chapterHTML[chId] !== undefined && chapterHTML[chId] !== savedHTML[chId]) {
       persistChapter(chId);
     }
   }
@@ -11533,9 +11457,7 @@ async function takeSnapshotNow(kind, htmlOf, { ifNoneToday }) {
   const titles = { ...(book.chapterTitles || {}) };
   const kinds = { ...(book.chapterKinds || {}) };
   const texts = {};
-  // one paragraph per line, as the chapter files are (paragraphLines): a
-  // copy that differs from the saved one in line breaks alone is no change
-  for (const c of order) texts[c] = paragraphLines(htmlOf(c));
+  for (const c of order) texts[c] = htmlOf(c);
   const snaps = await loadSnaps(bookId);
   const now = Date.now();
   if (ifNoneToday && snaps.some((s) => new Date(s.at).toDateString() === new Date(now).toDateString())) return null;
@@ -11801,7 +11723,7 @@ async function showSnapshot(name) {
   for (const ch of chapters) {
     const now = book.chapterOrder.includes(ch.chId) ? (chapterHTML[ch.chId] || '') : null;
     ch.now = now;
-    ch.same = now !== null && sameOnDisk(now, ch.html);
+    ch.same = now !== null && textHash(now) === textHash(ch.html);
     if (!ch.same) diff.push({ chId: ch.chId, label: label(ch.chId) });
   }
   const extra = book.chapterOrder.filter((c) => !meta.chapterOrder.includes(c)).length;
@@ -11848,7 +11770,6 @@ async function showSnapshot(name) {
     body.className = 'chapter-body snap-body';
     if (isScript()) body.classList.add('sp-geom');
     body.appendChild(snapHolderEl(ch.html));
-    dropLineBreaks(body);
     sec.appendChild(body);
     v.appendChild(sec);
     if (ch.same) continue;
@@ -12080,7 +12001,7 @@ async function refreshFromDisk() {
       const other = mine ? meta.chapterOrder : book.chapterOrder;
       other.forEach((chId, i) => {
         if (order.includes(chId)) return;
-        if (mine ? !/[^\s]/.test(String(incoming[chId] || '').replace(/<[^>]*>/g, '')) : sameOnDisk(chapterHTML[chId], savedHTML[chId])) return;
+        if (mine ? !/[^\s]/.test(String(incoming[chId] || '').replace(/<[^>]*>/g, '')) : chapterHTML[chId] === savedHTML[chId]) return;
         const prev = other.slice(0, i).reverse().find((c) => order.includes(c));
         order.splice(prev ? order.indexOf(prev) + 1 : 0, 0, chId);
       });
@@ -12137,7 +12058,7 @@ async function refreshFromDisk() {
       if (disk === '' && savedHTML[chId]) continue; // unreadable or still downloading: not a change
       if (stamps) diskStamps[chId] = st; // seen; a file not read stays on the list
       if (disk === savedHTML[chId]) continue;
-      if (sameOnDisk(chapterHTML[chId], savedHTML[chId])) {
+      if (chapterHTML[chId] === savedHTML[chId]) {
         // A copy with nothing new in it, only fewer words, is an older copy
         // coming back (or text cut on the other device): the page's version
         // goes to Darlings instead of nowhere.
@@ -12434,9 +12355,9 @@ async function structuralUndo() {
   for (const chId of new Set([...Object.keys(chapterHTML), ...Object.keys(after.chapterHTML)])) {
     const cur = chapterHTML[chId];
     const was = after.chapterHTML[chId];
-    if (cur === undefined || sameOnDisk(cur, was)) continue;
+    if (cur === undefined || cur === was) continue;
     const textOf = (h) => String(h || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').trim();
-    if (snap.chapterHTML[chId] !== undefined && sameOnDisk(snap.chapterHTML[chId], was)) {
+    if (snap.chapterHTML[chId] !== undefined && snap.chapterHTML[chId] === was) {
       restored[chId] = cur; // the action left this chapter alone
     } else if (textOf(cur) && wordsBeyond(cur, restored[chId] || '')) {
       displaced.push({ chId, html: cur });
