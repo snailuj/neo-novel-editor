@@ -25,9 +25,29 @@ Neo-Hoard replaces hoard for writing projects. Neo gains the librarian's abiliti
 
 ## Chapter file format
 
-A chapter file holds one paragraph per line (`paragraphLines` in `app.js`), so Git blame and diffs follow paragraphs. The page holds no line-break nodes between paragraphs (`dropLineBreaks`), and a chapter the writer did not change keeps the bytes it has on disk, compact or lined. Any saved edit converts that chapter to the lined form, even if the writer later undoes it (a card moved out and back, or typing that was saved and then deleted).
+Chapter-Format-Route = textconv (decided 11 October 2026, replacing the fork's paragraph-per-line save).
 
-Known limit: a library shared with a device running upstream Neo, desktop or Pocket, holds the line-break nodes on that device's page, because upstream renders lined files without `dropLineBreaks`. The caret paths that expect paragraphs to stand alone then misbehave there. A darling cut from the start of a paragraph is restored as loose words outside any paragraph, and a script pasted at a caret on the body lands too far down. This stays until paragraph-per-line goes upstream or the fork stops sharing libraries with upstream devices. The review of 10 October 2026 deferred it.
+A chapter file is the compact HTML upstream Neo writes, byte for byte. The fork's save and load path matches upstream's apart from the double-save guard in `scheduleChapterSave` and the plugin host hooks, and `tests/e2e/chapter-bytes.spec.mjs` compares the saved bytes with upstream's own `captureBody` and `persistChapter`. Git is taught to show and merge the file one paragraph per line, locally, by a textconv driver and a merge driver in `tools/git/`.
+
+The reason, in the author's words:
+
+> GitHub is not needed or suited for prose, and local diff, log and blame per paragraph are enough.
+
+How it works. `tools/git/neo-textconv.js` prints a chapter one paragraph per line, so `git diff`, `git log -p` and `git blame` follow paragraphs while the stored file is untouched. `tools/git/neo-merge.js` lines up the three versions of a chapter, merges them with `git merge-file`, and writes the result back compact. Edits to different paragraphs merge cleanly. Edits to the same or to adjacent paragraphs conflict, as git's line merge always does. A file with whitespace between its top-level blocks is not what Neo writes, so the driver merges the raw files rather than drop that whitespace.
+
+Setting it up, once per machine:
+
+1. `node tools/git/setup-chapter-git.mjs` prints the commands and the attribute line and changes nothing. `node tools/git/setup-chapter-git.mjs --apply --global` sets `diff.neochapter.textconv`, `diff.neochapter.cachetextconv`, `merge.neochapter.name` and `merge.neochapter.driver` in the global git config. `--apply --repo <path>` sets them in one repo's own config instead. Git keeps driver commands in config only, never in a repo, so each machine needs this. The script paths are absolute and quoted, because the library folder is usually `NEO Library`, and a path relative to the repo is missing when git checks out the first chapter.
+2. Put this line in the library repo's `.gitattributes`: `book-*/chapters/*.html diff=neochapter merge=neochapter -text`. It covers every book's chapters. `-text` is needed: with `core.autocrlf` on, git turns a newline inside a chapter (in a `pre` block, say) into CRLF on checkout, and the stored file is then no longer the one Neo wrote.
+3. Node must be on the PATH of the shell git uses. `cachetextconv` keeps converted text as a note under `refs/notes/textconv/neochapter` in each clone, which makes the second `git blame` of a chapter fast (about 0.1 s against 3 s for 30 revisions) and needs `user.name` and `user.email` to be set, as for any commit.
+
+Limits:
+
+- GitHub's web view, and any hosted review, runs no textconv. It shows one line per chapter.
+- A clone without the setting shows whole-chapter diffs and one-line blame. The stored files and history are the same as with the setting, so nothing is lost.
+- The merge driver needs its own config entry on each machine. A clone without it conflicts on any two edits to one chapter.
+- A chapter with a merge conflict holds the lined text with conflict markers, so the writer can settle it. Once settled, the file is still lined, and upstream Neo loads the line breaks between paragraphs as text nodes. The chapter is compact again after a conversion with `compactLines` from `tools/git/neo-lines.js`; no command runs it yet.
+- Libraries last saved by an earlier build of this fork hold lined chapters, which load the same way until converted.
 
 ## Suggestion and review model
 
