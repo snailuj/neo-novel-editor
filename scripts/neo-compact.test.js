@@ -99,3 +99,50 @@ test('a dry run lists the file that would change and writes nothing', () => {
   assert.deepEqual(bytes(file), before.data);
   assert.equal(mtime(file), before.time);
 });
+
+const CONFLICT = '<p>one</p>\n<<<<<<< ours\n<p>two</p>\n=======\n<p>deux</p>\n>>>>>>> theirs\n<p>three</p>\n';
+
+test('a file that still holds conflict markers is refused, named, and left as it was', () => {
+  for (const args of [['--write'], []]) {
+    const dir = folder();
+    const file = path.join(dir, 'c1.html');
+    const fine = path.join(dir, 'c2.html');
+    put(file, CONFLICT);
+    put(fine, '<p>a</p>\n<p>b</p>\n');
+    const r = run(...args, file, fine);
+    assert.notEqual(r.status, 0, r.all);
+    assert.match(r.all, /refused/);
+    assert.ok(r.all.includes(file), r.all);
+    assert.deepEqual(bytes(file), Buffer.from(CONFLICT, 'utf8'));
+    assert.equal(mtime(file), new Date('2020-01-01T00:00:00Z').getTime());
+  }
+});
+
+test('one refused file does not stop the others from being compacted', () => {
+  const dir = folder();
+  const bad = path.join(dir, 'a.html');
+  const good = path.join(dir, 'b.html');
+  put(bad, CONFLICT);
+  put(good, '<p>a</p>\n<p>b</p>\n');
+  const r = run('--write', bad, good);
+  assert.notEqual(r.status, 0);
+  assert.deepEqual(bytes(good), Buffer.from('<p>a</p><p>b</p>'));
+});
+
+test('a file that does not survive lining after compacting is refused and left as it was', () => {
+  const shapes = {
+    'CRLF line ends': '<p>a</p>\r\n<p>b</p>\r\n',
+    'only some paragraphs on their own line': '<p>a</p><p>b</p>\n<p>c</p>',
+    'a space between blocks': '<p>a</p> <p>b</p>\n',
+    'blank lines between blocks': '<p>a</p>\n\n<p>b</p>\n'
+  };
+  for (const [name, text] of Object.entries(shapes)) {
+    const file = path.join(folder(), 'c1.html');
+    put(file, text);
+    const r = run('--write', file);
+    assert.notEqual(r.status, 0, name);
+    assert.match(r.all, /refused/, name);
+    assert.ok(r.all.includes(file), name);
+    assert.deepEqual(bytes(file), Buffer.from(text, 'utf8'), name);
+  }
+});
