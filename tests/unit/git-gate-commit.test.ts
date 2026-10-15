@@ -15,7 +15,7 @@ import { isolateGitConfig, log, tempLibrary } from './git-support.ts';
 
 const librarian = { name: 'Librarian', email: 'librarian@neo-hoard.invalid' };
 const CHAPTER = 'book-fox-1/chapters/c1.html';
-const BAD = '<p data-block="b1">One.</p>\n<p data-block="b1">One again.</p>';
+const BAD = '<p data-block="b1">One.</p>\n<p data-block="b 2">Two.</p>';
 const GOOD = '<p data-block="b1">One.</p>\n<p data-block="b2">Two.</p>';
 
 async function setup(t: Parameters<typeof tempLibrary>[0]) {
@@ -38,7 +38,7 @@ test('Gate-Warns-The-Writer: a writer\'s commit with a finding still commits eve
   assert.ok(made);
   assert.equal(made.files, 2);
   assert.deepEqual(await changed(), []);
-  assert.deepEqual(gate.findings().map((f) => `${f.path}|${f.rule}`), [`${CHAPTER}|Block-Ids-Unique`]);
+  assert.deepEqual(gate.findings().map((f) => `${f.path}|${f.rule}`), [`${CHAPTER}|Block-Ids-Citable`]);
   assert.ok(logged.some((l) => l.startsWith('warn|') && l.includes(CHAPTER)), logged.join('\n'));
 });
 

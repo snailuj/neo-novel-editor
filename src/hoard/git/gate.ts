@@ -2,7 +2,7 @@
 // pages are HTML chapters with their frontmatter in sidecars, so of hoard's lint only the
 // frontmatter rules still have their input; the rest read Markdown lines, callouts and
 // wikilinks, and wait for the HTML citation format. Chapter prose is never judged: the
-// gate reads a chapter only for its block ids.
+// gate reads a chapter only for the ids its citations name.
 //
 // What a finding does is the commit's business (commit.ts): a writer's commit logs it
 // and goes ahead, a librarian edit is refused.
@@ -15,7 +15,7 @@ import { checkNote } from '../../librarian/lint.ts';
 import { ManifestError, parseManifest } from '../../librarian/manifest.ts';
 import { DEFAULT_SCHEME, HOARD_LAYOUT, type Layout, type Scheme, schemeFrom } from '../../librarian/scheme.ts';
 
-export type GateRule = 'Sidecar-Fits-Its-Schema' | 'Frontmatter-Fits-The-Scheme' | 'Block-Ids-Unique';
+export type GateRule = 'Sidecar-Fits-Its-Schema' | 'Frontmatter-Fits-The-Scheme' | 'Block-Ids-Citable';
 
 export interface Finding {
   /** The file, relative to the library, with forward slashes. */
@@ -46,6 +46,8 @@ const SIDECARS: { match: RegExp; validate: Validator }[] = [
 const PAGE = /^\.neo\/book-[^/]+\/pages\/[^/]+\.json$/;
 const CHAPTER = /^book-[^/]+\/chapters\/[^/]+\.html$/;
 const BLOCK_ID = /\sdata-block="([^"]*)"/g;
+// What a citation's [[Page#^id]] can name, as wiki/convert.ts reads a page's own ^id.
+const CITABLE = /^[A-Za-z0-9-]+$/;
 // FN1 and AT2 judge a page's path and a generator on an author body; neither applies to
 // a sidecar whose page path is made up here.
 const FRONTMATTER_RULE = /^(?:FM|PR)\d+ /;
@@ -99,11 +101,11 @@ function checkManifest(text: string): string | null {
   }
 }
 
-function blockIdRepeats(file: StagedFile): Finding[] {
-  const counts = new Map<string, number>();
-  for (const m of file.text.matchAll(BLOCK_ID)) counts.set(m[1]!, (counts.get(m[1]!) ?? 0) + 1);
-  return [...counts].filter(([, n]) => n > 1)
-    .map(([id, n]) => ({ path: file.path, rule: 'Block-Ids-Unique' as const, message: `block id '${id}' is on ${n} blocks` }));
+// A repeated id is not judged: the first paragraph holding it owns it, as Enter copies
+// the attribute onto the new paragraph (wiki/convert.ts).
+function uncitableIds(file: StagedFile): Finding[] {
+  return [...file.text.matchAll(BLOCK_ID)].map((m) => m[1]!).filter((id) => !CITABLE.test(id))
+    .map((id) => ({ path: file.path, rule: 'Block-Ids-Citable' as const, message: `block id '${id}' cannot be cited (letters, digits and hyphens only)` }));
 }
 
 // JSON is YAML, so the frontmatter goes back into a note as a flow mapping that reads
@@ -139,7 +141,7 @@ export function checkFiles(files: readonly StagedFile[], context: CheckContext):
 
   for (const file of files) {
     if (CHAPTER.test(file.path)) {
-      findings.push(...blockIdRepeats(file));
+      findings.push(...uncitableIds(file));
     } else if (file.path === '.neo/changes.jsonl') {
       sidecar(file.path, checkChanges(file.text));
     } else if (file.path === '.neo/manifest.jsonl') {

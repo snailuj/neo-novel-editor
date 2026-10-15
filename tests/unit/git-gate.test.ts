@@ -3,7 +3,9 @@
 //   schema is a finding naming the file; a .neo file of no known kind is left alone.
 // Frontmatter-Fits-The-Scheme: a page sidecar's frontmatter is judged by lint's FM and
 //   PR rules against the library's scheme, or the neutral one without it.
-// Block-Ids-Unique: no two blocks of one chapter share a data-block id.
+// Block-Ids-Citable: every data-block id in a chapter is one a citation ([[Page#^id]])
+//   can name. A repeated id is allowed: the first paragraph holding it owns it, as Enter
+//   copies the attribute (wiki/convert.ts).
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { checkFiles, type StagedFile } from '../../src/hoard/git/gate.ts';
@@ -99,26 +101,26 @@ test('Frontmatter-Fits-The-Scheme: the scheme is read only when a page is staged
   assert.equal(reads, 1);
 });
 
-test('Block-Ids-Unique: each repeated data-block id in a chapter is one finding', () => {
-  const html = ['<p data-block="b1">One.</p>', '<p class="hy" data-block="b1">One, split.</p>',
-    '<p data-block="b2">Two.</p>', '<p data-block="b1">Again.</p>', '<p data-block="b2">Two.</p>'].join('\n');
+test('Block-Ids-Citable: each id a citation cannot name is one finding', () => {
+  const html = ['<p data-block="b1">One.</p>', '<p class="hy" data-block="">Empty.</p>',
+    '<p data-block="b 2">Spaced.</p>', '<p data-block="b^3">Caret.</p>', '<p data-block="b-4">Fine.</p>'].join('\n');
   const found = checkFiles([{ path: 'book-wiki-1/chapters/ch-1.html', text: html }], { schemeText: () => null });
   assert.deepEqual(found.map((f) => `${f.rule}|${f.message}`), [
-    "Block-Ids-Unique|block id 'b1' is on 3 blocks",
-    "Block-Ids-Unique|block id 'b2' is on 2 blocks",
+    "Block-Ids-Citable|block id '' cannot be cited (letters, digits and hyphens only)",
+    "Block-Ids-Citable|block id 'b 2' cannot be cited (letters, digits and hyphens only)",
+    "Block-Ids-Citable|block id 'b^3' cannot be cited (letters, digits and hyphens only)",
   ]);
 });
 
-test('Block-Ids-Unique: ids are judged per chapter, so two chapters may each hold b1', () => {
+test('Block-Ids-Citable: a repeated id is no finding, because the first paragraph holding it owns it', () => {
   assert.deepEqual(rules([
-    { path: 'book-wiki-1/chapters/ch-1.html', text: '<p data-block="b1">One.</p>' },
-    { path: 'book-wiki-1/chapters/ch-2.html', text: '<p data-block="b1">Two.</p>' },
+    { path: 'book-wiki-1/chapters/ch-1.html', text: '<p data-block="b1">One.</p>\n<p data-block="b1">One, split.</p>' },
   ]), []);
 });
 
-test('Block-Ids-Unique: a file that only looks like a chapter is not judged', () => {
+test('Block-Ids-Citable: a file that only looks like a chapter is not judged', () => {
   assert.deepEqual(rules([
-    { path: 'book-wiki-1/notes-ch-1.html', text: '<p data-block="b1"></p><p data-block="b1"></p>' },
-    { path: 'book-wiki-1/chapters/deeper/ch-1.html', text: '<p data-block="b1"></p><p data-block="b1"></p>' },
+    { path: 'book-wiki-1/notes-ch-1.html', text: '<p data-block="b 1"></p>' },
+    { path: 'book-wiki-1/chapters/deeper/ch-1.html', text: '<p data-block="b 1"></p>' },
   ]), []);
 });
