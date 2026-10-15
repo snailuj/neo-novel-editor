@@ -513,6 +513,15 @@ const keepOutlineView = async (run) => {
   }
 };
 
+// A failed assertion in a pane or Find test must not leave the Notes tab or
+// an open find bar for the tests after it
+const leaveWritingView = async (run) => {
+  try { await run(); } finally {
+    await js(`document.getElementById('searchbar').hidden || closeSearch()`);
+    await clickTab('manuscript');
+  }
+};
+
 // A pane leaves nothing behind: a tab of NEO's opened after it, or after it
 // and the manuscript, looks as it did before any pane showed. This comes
 // before the other pane tests because no earlier test shows a pane; one
@@ -573,7 +582,7 @@ test('a pane looks the same whatever was open before it', () => keepOutlineView(
   }
 }));
 
-test('pane', async () => {
+test('pane', () => leaveWritingView(async () => {
   await owlsOpen();
   await js(`window.neo.writeAux(${str(owls.id)}, 'notes', '<p>Notes about owls.</p>')`);
   await clickTab('plugin:probe:pane');
@@ -603,7 +612,7 @@ test('pane', async () => {
     .map((spec) => { try { window.__probe.neo.addPane(spec); return 'added'; } catch (err) { return err.name; } })`);
   assert.deepEqual(refused, ['TypeError', 'TypeError', 'TypeError', 'TypeError', 'TypeError']);
   assert.equal(await js(`document.querySelectorAll('.tab[data-tab^="plugin:probe:"]').length`), 1);
-});
+}));
 
 // what Find shows: its count, the matches it holds and the ones it paints
 const findView = () => js(`({
@@ -621,7 +630,7 @@ const findFor = async (q) => {
   await tick(400);
 };
 
-test('Find on a pane counts nothing in the Notes behind it', async () => {
+test('Find on a pane counts nothing in the Notes behind it', () => leaveWritingView(async () => {
   await owlsOpen();
   await clickBookNotes(600);
   await js('openSearch()');
@@ -638,7 +647,7 @@ test('Find on a pane counts nothing in the Notes behind it', async () => {
   assert.equal(await js(`document.getElementById('paper-scroll').scrollTop`), scroll);
   await js('closeSearch()');
   await clickTab('manuscript');
-});
+}));
 
 // a command in the Plugins menu, clicked as the writer would
 async function menuCommand(title) {
