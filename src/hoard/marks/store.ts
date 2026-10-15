@@ -150,7 +150,7 @@ export class MarkStore {
     const next = before.then(run, run);
     const settled = next.catch(() => {});
     this.#queues.set(file, settled);
-    void settled.then(() => { if (this.#queues.get(file) === settled) this.#queues.delete(file); });
+    settled.then(() => { if (this.#queues.get(file) === settled) this.#queues.delete(file); }, () => {});
     return next;
   }
 
