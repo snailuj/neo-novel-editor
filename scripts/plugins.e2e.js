@@ -441,6 +441,13 @@ const clickTab = async (name, ms) => {
   await js(`document.querySelector('.tab[data-tab="${name}"]').click()`);
   if (ms === undefined) await frames(); else await tick(ms);
 };
+// Notes opens on the chapter being written; the book's own page (what these
+// tests mean by Notes) is one click on the page list
+const clickBookNotes = async (ms) => {
+  await clickTab('notes', ms);
+  await js(`document.querySelector('.notes-book').click()`);
+  if (ms === undefined) await frames(); else await tick(ms);
+};
 
 // What the writer sees of the editor, read from the DOM alone, so any view or
 // mark that a tab leaves behind shows, whichever it is. Scroll and caret are
@@ -474,7 +481,7 @@ const openOutline = (view) => async () => {
 };
 const NEO_TABS = [
   { name: 'Notes', tab: 'notes', open: async () => {
-    await clickTab('notes');
+    await clickBookNotes();
     for (let i = 0; i < 40 && (await auxKind()) !== 'notes'; i++) await tick(50);
     assert.equal(await auxKind(), 'notes', 'the notes never loaded');
     await frames();
@@ -576,7 +583,7 @@ test('pane', async () => {
   });
   assert.equal(await js(`window.__probe.pane.element.parentElement.id`), 'aux-paper');
   // Notes hides the pane and shows its own title and text
-  await clickTab('notes', 600);
+  await clickBookNotes(600);
   assert.deepEqual(await paneView(), {
     tab: 'Probe Pane', active: false, pane: null, title: 'Notes', notes: 'Notes about owls.', manuscript: false
   });
@@ -616,7 +623,7 @@ const findFor = async (q) => {
 
 test('Find on a pane counts nothing in the Notes behind it', async () => {
   await owlsOpen();
-  await clickTab('notes', 600);
+  await clickBookNotes(600);
   await js('openSearch()');
   await findFor('owls');
   assert.deepEqual(await findView(), { count: '1 found', matches: 1, painted: 1 });

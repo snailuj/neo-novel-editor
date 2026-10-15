@@ -55,6 +55,9 @@ test('outline editing, Darlings remove/restore, selection, and chapter creation'
     expect(result.restored).toBe('One paragraph.');
     expect(result.order).toHaveLength(2);
     await fixture.page.locator('.tab[data-tab="notes"]').click();
+    // the tab opens the current chapter's notes; these are the book's
+    // the nav pane can be shut at this width, so click through the DOM
+    await fixture.page.locator('.notes-book').evaluate((el) => el.click());
     await fixture.page.locator('#aux-editor').fill('Note Māia');
     await fixture.page.evaluate(() => flushAux());
     await expect.poll(() => fixture.page.evaluate((id) => neo.readAux(id, 'notes'), bookId)).toContain('Note Māia');
