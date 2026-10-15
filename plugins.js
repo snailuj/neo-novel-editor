@@ -9,7 +9,9 @@
 //                             the file held before it as this window knew
 //                             it (null when it never knew)
 //   book(), chapter(chId)     copies of the open book and of a chapter
-//   addPane({ id, title })    a tab of its own beside Notes
+//   addPane({ id, title })    a tab of its own beside Notes; for API 3,
+//                             with side: true, a section of the right-hand
+//                             pane beside the manuscript instead
 //   addCommand(id, run)       the handler for a command in the Plugins menu
 //   status(text)              a quiet line among the counters
 //   invoke(channel, payload)  a call to its own main half (plugins-main.js)
@@ -35,7 +37,7 @@
 'use strict';
 
 (() => {
-  const API_VERSIONS = Object.freeze([1, 2]);
+  const API_VERSIONS = Object.freeze([1, 2, 3]);
   const EVENTS = ['book-open', 'book-close', 'chapter-change', 'chapter-saved', 'selection', 'rendered'];
 
   // One entry per plugin that registered: { id, listeners, panes, commands,
@@ -638,36 +640,86 @@
   // A pane is a plugin's own tab beside Notes, Outline and Darlings, named
   // plugin:<plugin>:<pane>, with an element on the same paper as theirs for
   // the plugin to fill. switchTab asks showTab first, so NEO never reads or
-  // writes a file for a pane.
+  // writes a file for a pane. For API 3, side: true makes it a section of
+  // the right-hand pane instead, under its title after NEO's own lists:
+  // styles.css shows it wherever NEO's Notes & Comments list shows, so it
+  // sits beside the manuscript and goes on the Notes, Outline and Darlings
+  // tabs, where that pane holds their own lists. Tabs and sections share
+  // one set of ids.
   const PANE_ID = /^[a-z][a-z0-9-]{0,31}$/;
-  function addPane(entry, spec) {
-    const { id, title } = spec || {};
+  const PANE_KEYS = ['id', 'title', 'side'];
+  function addPane(entry, spec, apiVersion) {
+    const { id, title, side } = spec || {};
     if (typeof id !== 'string' || !PANE_ID.test(id)) throw new TypeError(`a pane's id is a lower-case name such as "notes-index", not ${text(id)}`);
     if (typeof title !== 'string' || !title.trim()) throw new TypeError(`pane ${id} needs a title`);
     if (entry.panes.has(id)) throw new TypeError(`pane ${id} is added already`);
+    // API 1 and 2 took any other keys and ignored them, and still do
+    const v3 = apiVersion >= 3;
+    if (v3) {
+      const odd = Object.keys(spec).find((key) => !PANE_KEYS.includes(key));
+      if (odd !== undefined) throw new TypeError(`pane ${id} takes id, title and side, not ${text(odd)}`);
+      if (side !== undefined && typeof side !== 'boolean') throw new TypeError(`pane ${id}'s side is true or false, not ${shown(side)}`);
+    }
     const element = document.createElement('div');
-    if (entry.disposed) return Object.freeze({ element });
-    const name = `plugin:${entry.id}:${id}`;
-    const tab = document.createElement('div');
-    tab.className = 'tab';
-    tab.setAttribute('role', 'tab');
-    tab.setAttribute('aria-selected', 'false');
-    tab.tabIndex = 0;
-    tab.dataset.tab = name;
-    tab.textContent = title;
-    tab.addEventListener('click', () => get.switchTab(name));
-    // Enter or Space opens it, as they open NEO's own tabs
-    tab.addEventListener('keydown', (e) => {
-      if (e.metaKey || e.ctrlKey || e.altKey || (e.key !== 'Enter' && e.key !== ' ')) return;
-      e.preventDefault();
-      tab.click();
-    });
-    element.className = 'plugin-pane';
-    element.hidden = true;
-    document.getElementById('tabs').appendChild(tab);
-    document.getElementById('aux-paper').appendChild(element);
-    entry.panes.set(id, { name, title, tab, element });
-    return Object.freeze({ element });
+    const pane = { name: `plugin:${entry.id}:${id}`, title, element, tab: null, section: null };
+    const show = () => showPane(entry, pane);
+    const made = v3 ? Object.freeze({ element, show }) : Object.freeze({ element });
+    if (entry.disposed) return made;
+    if (v3 && side) {
+      const section = document.createElement('section');
+      section.className = 'plugin-side';
+      section.dataset.plugin = entry.id;
+      section.dataset.pane = id;
+      const head = document.createElement('h2');
+      head.className = 'plugin-side-title';
+      head.id = `plugin-side-${entry.id}-${id}`;
+      head.textContent = title;
+      section.setAttribute('aria-labelledby', head.id);
+      element.className = 'plugin-side-body';
+      section.append(head, element);
+      document.getElementById('side-pane').appendChild(section);
+      pane.section = section;
+    } else {
+      const tab = document.createElement('div');
+      tab.className = 'tab';
+      tab.setAttribute('role', 'tab');
+      tab.setAttribute('aria-selected', 'false');
+      tab.tabIndex = 0;
+      tab.dataset.tab = pane.name;
+      tab.textContent = title;
+      tab.addEventListener('click', () => get.switchTab(pane.name));
+      // Enter or Space opens it, as they open NEO's own tabs
+      tab.addEventListener('keydown', (e) => {
+        if (e.metaKey || e.ctrlKey || e.altKey || (e.key !== 'Enter' && e.key !== ' ')) return;
+        e.preventDefault();
+        tab.click();
+      });
+      element.className = 'plugin-pane';
+      element.hidden = true;
+      document.getElementById('tabs').appendChild(tab);
+      document.getElementById('aux-paper').appendChild(element);
+      pane.tab = tab;
+    }
+    entry.panes.set(id, pane);
+    return made;
+  }
+
+  // A pane brought in front of the writer, for a plugin answering the
+  // writer's own action (a click on its highlight, a command): a tab is
+  // switched to, and a section's pane opened with the section scrolled into
+  // view. A section is shown only where styles.css shows it, so on the
+  // Notes, Outline and Darlings tabs nothing moves and the answer is false;
+  // so too with no book open, or once the plugin is disposed.
+  function showPane(entry, pane) {
+    if (entry.disposed || !openedBook()) return false;
+    if (pane.tab) {
+      get.switchTab(pane.name);
+      return true;
+    }
+    if (getComputedStyle(pane.section).display === 'none') return false;
+    document.getElementById('side-pane').classList.add('open');
+    pane.section.scrollIntoView({ block: 'nearest' });
+    return true;
   }
 
   // switchTab's hook, on every switch away from the manuscript: every pane
@@ -677,6 +729,7 @@
     let shown = null;
     for (const entry of registry.values()) {
       for (const pane of entry.panes.values()) {
+        if (!pane.tab) continue; // a section of the right-hand pane
         pane.element.hidden = pane.name !== name;
         if (pane.name === name) shown = pane;
       }
@@ -768,7 +821,7 @@
       },
       book: readBook,
       chapter: readChapter,
-      addPane: (spec) => addPane(entry, spec),
+      addPane: (spec) => addPane(entry, spec, apiVersion),
       addCommand: (commandId, run) => addCommand(entry, commandId, run),
       status: (value) => setStatus(entry, value)
     };
@@ -795,6 +848,10 @@
     entry.commands.clear();
     unpaintAll(entry);
     for (const pane of entry.panes.values()) {
+      if (pane.section) {
+        pane.section.remove();
+        continue;
+      }
       pane.tab.remove();
       pane.element.remove();
       // the writer was looking at it: back to the page. Should that fail,

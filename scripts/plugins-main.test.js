@@ -167,19 +167,19 @@ describe('plugin discovery', { concurrency: 1 }, () => {
   // manifest is not judged
   test('a manifest for a newer plugin API than this NEO knows is refused with a reason that names both versions', () => {
     const app = appFolder({
-      'plugins/ahead': plugin('ahead', { apiVersion: 3 }),
+      'plugins/ahead': plugin('ahead', { apiVersion: 4 }),
       'plugins/far-ahead': plugin('far-ahead', { apiVersion: 12, newKey: true }),
       'plugins/zero': plugin('zero', { apiVersion: 0 }),
       'plugins/fraction': plugin('fraction', { apiVersion: 2.5 }),
-      'plugins/text': plugin('text', { apiVersion: '3' }),
-      'plugins/current': plugin('current', { apiVersion: 2 })
+      'plugins/text': plugin('text', { apiVersion: '4' }),
+      'plugins/current': plugin('current', { apiVersion: 3 })
     });
     const { logs } = wire({ appRoot: app });
     assert.deepEqual(ids(), ['current']);
     assert.equal(logs.length, 5, logs.join('\n'));
     const line = (name) => logs.find((l) => l.includes(path.join(app, 'plugins', name))) || `nothing logged for ${name}`;
-    assert.match(line('ahead'), /needs plugin API 3\b.*\bthis NEO knows up to 2\b/);
-    assert.match(line('far-ahead'), /needs plugin API 12\b.*\bthis NEO knows up to 2\b/);
+    assert.match(line('ahead'), /needs plugin API 4\b.*\bthis NEO knows up to 3\b/);
+    assert.match(line('far-ahead'), /needs plugin API 12\b.*\bthis NEO knows up to 3\b/);
     for (const name of ['zero', 'fraction', 'text']) assert.match(line(name), /does not match the manifest format/, name);
   });
 
@@ -1334,14 +1334,14 @@ describe('the window half', () => {
   });
 
   test('a listed plugin written for an API this NEO does not know is refused', () => {
-    const host = windowHalf([{ id: 'ahead', apiVersion: 3, rendererUrl: 'plugins/ahead/renderer.js', styleUrl: null }]);
+    const host = windowHalf([{ id: 'ahead', apiVersion: 4, rendererUrl: 'plugins/ahead/renderer.js', styleUrl: null }]);
     host.attach();
     assert.deepEqual(host.added.map((el) => [el.tag, el.src]), [['script', 'plugins/ahead/renderer.js']]);
     let activated = false;
-    host.NeoPlugins.register({ id: 'ahead', apiVersion: 3, activate() { activated = true; } });
+    host.NeoPlugins.register({ id: 'ahead', apiVersion: 4, activate() { activated = true; } });
     assert.equal(activated, false);
     assert.equal(host.logged.length, 1);
-    assert.match(host.logged[0], /^plugin ahead: apiVersion 3\b.*knows 1\b.*not activated/);
+    assert.match(host.logged[0], /^plugin ahead: apiVersion 4\b.*knows 1\b.*not activated/);
   });
 
   test('invoke reaches the calling plugin\'s own main half, and a plugin that failed to activate invokes nothing', async () => {
@@ -1844,7 +1844,7 @@ describe('the window half', () => {
 
   test('API 2 adds where, go, replace and highlight; a plugin written for API 1 is handed none of them', () => {
     const { NeoPlugins, neo } = bothApis();
-    assert.deepEqual([...NeoPlugins.apiVersions], [1, 2]);
+    assert.deepEqual([...NeoPlugins.apiVersions], [1, 2, 3]);
     assert.deepEqual(Object.keys(neo.api2).filter((name) => !(name in neo.api1)), ['where', 'go', 'replace', 'highlight']);
     assert.equal(neo.api1.where, undefined);
     assert.equal(neo.api1.go, undefined);

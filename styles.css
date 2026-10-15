@@ -2216,6 +2216,12 @@ body.light .snap-ch:hover { color: #1c1a17; }
 .side-card { background: #2a2a26; border: 1px solid #3a3934; border-radius: 6px; padding: 10px 12px; }
 .side-card.current { box-shadow: 0 0 0 2px var(--red); border-color: transparent; }
 .side-cards-title { font-size: 12px; text-transform: uppercase; letter-spacing: 2px; color: var(--muted); padding: 0 4px; }
+/* a plugin's own section of the right-hand pane (plugins.js), shown wherever
+   the pane shows Notes & Comments: beside the manuscript, not on the Notes,
+   Outline or Darlings tabs, where the pane holds their own lists */
+.plugin-side { padding: 0 12px; margin-top: 22px; }
+.plugin-side-title { margin: 0 4px 8px; font-size: 12px; font-weight: normal; text-transform: uppercase; letter-spacing: 2px; color: var(--muted); }
+#editor-view.notes-tab .plugin-side, #editor-view.outline-tab .plugin-side, #editor-view.darlings-tab .plugin-side { display: none; }
 .side-card-head { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #bdb8ad; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-card-section .side-card-head { font-weight: 500; color: #8f8a80; }
 .side-card-head { cursor: pointer; border-radius: 3px; }

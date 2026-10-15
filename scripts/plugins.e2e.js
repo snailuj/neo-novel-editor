@@ -664,6 +664,72 @@ const bind = (id, fn = '() => {}') => js(`(() => {
   try { window.__probe.neo.addCommand(${str(id)}, ${fn}); return 'bound'; } catch (err) { return err.name + ': ' + err.message; }
 })()`);
 
+// A plugin's section of the right-hand pane shows exactly where NEO's own
+// Notes & Comments list shows, on every tab, and nowhere else.
+const sideView = () => js(`(() => {
+  const shown = (el) => !!el && getComputedStyle(el).display !== 'none';
+  const section = window.__probe.side.element.closest('.plugin-side');
+  return {
+    side: shown(section),
+    stickies: shown(document.getElementById('sticky-list')),
+    pane: section.parentElement.id,
+    title: section.querySelector('.plugin-side-title').textContent,
+    text: window.__probe.side.element.textContent
+  };
+})()`);
+
+test('a side section shows where the placeholders show', () => leaveWritingView(async () => {
+  await owlsOpen();
+  const views = {};
+  for (const tab of ['manuscript', 'notes', 'outline', 'darlings', 'plugin:probe:pane', 'manuscript']) {
+    await clickTab(tab, 300);
+    views[tab] = await sideView();
+  }
+  const all = Object.values(views);
+  assert.ok(all.some((v) => v.stickies) && all.some((v) => !v.stickies), `the placeholders list is shown on some tabs and hidden on others: ${str(views)}`);
+  for (const [tab, view] of Object.entries(views)) {
+    assert.equal(view.side, view.stickies, `on ${tab}`);
+    assert.deepEqual([view.pane, view.title, view.text], ['side-pane', 'Probe Side', 'What the probe shows beside the page.'], `on ${tab}`);
+  }
+}));
+
+test("show opens the right-hand pane on the page, and moves the writer nowhere else", () => leaveWritingView(async () => {
+  await owlsOpen();
+  const pane = () => js(`document.getElementById('side-pane').classList.contains('open')`);
+  const close = () => js(`(() => { const p = document.getElementById('side-pane'); if (p.dataset.pinned === '1') pinPane('side', false); p.classList.remove('open'); })()`);
+  await clickTab('manuscript');
+  await close();
+  assert.equal(await pane(), false);
+  assert.equal(await js('window.__probe.side.show()'), true);
+  assert.equal(await pane(), true);
+  await clickTab('outline', 300);
+  await close();
+  assert.equal(await js('window.__probe.side.show()'), false);
+  assert.equal(await js('currentTab'), 'outline');
+  assert.equal(await pane(), false);
+  // a tab pane's show is the click on its tab
+  assert.equal(await js('window.__probe.pane.show()'), true);
+  assert.equal(await js('currentTab'), 'plugin:probe:pane');
+}));
+
+test('side sections and tabs share ids, and API 3 takes only the keys it knows', async () => {
+  const refused = await js(`[{ id: 'pane', title: 'Again', side: true }, { id: 'side', title: 'Again' }, { id: 'odd', title: 'Odd', where: 'side' }, { id: 'odd', title: 'Odd', side: 'yes' }]
+    .map((spec) => { try { window.__probe.neo.addPane(spec); return 'added'; } catch (err) { return err.name; } })`);
+  assert.deepEqual(refused, ['TypeError', 'TypeError', 'TypeError', 'TypeError']);
+  assert.equal(await js(`document.querySelectorAll('.plugin-side[data-plugin="probe"]').length`), 1);
+});
+
+test('an API 1 plugin asking for a side section gets a tab, as before', async () => {
+  try {
+    const got = await js(`(() => { const p = window.__oldSide = window.__oldApi.neo.addPane({ id: 'old-side', title: 'Old Side', side: true }); return { keys: Object.keys(p), parent: p.element.parentElement.id }; })()`);
+    assert.deepEqual(got, { keys: ['element'], parent: 'aux-paper' });
+    assert.equal(await js(`!!document.querySelector('.tab[data-tab="plugin:old-api:old-side"]')`), true);
+  } finally {
+    // the tab and its element go again, for the tests that count panes
+    await js(`(() => { const tab = document.querySelector('.tab[data-tab="plugin:old-api:old-side"]'); if (tab) tab.remove(); if (window.__oldSide) window.__oldSide.element.remove(); })()`);
+  }
+});
+
 test('command', async () => {
   const before = await said();
   await menuCommand('Say Hello');
@@ -751,6 +817,7 @@ test('broken plugin', async () => {
   // nor is the pane it added before it threw anywhere to be seen
   assert.equal(await js(`document.querySelector('.tab[data-tab^="plugin:broken:"]')`), null);
   assert.deepEqual(await js(`[...document.querySelectorAll('.plugin-pane')].map((el) => el === window.__probe.pane.element)`), [true]);
+  assert.deepEqual(await js(`[...document.querySelectorAll('.plugin-side')].map((el) => el.dataset.plugin)`), ['probe']);
   // nor its status
   assert.equal(await js(`document.querySelector('#counters .plugin-status[data-plugin="broken"]')`), null);
   // and its command, still in the menu from its plugin.json, runs nothing
