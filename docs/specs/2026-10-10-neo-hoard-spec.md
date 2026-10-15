@@ -87,6 +87,18 @@ Built 15 October 2026 (roadmap step 5, Wiki-Moves-Into-Neo); the plan is `port-p
 - `[[links]]` are drawn in every book, `wiki-link` when the target names a page (by title, as Obsidian resolves it, never through an alias) and `wiki-missing` when it does not. Ctrl+click (Cmd+click) or Plugins > Follow Link shows the page in the Wiki pane from another book, and moves the caret to it in the wiki book. While the wiki is open its pages are set flush left without a drop cap.
 - Not built yet: search (step 6), updating a page from a changed source, rendering the Markdown, attachments and embeds, and writing pages into books.
 
+## Suggest and review as built
+
+Built 15 October 2026 (roadmap step 8, Suggest-And-Review); the plan is `port-plan/plans/suggest-and-review.md` in the project files. The window half is `src/hoard/review/window.ts`, the main half `src/hoard/review/main.ts`; no host or upstream file changed.
+
+- A page is the librarian's only when its page sidecar says so: `provenance.author`'s first voice is the librarian, or, with no voice recorded, its `type` is lore or project (`review/owner.ts`). Every other chapter is the writer's, so a page whose owner is unknown is never changed by the librarian.
+- The librarian's pages open held. Suggest Change (Plugins menu, or the Comments section's mode line), or a letter, a paste or a delete typed on the page, opens a composer with the selected words and the keystroke applied. An empty box is a deletion, a caret with no selection an insertion, anything else a substitution; an optional reason becomes the suggestion's first comment. A suggestion lies inside one paragraph.
+- The librarian reviews a suggestion as soon as it is added, against the page as it is now (`review/rules.ts`). It flags it, with its reason as a comment signed by the librarian, when the words are gone, when another waiting suggestion overlaps them, or when the change leaves a `[[link]]` that names no page. Otherwise it applies it as a librarian edit (the writer's commit, the change, the librarian's commit) and marks it accepted. The review is rules only: nothing here judges whether a change is true to the world.
+- A flagged suggestion offers Accept Anyway, applied as the writer's edit and committed under their name, and Withdraw, which keeps the words in the sidecar. An open suggestion on the writer's own page (an imported one) offers Accept and Reject.
+- Edit Directly lets the caret's page go until the book closes; the next open is in suggest mode again.
+- Insertions are drawn on the letter beside their point. A closed mark is never stale.
+- Not built yet: marks, comments and suggestions in the Wiki pane, the pane writing a closed book's page, and editing in the pane. The plan sequences them on HTML pages.
+
 ## Suggestion and review model
 
 The author's requirement, in their words (10 October 2026):
