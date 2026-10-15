@@ -13,6 +13,7 @@
 // (wiki/window.ts) imports pages, opens the wiki book and follows links into it, which
 // needs API 4's open.
 import { startLibrarian } from './git/librarian.ts';
+import { startPaneMarks } from './marks/pane-marks.ts';
 import { startMarks } from './marks/window.ts';
 import { startReview } from './review/window.ts';
 import { startWiki } from './wiki/window.ts';
@@ -49,6 +50,7 @@ NeoPlugins.register({
     const wiki = startWiki(neo);
     const librarian = startLibrarian(neo);
     const review = startReview(neo, marks, { pages: wiki.index, librarian });
-    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, librarian, review }) });
+    const paneMarks = startPaneMarks(neo, wiki.pane);
+    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, librarian, review, paneMarks }) });
   },
 });

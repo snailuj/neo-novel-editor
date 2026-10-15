@@ -124,3 +124,26 @@ body[data-hoard-wiki] .chapter-body p { text-indent: 0; text-align: start; hyphe
 .hoard-extra { display: inline-flex; gap: 8px; margin-inline-start: 8px; }
 .hoard-extra[hidden] { display: none; }
 .hoard-mark .hoard-extra button { min-block-size: 44px; min-inline-size: 44px; }
+
+/* Marks in the Wiki pane (marks/pane-marks.ts): drawn on the pane's own lines with the
+   plugin's own highlights, the same look as on the page. */
+::highlight(hoard-pane-comment) { background-color: color-mix(in srgb, var(--accent) 26%, transparent); }
+::highlight(hoard-pane-highlight) { background-color: color-mix(in srgb, var(--muted) 30%, transparent); }
+::highlight(hoard-pane-suggestion) { text-decoration: underline dotted var(--accent); }
+::highlight(hoard-pane-insertion) { text-decoration: underline double var(--accent); }
+::highlight(hoard-pane-flagged) { background-color: color-mix(in srgb, var(--red) 26%, transparent); }
+.hoard-pane-marks { margin-block-start: 12px; }
+.hoard-pane-marks-head { display: flex; align-items: center; gap: 8px; margin-inline: 12px; }
+.hoard-pane-marks-title { flex: 1; margin: 0; font-size: 11px; font-weight: normal; color: var(--muted); }
+.hoard-pane-add {
+  background: none; border: none; color: var(--muted); font-size: 11px;
+  min-block-size: 44px; min-inline-size: 44px; opacity: 0;
+}
+.hoard-wiki-pane:hover .hoard-pane-add, .hoard-pane-add:focus-visible { opacity: 1; }
+.hoard-pane-add:hover { color: var(--accent); }
+.hoard-pane-composer { cursor: default; }
+.hoard-pane-marks textarea:focus-visible, .hoard-pane-marks button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.hoard-pane-marks .s-actions button { min-block-size: 44px; min-inline-size: 44px; }
+.hoard-pane-marks .hoard-mark .hoard-label, .hoard-pane-marks .hoard-mark .hoard-reply, .hoard-pane-marks .hoard-mark .s-actions { opacity: 0; }
+.hoard-pane-marks .hoard-mark:hover :is(.hoard-label, .hoard-reply, .s-actions),
+.hoard-pane-marks .hoard-mark:focus-within :is(.hoard-label, .hoard-reply, .s-actions) { opacity: 1; }

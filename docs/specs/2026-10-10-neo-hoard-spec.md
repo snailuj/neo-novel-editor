@@ -99,7 +99,8 @@ Built 15 October 2026 (roadmap step 8, Suggest-And-Review); the plan is `port-pl
 - A flagged suggestion offers Accept Anyway, applied as the writer's edit and committed under their name, and Withdraw, which keeps the words in the sidecar. An open suggestion on the writer's own page (an imported one) offers Accept and Reject.
 - Edit Directly lets the caret's page go until the book closes; the next open is in suggest mode again.
 - Insertions are drawn on the letter beside their point. A closed mark is never stale.
-- Not built yet: marks, comments and suggestions in the Wiki pane, the pane writing a closed book's page, and editing in the pane. The plan sequences them on HTML pages.
+- The Wiki pane draws the shown page's open marks on its own lines (CSS highlights `hoard-pane-*`, since the host's mark only the open book) and lists them under the page (`marks/pane-marks.ts`). From the pane the writer comments on selected words, replies, resolves and reopens, and withdraws a waiting suggestion; each writes only the page's marks sidecar, which the wiki book then shows too.
+- Not built yet: suggesting and accepting from the pane, which need the pane to write a closed book's page, and editing in the pane. The plan sequences them on HTML pages.
 
 ## Suggestion and review model
 
