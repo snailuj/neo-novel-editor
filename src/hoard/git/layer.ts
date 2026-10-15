@@ -6,6 +6,7 @@
 import { validateHoardSettingsV1 } from '../../generated/validators.cjs';
 import { blameChapter, type BlameLine } from './blame.ts';
 import { Checkpoints, type Clock } from './checkpoints.ts';
+import type { Gate } from './gate.ts';
 import { commitAll, whoFor, type Identity, type Reason, type Who } from './commit.ts';
 import { repoState, syncedFolder, type RepoState } from './repo.ts';
 import { GitError, type Git, type GitLog } from './runner.ts';
@@ -62,6 +63,7 @@ export class GitLayer {
   #lastFailure = '';
   #leftOut = '';
   #pairs: Promise<unknown> = Promise.resolve();
+  #gate: Gate | undefined;
 
   constructor(options: GitLayerOptions) {
     this.#o = options;
@@ -71,6 +73,11 @@ export class GitLayer {
       commit: (reason) => this.#commit(reason),
       onError: (err, reason) => this.#failed(err, reason),
     });
+  }
+
+  /** The pre-commit gate every commit from here on runs (gate.ts). */
+  useGate(gate: Gate): void {
+    this.#gate = gate;
   }
 
   status(): RepoState {
@@ -211,7 +218,7 @@ export class GitLayer {
     const { git, library, settings, log } = this.#o;
     const start = performance.now();
     const made = await commitAll(git, library, {
-      who, reason, librarian: settings.librarian, author: settings.author, paths,
+      who, reason, librarian: settings.librarian, author: settings.author, paths, gate: this.#gate,
     });
     this.#lastFailure = '';
     if (!made) {
