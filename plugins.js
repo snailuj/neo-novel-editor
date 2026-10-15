@@ -22,6 +22,9 @@
 //                             the text at a place rewritten, as if typed
 //   highlight(name, places)   places marked on the page under a name of its
 //                             own, kept until it is cleared (see highlight)
+// and, for a plugin written for API 3, side sections (see addPane) and:
+//   hold(chIds)               chapters the writer can read, select and copy
+//                             but not type in (see hold)
 // None of them writes a file: replace edits the page as typing does, and a
 // chapter reaches the disk through persistChapter alone. That is no wall.
 // A plugin's script runs in NEO's page, where window.neo, NEO's own way to
@@ -240,6 +243,7 @@
     if (event === 'rendered') {
       drawnId = detail.bookId;
       repaint();
+      markHolds();
     }
     dispatch(listenersOf(event), detail);
     // its listeners could still read the closing book; a place names no
@@ -247,7 +251,11 @@
     if (event === 'book-close') {
       openId = null;
       drawnId = null;
-      for (const entry of registry.values()) unpaintAll(entry);
+      for (const entry of registry.values()) {
+        unpaintAll(entry);
+        entry.holds.clear();
+      }
+      drawCaret();
     }
   }
 
@@ -480,7 +488,8 @@
   // own path. Refused, with nothing changed: busy while an input method
   // composes, hidden off the manuscript and while the book closes, missing
   // when the place is not on the page, blocked on a ghost line (an outline
-  // note, app.js) or when the editor would not take it, stale when the text
+  // note, app.js), in a chapter the writer cannot type in that no plugin
+  // holds, or when the editor would not take it, stale when the text
   // there is not expectedText. A refusal is final; nothing queues or retries
   // it. The place's scroll plays no part: the writer's caret and scroll stay.
   async function replace(entry, place, expectedText, newText) {
@@ -502,35 +511,45 @@
     if (!range) return refused('missing');
     const body = bodyOf(place.chId);
     const p = body.querySelectorAll('p')[place.pIdx];
-    if (!body.isContentEditable || p.classList.contains('ghost')) return refused('blocked');
+    const lifted = isHeld(place.chId) && !body.isContentEditable;
+    if ((!body.isContentEditable && !lifted) || p.classList.contains('ghost')) return refused('blocked');
     const was = p.textContent;
     if (was.slice(place.off, place.off + place.len) !== expectedText) return refused('stale');
     const want = was.slice(0, place.off) + newText + was.slice(place.off + place.len);
-    const change = withWriterCaret(() => {
-      body.focus({ preventScroll: true });
-      const sel = getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
-      // execCommand fires no beforeinput, so NEO's filters on typing hear
-      // one first and can refuse it as they refuse a key (vim keys' moving
-      // mode refuses every insertText, app.js)
-      const asked = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: newText });
-      const inserted = body.dispatchEvent(asked) && document.execCommand('insertText', false, newText);
-      const now = body.querySelectorAll('p')[place.pIdx];
-      const got = now ? now.textContent : null;
-      if (got === want) return { p, off: place.off, len: place.len, text: newText };
-      // text left as it was is an insert the editor refused; an insert that
-      // came out otherwise is taken back. A refused insert put nothing on
-      // the engine's undo stack, so its undo would take the writer's last
-      // typing: what changed the line then is the listener's own.
-      if (got !== was && inserted) {
-        document.execCommand('undo');
-        log(entry.id, `replace was undone: the paragraph read ${shown(got)} where ${shown(want)} was meant`);
-      } else if (got !== was) {
-        log(entry.id, `replace was refused, and nothing undone: the paragraph read ${shown(got)} where ${shown(was)} was`);
-      }
-      return null;
-    });
+    // a held chapter takes the edit with its hold lifted for it, and put
+    // back however the edit ends; the engine's undo then has nothing of it
+    // to take back, so the writer's ⌘Z leaves it alone
+    if (lifted) body.contentEditable = 'true';
+    let change = null;
+    try {
+      change = withWriterCaret(() => {
+        body.focus({ preventScroll: true });
+        const sel = getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        // execCommand fires no beforeinput, so NEO's filters on typing hear
+        // one first and can refuse it as they refuse a key (vim keys' moving
+        // mode refuses every insertText, app.js)
+        const asked = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: newText });
+        const inserted = body.dispatchEvent(asked) && document.execCommand('insertText', false, newText);
+        const now = body.querySelectorAll('p')[place.pIdx];
+        const got = now ? now.textContent : null;
+        if (got === want) return { p, off: place.off, len: place.len, text: newText };
+        // text left as it was is an insert the editor refused; an insert that
+        // came out otherwise is taken back. A refused insert put nothing on
+        // the engine's undo stack, so its undo would take the writer's last
+        // typing: what changed the line then is the listener's own.
+        if (got !== was && inserted) {
+          document.execCommand('undo');
+          log(entry.id, `replace was undone: the paragraph read ${shown(got)} where ${shown(want)} was meant`);
+        } else if (got !== was) {
+          log(entry.id, `replace was refused, and nothing undone: the paragraph read ${shown(got)} where ${shown(was)} was`);
+        }
+        return null;
+      });
+    } finally {
+      if (lifted) body.contentEditable = 'false';
+    }
     return change ? { ok: true } : refused('blocked');
   }
 
@@ -610,6 +629,133 @@
     entry.highlights.set(name, places.map(({ chId, pIdx, off, len }) => ({ chId, pIdx, off, len })));
     keyHolders.set(key, entry);
     paint(entry, name, new Map());
+  }
+
+  // Holds. A plugin holds chapters of the open book that the writer can
+  // read, select and copy but not type in: a page that takes suggestions
+  // rather than edits. A held chapter's body is not editable, as NEO's own
+  // contents page is not, so no key, paste, cut, drop, spelling fix or input
+  // method reaches it. Chapters drawn anew are held again on rendered, and
+  // resetNativeUndo (app.js) asks held() when it makes a body editable once
+  // more. Only typing stops: NEO's other ways into a chapter (Find and
+  // Replace, moving outline cards, a chapter from another device) still
+  // reach it. A page that cannot be typed in draws no caret and moves none
+  // for the keys, so the host does both (see moveIn and drawCaret). A
+  // chapter is held while any plugin holds it; a hold names no book, so it
+  // goes when the book closes, as highlights do.
+  function isHeld(chId) {
+    if (!openedBook()) return false;
+    for (const entry of registry.values()) if (!entry.disposed && entry.holds.has(chId)) return true;
+    return false;
+  }
+
+  // Each chapter on the page made editable or not, and marked data-held on
+  // its section (outside the body, so captureBody never saves it), as the
+  // holds now say. Only a body the writer could type in is held, and only a
+  // held one let go: a contents page is never made editable.
+  let marked = false; // whether any chapter on the page is marked held
+  function markHolds() {
+    if (!marked && ![...registry.values()].some((entry) => entry.holds.size)) return;
+    if (!drawn()) return;
+    marked = false;
+    for (const chapter of document.querySelectorAll('#chapters .chapter')) {
+      const body = chapter.querySelector('.chapter-body');
+      if (!body) continue;
+      const held = isHeld(chapter.dataset.id);
+      if (held) {
+        marked = true;
+        if (body.isContentEditable) {
+          body.contentEditable = 'false';
+          chapter.dataset.held = '';
+        }
+      } else if (chapter.hasAttribute('data-held')) {
+        body.contentEditable = 'true';
+        delete chapter.dataset.held;
+      }
+    }
+    drawCaret();
+  }
+
+  // hold(chIds): the chapters this plugin holds, in place of those it held
+  // before; an empty list lets them go. With no book open nothing is kept.
+  function hold(entry, chIds) {
+    if (!Array.isArray(chIds) || chIds.some((id) => typeof id !== 'string' || !id)) {
+      throw new TypeError(`hold takes a list of chapter ids, not ${shown(chIds)}`);
+    }
+    if (entry.disposed) return;
+    entry.holds = new Set(openedBook() ? chIds : []);
+    markHolds();
+  }
+
+  // The held chapter body the selection's focus lies in, or null
+  function heldBodyOfSelection() {
+    const sel = getSelection();
+    if (!sel.rangeCount) return null;
+    const node = sel.focusNode;
+    const el = node && node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+    const body = el && el.closest ? el.closest('#chapters .chapter-body') : null;
+    return body && !body.isContentEditable && body.closest('.chapter[data-held]') ? body : null;
+  }
+
+  // The keys that move the caret, on a held chapter, moved through
+  // Selection.modify, which works where nothing is editable: arrows by
+  // letter and line, with Alt (Ctrl off a Mac) by word, Home and End (⌘ and
+  // an arrow on a Mac) to the line's ends, and Shift to select as it goes.
+  function moveIn(e) {
+    if (e.defaultPrevented || !heldBodyOfSelection()) return;
+    const MAC = /Mac/.test(navigator.platform);
+    const target = e.target;
+    if (target && (target.isContentEditable || target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement)) return;
+    const wordMod = MAC ? e.altKey : e.ctrlKey;
+    const lineMod = MAC && e.metaKey;
+    let direction;
+    let granularity;
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      direction = e.key === 'ArrowLeft' ? 'backward' : 'forward';
+      granularity = lineMod ? 'lineboundary' : wordMod ? 'word' : 'character';
+      if ((MAC && e.ctrlKey) || (!MAC && (e.altKey || e.metaKey))) return;
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      direction = e.key === 'ArrowUp' ? 'backward' : 'forward';
+      granularity = 'line';
+    } else if (e.key === 'Home' || e.key === 'End') {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      direction = e.key === 'Home' ? 'backward' : 'forward';
+      granularity = 'lineboundary';
+    } else {
+      return;
+    }
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    getSelection().modify(e.shiftKey ? 'extend' : 'move', direction, granularity);
+  }
+
+  // The caret on a held chapter, drawn as the host's own highlight,
+  // neo-held-caret (styles.css), over the letter after it, or the one
+  // before it at a paragraph's end. Only a collapsed selection is drawn.
+  function drawCaret() {
+    const store = cssHighlights();
+    if (!store) return;
+    const body = heldBodyOfSelection();
+    const sel = getSelection();
+    const spot = body && sel.isCollapsed ? spotOf(sel.focusNode, sel.focusOffset) : null;
+    const text = spot ? spot.p.textContent : '';
+    let from = spot ? spot.off : 0;
+    let to = from + (splitsPair(text, from + 1) ? 2 : 1);
+    if (spot && to > text.length) {
+      to = from;
+      from = Math.max(0, from - (splitsPair(text, from - 1) ? 2 : 1));
+    }
+    const start = spot && from < to ? pointIn(spot.p, from) : null;
+    const end = start && pointIn(spot.p, to);
+    if (!end) {
+      store.delete('neo-held-caret');
+      return;
+    }
+    const range = document.createRange();
+    range.setStart(...start);
+    range.setEnd(...end);
+    store.set('neo-held-caret', new Highlight(range));
   }
 
   // the open book, a copy; null on the shelf and while a shelf export
@@ -833,6 +979,8 @@
       // nor marks anything
       api.highlight = (name, places) => highlight(entry, name, places);
     }
+    // nor holds anything
+    if (apiVersion >= 3) api.hold = (chIds) => hold(entry, chIds);
     return Object.freeze(api);
   }
 
@@ -847,6 +995,10 @@
     entry.listeners.clear();
     entry.commands.clear();
     unpaintAll(entry);
+    if (entry.holds.size) {
+      entry.holds.clear();
+      markHolds();
+    }
     for (const pane of entry.panes.values()) {
       if (pane.section) {
         pane.section.remove();
@@ -898,7 +1050,7 @@
     }
     if (typeof plugin.activate !== 'function') return refuse('no activate function');
     if (registry.has(id)) return refuse('registered already');
-    const entry = { id, listeners: new Map(), panes: new Map(), commands: new Map(), highlights: new Map(), status: null, told: 0, disposed: false };
+    const entry = { id, listeners: new Map(), panes: new Map(), commands: new Map(), highlights: new Map(), holds: new Set(), status: null, told: 0, disposed: false };
     registry.set(id, entry);
     let result;
     try {
@@ -929,6 +1081,11 @@
       nextFrame();
     });
     document.addEventListener('compositionstart', () => { composing = true; }, true);
+    // the caret on a held chapter: moved by the host, and drawn
+    window.addEventListener('keydown', moveIn, true);
+    document.addEventListener('selectionchange', () => {
+      if (cssHighlights() && (CSS.highlights.has('neo-held-caret') || heldBodyOfSelection())) drawCaret();
+    });
     document.addEventListener('compositionend', () => { composing = false; }, true);
     for (const m of listed()) {
       if (m.styleUrl) {
@@ -1032,5 +1189,6 @@
   window.addEventListener('unhandledrejection', onRejection);
 
   // validPlace, for a plugin to check a place before it hands it over
-  window.NeoPlugins = Object.freeze({ apiVersions: API_VERSIONS, register, emit, attach, showTab, runCommand, validPlace });
+  // held, for app.js to ask when it makes a chapter editable
+  window.NeoPlugins = Object.freeze({ apiVersions: API_VERSIONS, register, emit, attach, showTab, runCommand, validPlace, held: isHeld });
 })();

@@ -13278,6 +13278,8 @@ function resetNativeUndo() {
   if (!bodyEl) return;
   bodyEl.contentEditable = 'false';
   bodyEl.contentEditable = 'true';
+  // a plugin's held chapter stays one the writer cannot type in (plugins.js)
+  if (window.NeoPlugins && NeoPlugins.held(caret.chId)) bodyEl.contentEditable = 'false';
   restoreCaret(caret);
 }
 

@@ -2222,6 +2222,9 @@ body.light .snap-ch:hover { color: #1c1a17; }
 .plugin-side { padding: 0 12px; margin-top: 22px; }
 .plugin-side-title { margin: 0 4px 8px; font-size: 12px; font-weight: normal; text-transform: uppercase; letter-spacing: 2px; color: var(--muted); }
 #editor-view.notes-tab .plugin-side, #editor-view.outline-tab .plugin-side, #editor-view.darlings-tab .plugin-side { display: none; }
+/* the caret on a chapter a plugin holds, which cannot be typed in and so
+   draws none of its own (plugins.js) */
+::highlight(neo-held-caret) { background-color: color-mix(in srgb, var(--red) 45%, transparent); }
 .side-card-head { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #bdb8ad; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-card-section .side-card-head { font-weight: 500; color: #8f8a80; }
 .side-card-head { cursor: pointer; border-radius: 3px; }

@@ -1,5 +1,5 @@
 {
   "id": "fleeting",
-  "apiVersion": 2,
+  "apiVersion": 3,
   "renderer": "renderer.js"
 }

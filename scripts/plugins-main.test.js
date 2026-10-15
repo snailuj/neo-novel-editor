@@ -1852,6 +1852,19 @@ describe('the window half', () => {
     assert.equal(neo.api1.highlight, undefined);
   });
 
+  test('API 3 adds hold; a plugin written for API 2 is handed none of it', () => {
+    const host = windowHalf([
+      { id: 'two', apiVersion: 2, rendererUrl: 'plugins/two/renderer.js', styleUrl: null },
+      { id: 'three', apiVersion: 3, rendererUrl: 'plugins/three/renderer.js', styleUrl: null }
+    ]);
+    host.attach();
+    const neo = {};
+    host.NeoPlugins.register({ id: 'two', apiVersion: 2, activate(api) { neo.api2 = api; } });
+    host.NeoPlugins.register({ id: 'three', apiVersion: 3, activate(api) { neo.api3 = api; } });
+    assert.deepEqual(Object.keys(neo.api3).filter((name) => !(name in neo.api2)), ['hold']);
+    assert.equal(neo.api2.hold, undefined);
+  });
+
   test('highlight throws for a name, a list or a place that is not one', () => {
     const { neo } = bothApis();
     const place = { chId: 'c1', pIdx: 0, off: 0, len: 1 };
