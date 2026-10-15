@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "One chapter's marks, version 1, kept at .neo/<bookId>/chapters/<chId>.json in the library. A mark anchors to an exact quote inside one paragraph, with context either side; stale is never stored, because it is worked out on each draw.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "marks"],
+  "properties": {
+    "version": { "const": 1 },
+    "marks": { "type": "array", "items": { "$ref": "#/definitions/mark" } }
+  },
+  "definitions": {
+    "who": { "title": "MarkWho", "enum": ["author", "librarian"] },
+    "at": { "description": "An ISO 8601 time in UTC.", "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" },
+    "id": { "type": "string", "pattern": "^[a-z]-[a-z0-9-]{4,40}$" },
+    "state": { "title": "MarkState", "enum": ["open", "flagged", "accepted", "rejected", "resolved"] },
+    "anchor": {
+      "title": "MarkAnchor",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exact", "prefix", "suffix", "pIdx", "off", "commit"],
+      "properties": {
+        "exact": { "description": "The quoted text, inside one paragraph. Empty only for an insertion, which sits between its prefix and suffix.", "type": "string", "maxLength": 20000, "pattern": "^[^\\n]*$" },
+        "prefix": { "description": "Up to 32 UTF-16 units of the chapter's text before the quote, paragraphs joined by a newline.", "type": "string", "maxLength": 32 },
+        "suffix": { "description": "Up to 32 UTF-16 units after the quote.", "type": "string", "maxLength": 32 },
+        "pIdx": { "description": "The paragraph the mark was made in; it only breaks ties.", "type": "integer", "minimum": 0 },
+        "off": { "description": "Where in that paragraph, in UTF-16 units.", "type": "integer", "minimum": 0 },
+        "commit": { "description": "The library's HEAD when the mark was made, or null in a library without history.", "oneOf": [{ "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" }, { "type": "null" }] }
+      }
+    },
+    "entry": {
+      "title": "MarkEntry",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "who", "at", "body"],
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "who": { "$ref": "#/definitions/who" },
+        "at": { "$ref": "#/definitions/at" },
+        "body": { "type": "string", "minLength": 1, "maxLength": 20000 }
+      }
+    },
+    "change": {
+      "title": "MarkChange",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "who", "at"],
+      "properties": {
+        "state": { "$ref": "#/definitions/state" },
+        "who": { "$ref": "#/definitions/who" },
+        "at": { "$ref": "#/definitions/at" }
+      }
+    },
+    "mark": {
+      "title": "Mark",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "anchor", "state", "created", "thread", "history"],
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "kind": { "title": "MarkKind", "enum": ["comment", "highlight", "insertion", "deletion", "substitution"] },
+        "anchor": { "$ref": "#/definitions/anchor" },
+        "proposed": { "description": "The text an insertion or substitution puts in.", "type": "string", "maxLength": 20000 },
+        "state": { "$ref": "#/definitions/state" },
+        "created": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["who", "at"],
+          "properties": { "who": { "$ref": "#/definitions/who" }, "at": { "$ref": "#/definitions/at" } }
+        },
+        "thread": { "description": "A comment's own words first, then the replies, oldest first.", "type": "array", "items": { "$ref": "#/definitions/entry" } },
+        "history": { "description": "Every change of state after the mark was made, oldest first.", "type": "array", "items": { "$ref": "#/definitions/change" } }
+      }
+    }
+  }
+}

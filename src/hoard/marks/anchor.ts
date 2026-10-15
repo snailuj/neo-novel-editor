@@ -6,16 +6,11 @@
 // and the mark is stale until it comes back. Offsets are UTF-16 units of a paragraph's
 // text, as the plugin host's places count them.
 
+import type { MarkAnchor } from '../../generated/hoard-marks-v1.js';
+
 export const CONTEXT = 32;
 
-export interface Anchor {
-  exact: string;
-  prefix: string;
-  suffix: string;
-  pIdx: number;
-  off: number;
-  commit: string | null;
-}
+export type Anchor = MarkAnchor;
 
 export interface Span {
   pIdx: number;
