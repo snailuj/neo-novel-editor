@@ -287,17 +287,22 @@ function isolate(profile, {
   // A worker thread has an fs of its own, which no patch to this one reaches.
   refuse(workerThreads, 'worker_threads', { names: ['Worker'], answersAtOnce: () => true });
 
-  // main.js forks one utility process, the spell worker. No other process starts, by this
-  // route either; that one is the only module the fork is let through for.
+  // main.js forks one utility process, the spell worker, and the hoard plugin one, its
+  // search worker, which reads only the library folder the main half hands it (inside
+  // the profile). No other process starts, by this route either; those two are the only
+  // modules the fork is let through for.
   const fork = utilityProcess.fork;
-  const spellWorker = path.resolve(__dirname, '..', 'spell-worker.js');
-  const isSpellWorker = (modulePath) => {
-    if (path.resolve(String(modulePath)) === spellWorker) return true;
-    try { return fs.realpathSync.native(modulePath) === fs.realpathSync.native(spellWorker); } catch { return false; }
-  };
+  const allowedWorkers = [
+    path.resolve(__dirname, '..', 'spell-worker.js'),
+    path.resolve(__dirname, '..', 'plugins', 'hoard', 'search-worker.cjs'),
+  ];
+  const isAllowedWorker = (modulePath) => allowedWorkers.some((worker) => {
+    if (path.resolve(String(modulePath)) === worker) return true;
+    try { return fs.realpathSync.native(modulePath) === fs.realpathSync.native(worker); } catch { return false; }
+  });
   utilityProcess.fork = stubbed(function (modulePath, ...args) {
-    if (!isSpellWorker(modulePath)) {
-      throw new Error('utilityProcess.fork is disabled in tests, except for spell-worker.js: ' + modulePath);
+    if (!isAllowedWorker(modulePath)) {
+      throw new Error('utilityProcess.fork is disabled in tests, except for spell-worker.js and the hoard search worker: ' + modulePath);
     }
     return fork.call(utilityProcess, modulePath, ...args);
   });
