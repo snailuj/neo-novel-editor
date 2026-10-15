@@ -5,6 +5,7 @@
   "main": "main.cjs",
   "commands": [
     { "id": "keep-history", "title": "Keep Library History" },
+    { "id": "check-findings", "title": "Library Check Findings" },
     { "id": "add-comment", "title": "Add Comment" },
     { "id": "import-wiki", "title": "Import to Wiki…" },
     { "id": "open-wiki", "title": "Edit Wiki as a Book" },

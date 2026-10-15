@@ -199,3 +199,35 @@ test('a comment made in the Wiki pane is drawn there and is the wiki book\'s own
     await fixture.close();
   }
 });
+
+// Rule: when the library check refuses the librarian's commit, its change does not stay
+// on the page unrecorded: the words go back, and the suggestion is flagged with the
+// check's reason, its proposed words kept.
+test('a change the library check refuses is put back and flagged', async () => {
+  const { profile, library } = await trackedProfile();
+  const fixture = await launchProfile(profile);
+  try {
+    const { page } = fixture;
+    await ready(page);
+    const bad = '<p data-block="not citable!">The harbour of Vell faces west.</p><p>Its keeper rows at dawn.</p>';
+    const bookId = await seedBook(page, bad);
+    await pageSidecar(library, bookId, { type: 'lore' });
+    await reopen(page, bookId);
+    await expect(page.locator(`.chapter[data-id="${LORE}"][data-held]`)).toHaveCount(1);
+    await expect.poll(() => authors(library).length, { timeout: 10_000 }).toBeGreaterThan(0);
+
+    await select(page, 'west');
+    await page.keyboard.type('east');
+    await page.keyboard.press('Enter');
+    await expect.poll(() => readMarks(library, bookId).map((m) => m.state), { timeout: 15_000 }).toEqual(['flagged']);
+    const [mark] = readMarks(library, bookId);
+    expect(mark.proposed).toBe('east');
+    expect(mark.thread.map((e) => e.who)).toEqual(['librarian']);
+    expect(mark.thread[0].body).toMatch(/library check refused it/);
+    await expect(page.locator('.chapter-body p').nth(0)).toHaveText('The harbour of Vell faces west.');
+    await expect.poll(() => chapterFile(library, bookId), { timeout: 10_000 }).toBe(bad);
+    expect(authors(library)).not.toContain('Librarian');
+  } finally {
+    await fixture.close();
+  }
+});

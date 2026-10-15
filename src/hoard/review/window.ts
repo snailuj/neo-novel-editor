@@ -207,8 +207,17 @@ export function startReview(neo: NeoApiV4, marks: Marks, o: { pages: () => Pages
   // it was not made, or null.
   async function applyAsLibrarian(place: NeoPlace, expected: string, words: string): Promise<string | null> {
     const edit = await o.librarian.replace(place, expected, words);
-    if (!edit.ok) return REFUSED[edit.reason] ?? edit.reason;
-    return edit.result.ok ? null : REFUSED[edit.result.reason] ?? edit.result.reason;
+    if (edit.ok) return edit.result.ok ? null : REFUSED[edit.result.reason] ?? edit.result.reason;
+    if (edit.reason !== 'refused') return REFUSED[edit.reason] ?? edit.reason;
+    // The library check refused the librarian's commit, so the change is on the page but
+    // in no commit: put the words back, and the words proposed stay in the suggestion.
+    const back = await neo.replace({ ...place, len: words.length }, words, expected);
+    const found = edit.findings.map((f) => f.message).join(' ');
+    if (!back.ok) {
+      console.warn('hoard: a refused change could not be put back', back.reason);
+      return `the library check refused it (${found}), and the page still holds the change, which your next save commits as yours`;
+    }
+    return `the library check refused it: ${found}`;
   }
 
   // The writer's own change, as typing makes it; the next checkpoint commits it as theirs.

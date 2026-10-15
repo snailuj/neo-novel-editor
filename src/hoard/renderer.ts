@@ -43,6 +43,7 @@ NeoPlugins.register({
       return checkpoint('book-close');
     });
     neo.addCommand('keep-history', async () => { await neo.invoke('git.keep-history'); });
+    neo.addCommand('check-findings', async () => { await neo.invoke('git.findings'); });
 
     const blame = (bookId: string, chId: string) => neo.invoke('git.blame', { bookId, chId });
     const gitStatus = () => neo.invoke('git.status');
