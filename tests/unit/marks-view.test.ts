@@ -5,10 +5,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Mark } from '../../src/generated/hoard-marks-v1.js';
-import { anchorAt } from '../../src/hoard/marks/anchor.ts';
+import { anchorAt, anchorPoint } from '../../src/hoard/marks/anchor.ts';
 import { newMark, transition } from '../../src/hoard/marks/model.ts';
 import { drawChapter, label, markAt, orderForList } from '../../src/hoard/marks/view.ts';
-import { anchorPoint } from '../../src/hoard/marks/anchor.ts';
 
 const at = '2026-10-15T21:00:00.000Z';
 const text = ['The tide came in at dusk.', 'Mara counted the boats twice.'];
