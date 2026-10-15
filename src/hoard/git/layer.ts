@@ -6,7 +6,7 @@
 import { validateHoardSettingsV1 } from '../../generated/validators.cjs';
 import { blameChapter, type BlameLine } from './blame.ts';
 import { Checkpoints, type Clock } from './checkpoints.ts';
-import { commitAll, type Identity, type Reason, type Who } from './commit.ts';
+import { commitAll, whoFor, type Identity, type Reason, type Who } from './commit.ts';
 import { repoState, syncedFolder, type RepoState } from './repo.ts';
 import { GitError, type Git, type GitLog } from './runner.ts';
 import { keepHistory, type Started } from './start.ts';
@@ -102,8 +102,11 @@ export class GitLayer {
     if (this.#state.state === 'tracked') this.#checkpoints.request(reason);
   }
 
-  /** A commit now, once any running one is done; resolves when it has landed. */
-  async commitNow(reason: 'import'): Promise<void> {
+  /**
+   * A commit now, once any running one is done; resolves when it has landed. An import's
+   * is the librarian's, its author's part the author's (whoFor).
+   */
+  async commitNow(reason: 'import-author' | 'import'): Promise<void> {
     if (this.#state.state !== 'tracked') return;
     await this.#pairs; // a pair holds the checkpoints, so the commit would wait unseen
     this.#checkpoints.now(reason);
@@ -201,7 +204,7 @@ export class GitLayer {
   }
 
   async #commit(reason: Reason): Promise<void> {
-    await this.#commitAs('author', reason);
+    await this.#commitAs(whoFor(reason), reason);
   }
 
   async #commitAs(who: Who, reason: Reason, paths?: readonly string[]): Promise<string | null> {
