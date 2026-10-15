@@ -21,7 +21,8 @@ export type Reason =
   | 'close'
   | 'recovered'
   | 'librarian-before'
-  | 'librarian-after';
+  | 'librarian-after'
+  | 'import';
 
 const SUBJECTS: Record<Reason, string> = {
   start: 'Library history starts',
@@ -32,6 +33,7 @@ const SUBJECTS: Record<Reason, string> = {
   recovered: 'Writing found uncommitted at start',
   'librarian-before': 'Writing, before a librarian edit',
   'librarian-after': 'Librarian edit',
+  import: 'Pages imported to the wiki',
 };
 
 export interface CommitOptions {

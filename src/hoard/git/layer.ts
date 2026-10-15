@@ -93,6 +93,13 @@ export class GitLayer {
     if (this.#state.state === 'tracked') this.#checkpoints.request(reason);
   }
 
+  /** A commit now, once any running one is done; resolves when it has landed. */
+  async commitNow(reason: 'import'): Promise<void> {
+    if (this.#state.state !== 'tracked') return;
+    this.#checkpoints.now(reason);
+    await this.#checkpoints.drained();
+  }
+
   async keepHistory(): Promise<Started> {
     await this.#checkpoints.drained();
     const { git, library, settings, log } = this.#o;

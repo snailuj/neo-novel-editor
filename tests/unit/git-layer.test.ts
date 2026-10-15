@@ -143,3 +143,24 @@ test('head names the last commit of a tracked library, and is null with no histo
   assert.match(sha, /^[0-9a-f]{40}$/);
   assert.equal(await layer.head(), sha);
 });
+
+// Rule: an import is committed at once, as its own checkpoint, once it has landed; a
+// library without history makes no commit for it.
+test('an import is committed at once as its own checkpoint, and an untracked library makes none', async (t) => {
+  isolateGitConfig(t, { name: 'Ada', email: 'ada@example.com' });
+  const lib = tempLibrary(t);
+  await lib.git.run(lib.library, ['init', '-q']);
+  const { layer } = layerFor(t, lib.git, lib.library);
+  await layer.open();
+  await layer.drained();
+  lib.write('book-wiki-1/chapters/c1.html', '<p>Imported.</p>');
+  await layer.commitNow('import');
+  assert.deepEqual(await log(lib.git, lib.library, '%s|%(trailers:key=Neo-Checkpoint,valueonly)'), [
+    'Pages imported to the wiki|import', 'Writing found uncommitted at start|recovered',
+  ]);
+  const bare = tempLibrary(t);
+  const other = layerFor(t, bare.git, bare.library).layer;
+  await other.open();
+  await other.commitNow('import');
+  assert.equal(await other.head(), null);
+});
