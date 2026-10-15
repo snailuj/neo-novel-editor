@@ -179,7 +179,10 @@ test('events', async () => {
   assert.deepEqual(first('book-open'), { bookId: owls.id });
   assert.deepEqual(first('rendered'), { bookId: owls.id });
   assert.deepEqual(first('chapter-change'), { bookId: owls.id, chId: owls.chapters[0] });
-  assert.deepEqual(first('chapter-saved'), { bookId: owls.id, chId: owls.chapters[0] });
+  const { html, previous, ...ids } = first('chapter-saved');
+  assert.deepEqual(ids, { bookId: owls.id, chId: owls.chapters[0] });
+  assert.equal(typeof html, 'string');
+  assert.equal(typeof previous, 'string');
   assert.match(chapterFile(owls.id, owls.chapters[0]), /Owl/);
 });
 
@@ -741,7 +744,8 @@ test('broken plugin', async () => {
   await caretAtEnd(owls.chapters[0]);
   await type('Fox');
   await tick(1500);
-  assert.deepEqual((await heard('chapter-saved')).pop(), ['chapter-saved', { bookId: owls.id, chId: owls.chapters[0] }]);
+  const [name, { bookId, chId }] = (await heard('chapter-saved')).pop();
+  assert.deepEqual([name, { bookId, chId }], ['chapter-saved', { bookId: owls.id, chId: owls.chapters[0] }]);
   assert.match(chapterFile(owls.id, owls.chapters[0]), /Fox/);
   assert.equal(await js('window.__brokenHeard'), 0);
   // nor is the pane it added before it threw anywhere to be seen
@@ -920,6 +924,85 @@ test('a main half\'s failure rejects the window\'s invoke naming the plugin and 
   const added = errorLog().slice(before.length);
   assert.equal(added.match(/\[plugin probe: invoke (fail|refused|unclonable)\]/g).length, 3, added);
   assert.doesNotMatch(added, /\[ipc plugin:invoke\]/);
+});
+
+// Every chapter-saved carries the text that write put in the file, and the
+// text the file held just before it as this window knew it (null when it
+// never knew one).
+const savesOf = async (chId) => (await heard('chapter-saved')).map(([, d]) => d).filter((d) => d.chId === chId);
+const settled = () => js('(async () => { flushAllSaves(); await Promise.allSettled(Object.values(chapterChain)); })()');
+
+test('chapter-saved carries the file it wrote and the file it replaced', async () => {
+  await owlsOpen();
+  const chId = owls.chapters[0];
+  await settled();
+  const before = chapterFile(owls.id, chId);
+  await forget();
+  await caretAtEnd(chId);
+  await type('Kit');
+  await until(async () => (await savesOf(chId)).length > 0, 'a chapter-saved for the chapter');
+  const [saved] = await savesOf(chId);
+  assert.notEqual(saved.html, before, 'the save wrote something new');
+  assert.equal(saved.html, chapterFile(owls.id, chId));
+  assert.equal(saved.previous, before);
+});
+
+test("each save's previous is the text the save before it wrote", async () => {
+  await owlsOpen();
+  const chId = owls.chapters[0];
+  await settled();
+  await forget();
+  await caretAtEnd(chId);
+  for (const k of ['x', 'y', 'z']) {
+    const n = (await savesOf(chId)).length;
+    await type(k);
+    await until(async () => (await savesOf(chId)).length > n, `the save after ${k}`);
+  }
+  const saves = await savesOf(chId);
+  assert.ok(saves.length >= 3, `three saves heard, not ${saves.length}`);
+  assert.ok(saves.every((d) => typeof d.html === 'string' && d.html.length > 0), 'each save carries its text');
+  for (let i = 1; i < saves.length; i++) assert.equal(saves[i].previous, saves[i - 1].html, `save ${i}`);
+});
+
+test('a chapter this window made has no previous on its first save', async () => {
+  await js(`openBook(${str(other.id)})`);
+  await frame();
+  try {
+    await forget();
+    const ids = await js('book.chapterOrder.slice()');
+    await js(`document.getElementById('nav-add').click()`);
+    await tick(200);
+    const made = (await js('book.chapterOrder.slice()')).find((id) => !ids.includes(id));
+    assert.ok(made, 'a chapter was made');
+    await caretAtEnd(made);
+    await type('New');
+    await until(async () => (await savesOf(made)).some((d) => d.html.includes('New')), 'the new chapter saved with its words');
+    const saves = await savesOf(made);
+    assert.equal(saves[0].previous, null);
+    for (let i = 1; i < saves.length; i++) assert.equal(saves[i].previous, saves[i - 1].html, `save ${i}`);
+  } finally {
+    await owlsOpen();
+  }
+});
+
+test("another device's words are what the save replaced", async () => {
+  await js(`openBook(${str(other.id)})`);
+  await frame();
+  try {
+    const chId = other.chapters[0];
+    await settled();
+    const theirs = '<p>Words from the other device, quite different.</p>';
+    fs.writeFileSync(path.join(LIBRARY, other.id, 'chapters', chId + '.html'), theirs);
+    await forget();
+    await caretAtEnd(chId);
+    await type('Q');
+    await until(async () => (await savesOf(chId)).length > 0, 'the save over the other device\'s words');
+    const [saved] = await savesOf(chId);
+    assert.equal(saved.previous, theirs);
+    assert.equal(saved.html, chapterFile(other.id, chId));
+  } finally {
+    await owlsOpen();
+  }
 });
 
 test('CSP', async () => {

@@ -3,7 +3,11 @@
 // and stylesheet. The script calls NeoPlugins.register, and its activate(neo)
 // is handed these calls (apiFor):
 //   on(event, fn)             book-open, book-close, chapter-change,
-//                             chapter-saved, selection and rendered
+//                             chapter-saved, selection and rendered;
+//                             chapter-saved carries html, the text the
+//                             write put in the file, and previous, what
+//                             the file held before it as this window knew
+//                             it (null when it never knew)
 //   book(), chapter(chId)     copies of the open book and of a chapter
 //   addPane({ id, title })    a tab of its own beside Notes
 //   addCommand(id, run)       the handler for a command in the Plugins menu

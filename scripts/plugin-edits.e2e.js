@@ -353,8 +353,12 @@ test('replace saves', async () => {
   assert.equal((await lines(one))[0], 'One passage.');
   const saves = async () => (await heard('chapter-saved')).filter((saved) => saved.chId === one);
   await until(async () => (await saves()).length, 'chapter-saved');
-  assert.deepEqual(await saves(), [{ bookId: book.id, chId: one }]);
+  const all = await saves();
+  assert.deepEqual(all.map(({ bookId, chId }) => ({ bookId, chId })), [{ bookId: book.id, chId: one }]);
   assert.match(chapterFile(one), /One passage\./);
+  // the save says what the edit wrote and what it replaced
+  assert.equal(all[0].html, chapterFile(one));
+  assert.match(all[0].previous, /One paragraph\./);
 });
 
 // the engine's own undo, as for typing: "replace saves" left "One passage."
