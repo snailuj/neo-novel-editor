@@ -15,7 +15,7 @@ import type { Mark, MarkState } from '../../generated/hoard-marks-v1.js';
 import { alignBlame } from '../git/align.ts';
 import type { BlameLine } from '../git/blame.ts';
 import { anchorAt } from './anchor.ts';
-import { drawChapter, markAt, NAMES, orderForList, type Drawn, type Place } from './view.ts';
+import { drawChapter, label, markAt, NAMES, orderForList, type Drawn, type Place } from './view.ts';
 
 interface Listed { chapters: Record<string, Mark[]>; unreadable: string[] }
 interface Composing { place: Place; anchor: Omit<Mark['anchor'], 'commit'> }
@@ -165,7 +165,7 @@ export function startMarks(neo: NeoApiV3) {
     item.root.classList.toggle('active', mark.id === active);
     if (mark.id === active) item.root.setAttribute('aria-current', 'true');
     else item.root.removeAttribute('aria-current');
-    item.quote.textContent = `${stale ? 'Quote not found: ' : ''}“${clip(mark.anchor.exact)}”${closed ? ` · ${mark.state}` : ''}`;
+    item.quote.textContent = `${stale ? 'Not found: ' : ''}${label(mark)}${closed ? ` · ${mark.state}` : ''}`;
     item.quote.disabled = stale;
     item.quote.title = stale ? 'These words are no longer in the chapter; the comment stays here.' : 'Go to these words';
     const shown = mark.thread.map((e) => e.id).join(' ');

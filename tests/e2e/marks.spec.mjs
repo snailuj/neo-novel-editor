@@ -154,13 +154,13 @@ test('a comment whose words are deleted is listed as not found, and comes back w
     await expect.poll(() => page.evaluate(() => window.hoard.marks.state().stale)).toEqual({ [CHAPTER]: [id] });
     await expect.poll(() => drawnText(page, 'comment')).toEqual([]);
     const card = page.locator(`.hoard-mark[data-mark="${id}"]`);
-    await expect(card).toContainText('Quote not found');
+    await expect(card).toContainText('Not found:');
     await expect(card).toContainText('Count them.');
     expect(readMarks(sidecar(library, bookId)).map((m) => m.id)).toEqual([id]);
 
     await page.keyboard.press('Control+z');
     await expect.poll(() => drawnText(page, 'comment')).toEqual(['boats']);
-    await expect(card).not.toContainText('Quote not found');
+    await expect(card).not.toContainText('Not found:');
   } finally {
     await fixture.close();
   }

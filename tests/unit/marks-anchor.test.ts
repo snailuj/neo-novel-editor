@@ -4,7 +4,7 @@
 // gone finds nothing rather than something near it.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { anchorAt, locate } from '../../src/hoard/marks/anchor.ts';
+import { anchorAt, anchorPoint, locate } from '../../src/hoard/marks/anchor.ts';
 
 const book = ['The tide came in at dusk.', 'Mara counted the boats twice.', 'Nobody spoke of the lighthouse.'];
 
@@ -92,4 +92,43 @@ test('context never splits a surrogate pair', () => {
 test('a place outside the text is refused', () => {
   assert.throws(() => anchorAt(book, { pIdx: 3, off: 0, len: 0 }), RangeError);
   assert.throws(() => anchorAt(book, { pIdx: 0, off: 20, len: 10 }), RangeError);
+});
+
+// Rule: an insertion quotes no words, so it is anchored at a point and found again where
+// its context still meets: the whole of the text before it or the whole of the text after
+// it must still be there, and the side that matches more wins.
+test('an insertion point is anchored by the text either side and found where it was made', () => {
+  const anchor = anchorPoint(book, { pIdx: 1, off: 4 });
+  assert.equal(anchor.exact, '');
+  assert.equal(anchor.prefix, 'The tide came in at dusk.\nMara');
+  assert.equal(anchor.suffix, ' counted the boats twice.\nNobody');
+  assert.deepEqual(locate(book, anchor), { pIdx: 1, off: 4, len: 0 });
+});
+
+test('an insertion point follows its context when paragraphs come before it', () => {
+  const anchor = anchorPoint(book, { pIdx: 1, off: 4 });
+  assert.deepEqual(locate(['A new opening.', ...book], anchor), { pIdx: 2, off: 4, len: 0 });
+});
+
+test('an insertion point survives an edit on one side of it', () => {
+  const anchor = anchorPoint(book, { pIdx: 1, off: 4 });
+  const edited = [book[0], book[1], 'Somebody spoke of the lighthouse.'];
+  assert.deepEqual(locate(edited, anchor), { pIdx: 1, off: 4, len: 0 });
+  const before = ['The tide went out at dawn.', book[1], book[2]];
+  assert.deepEqual(locate(before, anchor), { pIdx: 1, off: 4, len: 0 });
+});
+
+test('an insertion point whose context is gone on both sides finds nothing', () => {
+  const anchor = anchorPoint(book, { pIdx: 1, off: 4 });
+  assert.equal(locate([book[0], 'Someone else entirely.', 'Nothing here.'], anchor), null);
+});
+
+test('an insertion point in an empty chapter is found at its start', () => {
+  const anchor = anchorPoint([''], { pIdx: 0, off: 0 });
+  assert.deepEqual(locate([''], anchor), { pIdx: 0, off: 0, len: 0 });
+});
+
+test('an insertion point outside its paragraph is refused', () => {
+  assert.throws(() => anchorPoint(book, { pIdx: 0, off: 99 }), RangeError);
+  assert.throws(() => anchorPoint(book, { pIdx: 9, off: 0 }), RangeError);
 });

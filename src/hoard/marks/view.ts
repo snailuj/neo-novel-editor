@@ -47,6 +47,20 @@ export function orderForList(marks: readonly Mark[], drawn: Drawn): Mark[] {
   return [...marks].sort((a, b) => key(a).pIdx - key(b).pIdx || key(a).off - key(b).off);
 }
 
+const clip = (text: string, n = 140) => (text.length > n ? `${text.slice(0, n - 1)}…` : text);
+const quoted = (text: string) => `“${clip(text)}”`;
+
+// What a card says its mark is about: a note's words, or the change a suggestion asks.
+export function label(mark: Mark): string {
+  const proposed = mark.proposed ?? '';
+  switch (mark.kind) {
+    case 'insertion': return `Insert ${quoted(proposed)}`;
+    case 'deletion': return `Delete ${quoted(mark.anchor.exact)}`;
+    case 'substitution': return `Replace ${quoted(mark.anchor.exact)} with ${quoted(proposed)}`;
+    default: return quoted(mark.anchor.exact);
+  }
+}
+
 // The drawn mark around a caret or selection start, the smallest when they nest.
 export function markAt(drawn: Drawn, marks: readonly Mark[], place: Place): string | null {
   let best: { id: string; len: number } | null = null;

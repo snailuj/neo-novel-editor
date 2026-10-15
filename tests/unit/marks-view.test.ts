@@ -7,7 +7,8 @@ import { test } from 'node:test';
 import type { Mark } from '../../src/generated/hoard-marks-v1.js';
 import { anchorAt } from '../../src/hoard/marks/anchor.ts';
 import { newMark, transition } from '../../src/hoard/marks/model.ts';
-import { drawChapter, markAt, orderForList } from '../../src/hoard/marks/view.ts';
+import { drawChapter, label, markAt, orderForList } from '../../src/hoard/marks/view.ts';
+import { anchorPoint } from '../../src/hoard/marks/anchor.ts';
 
 const at = '2026-10-15T21:00:00.000Z';
 const text = ['The tide came in at dusk.', 'Mara counted the boats twice.'];
@@ -56,4 +57,21 @@ test('the caret is in the smallest drawn mark around it, at either edge, and in 
   assert.equal(markAt(drawn, marks, { chId: 'c1', pIdx: 0, off: 3, len: 0 }), null);
   const resolved = [transition(marks[1], 'resolved', 'author', at)];
   assert.equal(markAt(drawChapter('c1', resolved, text), resolved, { chId: 'c1', pIdx: 1, off: 6, len: 0 }), null, 'a closed mark is not under the caret');
+});
+
+// Rule: a card names what its mark is about in words: a note quotes its words, and a
+// suggestion says the change it asks for.
+test('a card names a note by its quote and a suggestion by its change', () => {
+  assert.equal(label(mark('m-l1', { pIdx: 0, off: 4, len: 4 })), '“tide”');
+  assert.equal(label(newMark({ id: 'm-l2', kind: 'deletion', anchor: anchorAt(text, { pIdx: 0, off: 4, len: 4 }), who: 'author', at })), 'Delete “tide”');
+  assert.equal(label(newMark({ id: 'm-l3', kind: 'insertion', anchor: anchorPoint(text, { pIdx: 0, off: 4 }), proposed: 'evening ', who: 'author', at })), 'Insert “evening ”');
+  assert.equal(label(newMark({ id: 'm-l4', kind: 'substitution', anchor: anchorAt(text, { pIdx: 0, off: 4, len: 4 }), proposed: 'sea', who: 'author', at })), 'Replace “tide” with “sea”');
+});
+
+test('an insertion that is found is listed where it is, though there are no words to draw', () => {
+  const ins = newMark({ id: 'm-l5', kind: 'insertion', anchor: anchorPoint(text, { pIdx: 1, off: 4 }), proposed: ',', who: 'author', at });
+  const drawn = drawChapter('c1', [ins], text);
+  assert.deepEqual(drawn.found.get('m-l5'), { pIdx: 1, off: 4, len: 0 });
+  assert.deepEqual(drawn.stale, []);
+  assert.deepEqual(drawn.places.suggestion, []);
 });
