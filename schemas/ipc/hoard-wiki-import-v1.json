@@ -1,0 +1,10 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "A request to import Markdown pages into the wiki, version 1. openBookId is the book open in the window, or null on the shelf; nothing is imported while it is the wiki.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["openBookId"],
+  "properties": {
+    "openBookId": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] }
+  }
+}

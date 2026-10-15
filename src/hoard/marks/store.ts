@@ -8,10 +8,11 @@
 // crash leaves the old file or the new one. Actions on one file wait for each other.
 // A file that does not read as the schema says is reported and left alone: no action
 // writes over it until someone mends it. Reading never writes.
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, writeSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { HoardMarksV1, Mark, MarkAnchor, MarkKind, MarkState, MarkWho } from '../../generated/hoard-marks-v1.js';
 import { validateHoardMarksV1 } from '../../generated/validators.cjs';
+import { oneName, writeWhole } from '../files.ts';
 import { newMark, reply, transition } from './model.ts';
 
 type Level = 'error' | 'warn' | 'info' | 'debug';
@@ -53,14 +54,6 @@ export class MarkFileError extends Error {
   }
 }
 
-// One name inside the library, as main.js's libName() allows.
-function oneName(name: unknown, what: string): string {
-  if (typeof name !== 'string' || name === '' || name === '.' || name === '..' || /[/\\\0]/.test(name)) {
-    throw new TypeError(`${what} must be one name inside the library: ${JSON.stringify(name)}`);
-  }
-  return name;
-}
-
 const chaptersDir = (library: string, bookId: string) => path.join(library, '.neo', oneName(bookId, 'bookId'), 'chapters');
 
 export function sidecarPath(library: string, bookId: string, chId: string): string {
@@ -69,19 +62,6 @@ export function sidecarPath(library: string, bookId: string, chId: string): stri
 
 function randomId(prefix: 'm' | 'e'): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function writeWhole(file: string, text: string): void {
-  mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.tmp`;
-  const fd = openSync(tmp, 'w');
-  try {
-    writeSync(fd, text);
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-  renameSync(tmp, file);
 }
 
 export class MarkStore {
@@ -121,6 +101,16 @@ export class MarkStore {
       const marks = [...data.marks, mark];
       this.#write(file, marks, { action: 'add', id, kind: req.kind });
       return { id, marks };
+    });
+  }
+
+  /** Marks made elsewhere (an import), added after the chapter's own. */
+  async addAll(bookId: string, chId: string, made: Mark[]): Promise<void> {
+    const file = sidecarPath(this.#o.library(), bookId, chId);
+    await this.#queued(file, async () => {
+      if (made.length === 0) return;
+      const data = this.#read(file);
+      this.#write(file, [...data.marks, ...made], { action: 'add-all', marks: made.length });
     });
   }
 
