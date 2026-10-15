@@ -35,6 +35,8 @@ const button = (className: string, text: string) => {
 const BLOCK_CLASS = /^(?:wiki-[a-z0-9-]+|scene-break)$/;
 const BLOCK_DATA = ['depth', 'n', 'task', 'callout', 'lang', 'head', 'block'];
 const INLINE = new Set(['B', 'I', 'U', 'S', 'EM', 'STRONG', 'CODE']);
+// the CSS highlight on words a search found on the page shown
+const FOUND = 'hoard-wiki-found';
 
 function pageBlocks(html: string): HTMLTemplateElement {
   // read inertly: nothing in it runs or loads
@@ -49,6 +51,8 @@ export function startWikiPane(neo: NeoApiV4, o: { resolve: () => Resolver; editI
   let shown: PageRead | null = null;
   let asked = 0;
   const shownListeners: ((page: PageRead | null) => void)[] = [];
+  // where to take the reader on the next page drawn: words a search found
+  let showAt: { pIdx: number; off: number; len: number } | null = null;
 
   const root = pane.element;
   root.classList.add('hoard-wiki-pane');
@@ -114,9 +118,34 @@ export function startWikiPane(neo: NeoApiV4, o: { resolve: () => Resolver; editI
     }
   };
 
+  // The words at a place on the page drawn, marked and scrolled to.
+  const markAt = (at: { pIdx: number; off: number; len: number }) => {
+    const line = body.children[at.pIdx];
+    if (!line) return;
+    const walk = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    let seen = 0;
+    let started = false;
+    for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+      const n = node.textContent?.length ?? 0;
+      if (!started && at.off <= seen + n) {
+        range.setStart(node, at.off - seen);
+        started = true;
+      }
+      if (started && at.off + at.len <= seen + n) {
+        range.setEnd(node, at.off + at.len - seen);
+        if (typeof Highlight === 'function') CSS.highlights.set(FOUND, new Highlight(range));
+        break;
+      }
+      seen += n;
+    }
+    line.scrollIntoView({ block: 'center' });
+  };
+
   const render = (page: PageRead) => {
     const pages = o.resolve();
     title.textContent = page.title;
+    CSS.highlights?.delete(FOUND);
     body.replaceChildren(...[...pageBlocks(page.html).content.querySelectorAll('p')].map((source) => {
       const line = el('p', 'hoard-wiki-line');
       for (const name of source.classList) if (BLOCK_CLASS.test(name)) line.classList.add(name);
@@ -132,6 +161,8 @@ export function startWikiPane(neo: NeoApiV4, o: { resolve: () => Resolver; editI
   // Shows the trail's current page, once it has read; a later request wins.
   const showCurrent = async () => {
     const chId = history.current;
+    const at = showAt;
+    showAt = null;
     // before a button the writer pressed is disabled, which would drop the focus
     const hadFocus = root.contains(document.activeElement);
     refreshNav();
@@ -155,13 +186,16 @@ export function startWikiPane(neo: NeoApiV4, o: { resolve: () => Resolver; editI
     } else {
       status.textContent = '';
       render(page);
+      if (at) markAt(at);
     }
     for (const fn of shownListeners) fn(page);
     refreshNav();
     if (hadFocus) title.focus();
   };
 
-  const open = (chId: string) => {
+  /** A page shown, and with at the words there marked and scrolled to. */
+  const open = (chId: string, at?: { pIdx: number; off: number; len: number }) => {
+    showAt = at ?? null;
     history.visit(chId);
     pane.show();
     return showCurrent();

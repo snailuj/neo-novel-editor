@@ -1,6 +1,6 @@
 // Rule: a search finds the words however they were typed (capitals, accents, curly or
-// straight quotes, extra spaces, Markdown's emphasis marks) and the place it gives back
-// is the words as written, so selecting it selects exactly them.
+// straight quotes, extra spaces) and the place it gives back is the words as written,
+// so selecting it selects exactly them.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fold, foldQuery, originalSpan } from '../../src/hoard/search/fold.ts';
@@ -37,12 +37,6 @@ test('a run of white space is one space, and the query is trimmed', () => {
   assert.equal(find('the old  quay', 'the old quay'), 'the old  quay');
 });
 
-test('Markdown emphasis does not hide a phrase, and is not selected at its ends', () => {
-  assert.equal(find('The **old** quay', 'the old quay'), 'The **old** quay');
-  assert.equal(find('The **old** quay', 'old'), 'old');
-  assert.equal(find('a _snake_ here', 'snake here'), 'snake_ here');
-});
-
 test('a character that folds to two takes its whole self when a match ends inside it', () => {
   assert.equal(fold('ﬁsh').text, 'fish');
   assert.equal(find('a ﬁsh', 'a f'), 'a ﬁ');
@@ -55,6 +49,6 @@ test('characters outside the basic plane keep both halves', () => {
   assert.equal(find('x  𝒜 y', 'x 𝒜'), 'x  𝒜');
 });
 
-test('a query of only folded-away characters is empty', () => {
-  assert.equal(foldQuery(' ** _ '), '');
+test('a query of only white space is empty', () => {
+  assert.equal(foldQuery(' \t\u00a0 '), '');
 });

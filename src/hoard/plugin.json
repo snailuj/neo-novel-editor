@@ -11,7 +11,8 @@
     { "id": "open-wiki", "title": "Edit Wiki as a Book" },
     { "id": "follow-link", "title": "Follow Link" },
     { "id": "suggest-change", "title": "Suggest Change" },
-    { "id": "edit-directly", "title": "Suggest or Edit Directly" }
+    { "id": "edit-directly", "title": "Suggest or Edit Directly" },
+    { "id": "search-library", "title": "Search Library…" }
   ],
   "style": "style.css"
 }
