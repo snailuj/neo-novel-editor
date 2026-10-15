@@ -217,7 +217,7 @@ test('each action runs once however often it is asked for before it lands', asyn
     await page.waitForTimeout(500);
     expect(readMarks(sidecar(library, bookId))[0].history.map((h) => h.state)).toEqual(['resolved']);
     await expect(card.locator('.s-actions button').nth(1)).toHaveText('Reopen');
-    await expect(page.getByRole('status')).toContainText('Comment resolved');
+    await expect(page.locator('.hoard-marks').getByRole('status')).toContainText('Comment resolved');
   } finally {
     await fixture.close();
   }

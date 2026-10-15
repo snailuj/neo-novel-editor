@@ -1,8 +1,7 @@
 // Folding, so a search finds words however they were typed: capitals, accents (NFKD less
 // its combining marks, so Ș is S and ﬁ is fi), curly quotes and apostrophes (as straight
-// ones), a run of white space (as one space) and Markdown's emphasis marks * and _ (as
-// nothing, since a wiki page keeps its Markdown as text). The folded text maps back to
-// the text as written, so a match is a place that selects exactly the words.
+// ones) and a run of white space (as one space). The folded text maps back to the text
+// as written, so a match is a place that selects exactly the words.
 
 const SINGLE = /[‘’‚‛′]/;
 const DOUBLE = /[“”„‟″]/;
@@ -20,7 +19,6 @@ export interface Folded {
 }
 
 function foldChar(ch: string): string {
-  if (ch === '*' || ch === '_') return '';
   if (SINGLE.test(ch)) return "'";
   if (DOUBLE.test(ch)) return '"';
   return ch.normalize('NFKD').replace(MARKS, '').toLowerCase();
@@ -37,7 +35,7 @@ export function fold(text: string): Folded {
     let made: string;
     if (code < 0x80) {
       ch = text[i]!;
-      made = code >= 65 && code <= 90 ? String.fromCharCode(code + 32) : ch === '*' || ch === '_' ? '' : ch;
+      made = code >= 65 && code <= 90 ? String.fromCharCode(code + 32) : ch;
     } else {
       ch = String.fromCodePoint(text.codePointAt(i)!);
       made = foldChar(ch);

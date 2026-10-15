@@ -11,9 +11,11 @@
 // The writer's comments are drawn on the page and listed in a Comments section beside
 // the manuscript (marks/window.ts), which needs API 3's side sections. The wiki
 // (wiki/window.ts) imports pages, opens the wiki book and follows links into it, which
-// needs API 4's open.
+// needs API 4's open. Search (search/window.ts) looks through every book and the wiki
+// from a Search section beside the book.
 import { startLibrarian } from './git/librarian.ts';
 import { startMarks } from './marks/window.ts';
+import { startSearch } from './search/window.ts';
 import { startWiki } from './wiki/window.ts';
 
 NeoPlugins.register({
@@ -48,6 +50,10 @@ NeoPlugins.register({
     const marks = startMarks(neo);
     const wiki = startWiki(neo);
     const librarian = startLibrarian(neo);
-    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, librarian }) });
+    const search = startSearch(neo, {
+      bookId: () => wiki.pages()?.bookId ?? null,
+      show: (chId, at) => wiki.pane.open(chId, at ?? undefined),
+    });
+    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, librarian, search }) });
   },
 });

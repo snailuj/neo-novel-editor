@@ -2,17 +2,17 @@
 // window half's health check (ping), and keeps the library's history in git: every
 // landed write feeds the checkpoints, the window asks for one on a chapter switch or a
 // book closing, and quitting makes one last commit. It keeps the writer's marks in
-// sidecars under .neo/, which the history commits with the chapters, and brings hoard's
-// Markdown pages into the wiki book. The library's repository is looked
-// at after activate returns, so NEO's start never waits on git. Every commit runs the
-// pre-commit gate (git/gate.ts) over what it stages.
-import { app, BrowserWindow, dialog } from 'electron';
+// sidecars under .neo/, which the history commits with the chapters, brings hoard's
+// Markdown pages into the wiki book, and searches the library's files. The library's
+// repository is looked at after activate returns, so NEO's start never waits on git.
+// Every commit runs the pre-commit gate (git/gate.ts) over what it stages.
+import { app, BrowserWindow, dialog, utilityProcess } from 'electron';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { HoardPingV1 } from '../generated/ipc/hoard-ping-v1.js';
 import {
   validateHoardGitBlameV1, validateHoardGitCheckpointV1, validateHoardMarksAddV1, validateHoardMarksListV1,
-  validateHoardMarksReplyV1, validateHoardMarksStateV1, validateHoardPingV1, validateHoardWikiImportV1, validateHoardWikiPageV1,
+  validateHoardMarksReplyV1, validateHoardMarksStateV1, validateHoardPingV1, validateHoardSearchQueryV1, validateHoardWikiImportV1, validateHoardWikiPageV1,
 } from '../generated/validators.cjs';
 import { textconvCommand } from './git/blame.ts';
 import { startGate } from './git/gate-main.ts';
@@ -21,6 +21,7 @@ import { startLibrarianPairs } from './git/librarian-main.ts';
 import { createGit } from './git/runner.ts';
 import { ATTRIBUTES } from './git/start.ts';
 import { MarkStore } from './marks/store.ts';
+import { SearchClient, type WorkerProcess } from './search/client.ts';
 import { WikiStore } from './wiki/store.ts';
 import { describeSort } from './wiki/summary.ts';
 
@@ -171,6 +172,18 @@ function startWiki(host: NeoMainHost, layer: GitLayer, marks: MarkStore): void {
   });
 }
 
+// Search: the library's files are read in a worker process, started on the first
+// search; the window searches the open book itself and asks here for the rest.
+function startSearch(host: NeoMainHost): void {
+  const client = new SearchClient({
+    start: () => utilityProcess.fork(path.join(host.paths.plugin, 'search-worker.cjs'), [], { serviceName: 'NEO search' }) as unknown as WorkerProcess,
+    library: () => host.paths.library(),
+    log: host.log.bind(host),
+  });
+  host.handle('search.query', (payload) => client.search(checked('search.query', validateHoardSearchQueryV1, payload)));
+  app.on('will-quit', () => client.stop());
+}
+
 // The writer chose Keep Library History from the Plugins menu, so the answer is theirs
 // to read: a message box, never while they type.
 async function keepHistory(host: NeoMainHost, layer: GitLayer) {
@@ -199,5 +212,6 @@ export function activate(host: NeoMainHost): void {
   startLibrarianPairs(host, layer);
   const marks = startMarks(host, layer);
   startWiki(host, layer, marks);
+  startSearch(host);
   layer.open().catch((err: unknown) => host.log('error', 'git.open failed', String(err)));
 }
