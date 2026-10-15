@@ -144,19 +144,25 @@ test('head names the last commit of a tracked library, and is null with no histo
   assert.equal(await layer.head(), sha);
 });
 
-// Rule: an import is committed at once, as its own checkpoint, once it has landed; a
-// library without history makes no commit for it.
-test('an import is committed at once as its own checkpoint, and an untracked library makes none', async (t) => {
+// Rule: an import is committed at once, in two checkpoints once each has landed: the
+// author's (what they wrote meanwhile, and their own words on the pages) and then the
+// librarian's, so blame credits each paragraph to whoever owns it. A library without
+// history makes no commit for it.
+test('an import is committed at once, the author\'s part and then the librarian\'s, and an untracked library makes none', async (t) => {
   isolateGitConfig(t, { name: 'Ada', email: 'ada@example.com' });
   const lib = tempLibrary(t);
   await lib.git.run(lib.library, ['init', '-q']);
   const { layer } = layerFor(t, lib.git, lib.library);
   await layer.open();
   await layer.drained();
-  lib.write('book-wiki-1/chapters/c1.html', '<p>Imported.</p>');
+  lib.write('book-wiki-1/chapters/c1.html', '<p>Quoted.</p>');
+  await layer.commitNow('import-author');
+  lib.write('book-wiki-1/chapters/c1.html', '<p>Quoted.</p><p>Imported.</p>');
   await layer.commitNow('import');
-  assert.deepEqual(await log(lib.git, lib.library, '%s|%(trailers:key=Neo-Checkpoint,valueonly)'), [
-    'Pages imported to the wiki|import', 'Writing found uncommitted at start|recovered',
+  assert.deepEqual(await log(lib.git, lib.library, '%s|%an|%(trailers:key=Neo-Checkpoint,valueonly)'), [
+    'Pages imported to the wiki|Librarian|import',
+    'Pages imported to the wiki: quotations and code, as the author\'s|Ada|import-author',
+    'Writing found uncommitted at start|Ada|recovered',
   ]);
   const bare = tempLibrary(t);
   const other = layerFor(t, bare.git, bare.library).layer;

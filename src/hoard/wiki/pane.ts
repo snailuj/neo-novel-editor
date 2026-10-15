@@ -7,7 +7,8 @@
 // accept, comment and resolve in the pane).
 //
 // The pane reads a page through the main half, from its chapter file, so it shows the
-// page as last saved. It never takes the focus from the manuscript: only a click or a
+// page as last saved, kept to its paragraphs, their wiki classes and NEO's inline
+// formatting (pageBlocks). It never takes the focus from the manuscript: only a click or a
 // key inside the pane moves the focus, and then it stays in the pane.
 import { PageHistory } from './history.ts';
 import { linksIn } from './links.ts';
@@ -28,11 +29,20 @@ const button = (className: string, text: string) => {
   return b;
 };
 
-// The text of each paragraph of a page's HTML, read inertly: nothing in it runs or loads.
-function paragraphsOf(html: string): string[] {
+// What the pane keeps of a page's HTML: the paragraphs with their wiki classes and
+// data, and NEO's own inline formatting. Anything else is left out for its text, so a
+// page read from disk can never put a script, a style or a live link in the window.
+const BLOCK_CLASS = /^(?:wiki-[a-z0-9-]+|scene-break)$/;
+const BLOCK_DATA = ['depth', 'n', 'task', 'callout', 'lang', 'head', 'block'];
+const INLINE = new Set(['B', 'I', 'U', 'S', 'EM', 'STRONG', 'CODE']);
+// the CSS highlight on words a search found on the page shown
+const FOUND = 'hoard-wiki-found';
+
+function pageBlocks(html: string): HTMLTemplateElement {
+  // read inertly: nothing in it runs or loads
   const inert = document.createElement('template');
   inert.innerHTML = html;
-  return [...inert.content.querySelectorAll('p')].map((p) => p.textContent ?? '');
+  return inert;
 }
 
 export function startWikiPane(neo: NeoApiV4, o: { resolve: () => Resolver; editInBook: (chId: string) => Promise<void> }) {
@@ -40,6 +50,8 @@ export function startWikiPane(neo: NeoApiV4, o: { resolve: () => Resolver; editI
   const history = new PageHistory();
   let shown: PageRead | null = null;
   let asked = 0;
+  // where to take the reader on the next page drawn: words a search found
+  let showAt: { pIdx: number; off: number; len: number } | null = null;
 
   const root = pane.element;
   root.classList.add('hoard-wiki-pane');
@@ -64,28 +76,83 @@ export function startWikiPane(neo: NeoApiV4, o: { resolve: () => Resolver; editI
     empty.hidden = !!history.current;
   };
 
+  // Text with its [[links]] as buttons to their pages, or marked missing.
+  const linked = (text: string, pages: Resolver): Node[] => {
+    const out: Node[] = [];
+    let at = 0;
+    for (const link of linksIn([text])) {
+      out.push(document.createTextNode(text.slice(at, link.off)));
+      const words = text.slice(link.off, link.off + link.len);
+      const chId = pages.get(link.target);
+      if (chId) {
+        const go = button('hoard-wiki-link', words);
+        go.addEventListener('click', () => { open(chId); });
+        out.push(go);
+      } else {
+        const gone = el('span', 'hoard-wiki-missing', words);
+        gone.title = `No wiki page is called “${link.target}”.`;
+        out.push(gone);
+      }
+      at = link.off + link.len;
+    }
+    out.push(document.createTextNode(text.slice(at)));
+    return out;
+  };
+
+  const copyInline = (from: Node, to: Node, pages: Resolver, inCode: boolean) => {
+    for (const child of from.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        const text = child.textContent ?? '';
+        if (inCode) to.appendChild(document.createTextNode(text));
+        else for (const node of linked(text, pages)) to.appendChild(node);
+      } else if (child instanceof Element) {
+        if (INLINE.has(child.tagName)) {
+          const kept = document.createElement(child.tagName.toLowerCase());
+          copyInline(child, kept, pages, inCode || child.tagName === 'CODE');
+          to.appendChild(kept);
+        } else {
+          copyInline(child, to, pages, inCode);
+        }
+      }
+    }
+  };
+
+  // The words at a place on the page drawn, marked and scrolled to.
+  const markAt = (at: { pIdx: number; off: number; len: number }) => {
+    const line = body.children[at.pIdx];
+    if (!line) return;
+    const walk = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    let seen = 0;
+    let started = false;
+    for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+      const n = node.textContent?.length ?? 0;
+      if (!started && at.off <= seen + n) {
+        range.setStart(node, at.off - seen);
+        started = true;
+      }
+      if (started && at.off + at.len <= seen + n) {
+        range.setEnd(node, at.off + at.len - seen);
+        if (typeof Highlight === 'function') CSS.highlights.set(FOUND, new Highlight(range));
+        break;
+      }
+      seen += n;
+    }
+    line.scrollIntoView({ block: 'center' });
+  };
+
   const render = (page: PageRead) => {
     const pages = o.resolve();
     title.textContent = page.title;
-    body.replaceChildren(...paragraphsOf(page.html).map((text) => {
+    CSS.highlights?.delete(FOUND);
+    body.replaceChildren(...[...pageBlocks(page.html).content.querySelectorAll('p')].map((source) => {
       const line = el('p', 'hoard-wiki-line');
-      let at = 0;
-      for (const link of linksIn([text])) {
-        line.append(text.slice(at, link.off));
-        const words = text.slice(link.off, link.off + link.len);
-        const chId = pages.get(link.target);
-        if (chId) {
-          const go = button('hoard-wiki-link', words);
-          go.addEventListener('click', () => { open(chId); });
-          line.append(go);
-        } else {
-          const gone = el('span', 'hoard-wiki-missing', words);
-          gone.title = `No wiki page is called “${link.target}”.`;
-          line.append(gone);
-        }
-        at = link.off + link.len;
+      for (const name of source.classList) if (BLOCK_CLASS.test(name)) line.classList.add(name);
+      for (const key of BLOCK_DATA) {
+        const value = source.getAttribute(`data-${key}`);
+        if (value !== null) line.setAttribute(`data-${key}`, value);
       }
-      line.append(text.slice(at));
+      copyInline(source, line, pages, line.classList.contains('wiki-code'));
       return line;
     }));
   };
@@ -93,6 +160,8 @@ export function startWikiPane(neo: NeoApiV4, o: { resolve: () => Resolver; editI
   // Shows the trail's current page, once it has read; a later request wins.
   const showCurrent = async () => {
     const chId = history.current;
+    const at = showAt;
+    showAt = null;
     // before a button the writer pressed is disabled, which would drop the focus
     const hadFocus = root.contains(document.activeElement);
     refreshNav();
@@ -116,12 +185,15 @@ export function startWikiPane(neo: NeoApiV4, o: { resolve: () => Resolver; editI
     } else {
       status.textContent = '';
       render(page);
+      if (at) markAt(at);
     }
     refreshNav();
     if (hadFocus) title.focus();
   };
 
-  const open = (chId: string) => {
+  /** A page shown, and with at the words there marked and scrolled to. */
+  const open = (chId: string, at?: { pIdx: number; off: number; len: number }) => {
+    showAt = at ?? null;
     history.visit(chId);
     pane.show();
     return showCurrent();

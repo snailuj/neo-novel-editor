@@ -8,7 +8,8 @@
     { "id": "add-comment", "title": "Add Comment" },
     { "id": "import-wiki", "title": "Import to Wiki…" },
     { "id": "open-wiki", "title": "Edit Wiki as a Book" },
-    { "id": "follow-link", "title": "Follow Link" }
+    { "id": "follow-link", "title": "Follow Link" },
+    { "id": "search-library", "title": "Search Library…" }
   ],
   "style": "style.css"
 }

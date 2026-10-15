@@ -5,7 +5,7 @@
 import { validateHoardSettingsV1 } from '../../generated/validators.cjs';
 import { blameChapter, type BlameLine } from './blame.ts';
 import { Checkpoints, type Clock } from './checkpoints.ts';
-import { commitAll, type Identity, type Reason } from './commit.ts';
+import { commitAll, whoFor, type Identity, type Reason } from './commit.ts';
 import { repoState, syncedFolder, type RepoState } from './repo.ts';
 import { GitError, type Git, type GitLog } from './runner.ts';
 import { keepHistory, type Started } from './start.ts';
@@ -93,8 +93,11 @@ export class GitLayer {
     if (this.#state.state === 'tracked') this.#checkpoints.request(reason);
   }
 
-  /** A commit now, once any running one is done; resolves when it has landed. */
-  async commitNow(reason: 'import'): Promise<void> {
+  /**
+   * A commit now, once any running one is done; resolves when it has landed. An import's
+   * is the librarian's, its author's part the author's (whoFor).
+   */
+  async commitNow(reason: 'import-author' | 'import'): Promise<void> {
     if (this.#state.state !== 'tracked') return;
     this.#checkpoints.now(reason);
     await this.#checkpoints.drained();
@@ -154,7 +157,7 @@ export class GitLayer {
     const { git, library, settings, log } = this.#o;
     const start = performance.now();
     const made = await commitAll(git, library, {
-      who: 'author', reason, librarian: settings.librarian, author: settings.author,
+      who: whoFor(reason), reason, librarian: settings.librarian, author: settings.author,
     });
     this.#lastFailure = '';
     if (!made) {
