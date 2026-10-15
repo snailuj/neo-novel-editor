@@ -125,3 +125,21 @@ test('settings that do not fit the schema fall back to the defaults, with a warn
   assert.equal(ok.gitPath, '/opt/git');
   assert.deepEqual(ok.author, { name: 'P', email: 'p@x' });
 });
+
+// Rule: a mark records the commit its quote was read at when the library has one, and
+// null otherwise; asking never fails the caller.
+test('head names the last commit of a tracked library, and is null with no history', async (t) => {
+  isolateGitConfig(t, { name: 'Ada', email: 'ada@example.com' });
+  const untracked = tempLibrary(t);
+  const before = layerFor(t, untracked.git, untracked.library).layer;
+  await before.open();
+  assert.equal(await before.head(), null);
+  const lib = tempLibrary(t);
+  await lib.git.run(lib.library, ['init', '-q']);
+  const { layer } = layerFor(t, lib.git, lib.library);
+  await layer.open();
+  await layer.drained();
+  const [sha] = await log(lib.git, lib.library, '%H');
+  assert.match(sha, /^[0-9a-f]{40}$/);
+  assert.equal(await layer.head(), sha);
+});

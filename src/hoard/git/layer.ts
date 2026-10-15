@@ -111,6 +111,19 @@ export class GitLayer {
     return lines;
   }
 
+  /** The last commit, or null in a library with no history or no commit yet. */
+  async head(): Promise<string | null> {
+    if (this.#state.state !== 'tracked') return null;
+    const { git, library, log } = this.#o;
+    try {
+      const { stdout } = await git.run(library, ['rev-parse', '--verify', '-q', 'HEAD^{commit}']);
+      return stdout.trim() || null;
+    } catch (err) {
+      if (!(err instanceof GitError && err.kind === 'exit')) log('warn', 'git.head', { message: String(err) });
+      return null;
+    }
+  }
+
   /** On quit: one last commit, waiting at most timeoutMs. */
   async close(timeoutMs: number): Promise<void> {
     this.#checkpoints.stop();
