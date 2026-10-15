@@ -2,7 +2,8 @@
 // writer's pauses rather than NEO's 800 ms saves. A chapter switch or a book closing asks
 // for a checkpoint, which waits until no save has landed for a second, because the
 // window's last save may still be on its way, but no longer than five. Commits run one
-// at a time; a trigger that arrives during one runs once after it.
+// at a time; a trigger that arrives during one runs once after it. A pause (the
+// librarian's commit pair) starts no commit until it ends, then runs the last trigger.
 import type { Reason } from './commit.ts';
 
 export interface Clock {
@@ -39,6 +40,7 @@ export class Checkpoints {
   #requested: { reason: Reason; deadline: number } | null = null;
   #running: Promise<void> | null = null;
   #queued: Reason | null = null;
+  #paused = false;
 
   constructor(options: CheckpointOptions) {
     this.#options = {
@@ -75,7 +77,7 @@ export class Checkpoints {
 
   /** A checkpoint now, or straight after the one running. */
   now(reason: Reason): void {
-    if (this.#running) {
+    if (this.#running || this.#paused) {
       this.#queued = reason;
       return;
     }
@@ -85,6 +87,21 @@ export class Checkpoints {
   /** Resolves once no commit is running or queued. */
   async drained(): Promise<void> {
     while (this.#running) await this.#running;
+  }
+
+  /** Starts no commit until resume; resolves once the commit in flight is done. */
+  async pause(): Promise<void> {
+    this.#paused = true;
+    await this.drained();
+  }
+
+  /** Ends a pause, running the last trigger that fired during it. */
+  resume(): void {
+    this.#paused = false;
+    const queued = this.#queued;
+    this.#queued = null;
+    if (queued && !this.#running) this.now(queued);
+    else this.#queued = queued;
   }
 
   /** Drops every timer; what is running finishes. */
@@ -114,8 +131,8 @@ export class Checkpoints {
     } catch (err) {
       this.#options.onError?.(err, reason);
     }
-    const queued = this.#queued;
-    this.#queued = null;
+    const queued = this.#paused ? null : this.#queued;
+    if (queued) this.#queued = null;
     this.#running = queued ? this.#run(queued) : null;
   }
 }
