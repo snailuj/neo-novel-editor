@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import type { Clock } from '../../src/hoard/git/checkpoints.ts';
 import { GitLayer, resolveSettings } from '../../src/hoard/git/layer.ts';
+import { LibrarianPairs } from '../../src/hoard/git/pair.ts';
 import type { Git } from '../../src/hoard/git/runner.ts';
 import { isolateGitConfig, log, tempDir, tempLibrary } from './git-support.ts';
 
@@ -159,4 +160,75 @@ test('in a library with no history the edit runs alone, with no commits', async 
   const paired = await layer.around([C1], async () => 7);
   assert.deepEqual(paired, { result: 7, before: null, after: null });
   assert.equal(await layer.head(), null);
+});
+
+// Rule: the pair's commits wait on the disk. The author's commit holds the writer's
+// last typing even when its save lands after the edit was asked for, and the
+// librarian's holds the edit even when its save lands after the window says it is done.
+async function pairsFor(t: { after(fn: () => void): void }, options: { settleMs?: number; abandonMs?: number } = {}) {
+  const lib = await tracked(t);
+  const pairs = new LibrarianPairs({
+    layer: lib.layer, library: () => lib.library, log: () => {}, settleMs: 2_000, ...options,
+  });
+  // NEO's save: the file, then the host's after-write
+  const save = (html: string, ms: number) => new Promise<void>((resolve) => setTimeout(() => {
+    lib.write(C1, html);
+    pairs.landed('book-fox-1', 'c1');
+    resolve();
+  }, ms));
+  return { ...lib, pairs, save };
+}
+
+const ask = (html: string) => ({ bookId: 'book-fox-1', chId: 'c1', html });
+
+test('a save landing after the edit is asked for still goes in the author\'s commit', async (t) => {
+  const { library, git, pairs, save } = await pairsFor(t);
+  const typed = '<p>One.</p><p>Two, typed.</p>';
+  const asked = performance.now();
+  const [begun] = await Promise.all([pairs.begin(ask(typed)), save(typed, 150)]);
+  assert.ok('pair' in begun && begun.pair);
+  assert.ok(performance.now() - asked < 1_500, 'the landed write ends the wait, not the time limit');
+  const edited = '<p>One.</p><p>Two, amended.</p>';
+  const [ended] = await Promise.all([pairs.end({ pair: begun.pair, html: edited }), save(edited, 150)]);
+  assert.deepEqual((await history(git, library)).slice(0, 2), ['Librarian|librarian-after', 'Ada|librarian-before']);
+  const { stdout: before } = await git.run(library, ['show', `${ended.before}:${C1}`]);
+  const { stdout: after } = await git.run(library, ['show', `${ended.after}:${C1}`]);
+  assert.equal(before, typed);
+  assert.equal(after, edited);
+});
+
+test('a chapter whose save never lands refuses the edit, and makes no commit', async (t) => {
+  const { library, git, layer, pairs, write } = await pairsFor(t, { settleMs: 200 });
+  assert.deepEqual(await pairs.begin(ask('<p>Never saved.</p>')), { refused: 'unsaved' });
+  assert.deepEqual(await history(git, library), ['Ada|recovered']);
+  write(C1, '<p>The writer again.</p>');
+  await layer.commitNow('import');
+  assert.equal((await history(git, library))[0], 'Ada|import', 'the checkpoints were never held');
+});
+
+test('an edit the window never ends is committed as the librarian\'s after a while', async (t) => {
+  const { library, git, layer, pairs, write } = await pairsFor(t, { abandonMs: 200 });
+  const begun = await pairs.begin(ask('<p>One.</p><p>Two.</p>'));
+  assert.ok('pair' in begun && begun.pair);
+  write(C1, '<p>Edited, then the window went away.</p>');
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  await layer.drained();
+  assert.equal((await history(git, library))[0], 'Librarian|librarian-after');
+  await assert.rejects(pairs.end({ pair: begun.pair, html: null }), /no edit/);
+});
+
+test('with no history there is no pair, and ending it commits nothing', async (t) => {
+  isolateGitConfig(t, { name: 'Ada', email: 'ada@example.com' });
+  const lib = tempLibrary(t);
+  const { layer } = pairLayer(t, lib.git, lib.library);
+  await layer.open();
+  const pairs = new LibrarianPairs({ layer, library: () => lib.library, log: () => {} });
+  assert.deepEqual(await pairs.begin(ask('<p>One.</p><p>Two.</p>')), { pair: null });
+  assert.deepEqual(await pairs.end({ pair: null, html: '<p>x</p>' }), { before: null, after: null });
+});
+
+test('a name that leaves the library is refused', async (t) => {
+  const { pairs } = await pairsFor(t);
+  await assert.rejects(pairs.begin({ bookId: '..', chId: 'c1', html: '' }), TypeError);
+  await assert.rejects(pairs.begin({ bookId: 'book-fox-1', chId: 'a/b', html: '' }), TypeError);
 });
