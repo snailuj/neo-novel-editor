@@ -1,4 +1,4 @@
-// The plugin API, versions 1 and 2, as types. plugins.js implements the window half
+// The plugin API, versions 1 to 3, as types. plugins.js implements the window half
 // (what activate(neo) receives) and plugins-main.js the main half (what a manifest's
 // `main` entry's activate(host) receives); this file follows them.
 
@@ -175,6 +175,32 @@ interface NeoApiV2 extends NeoApi {
   highlight(name: string, places: readonly NeoPlace[]): void;
 }
 
+/** A pane as API 3 makes it: its element, and a way to bring it in front of the writer. */
+interface NeoPaneV3 {
+  readonly element: HTMLDivElement;
+  /**
+   * Brings the pane in front of the writer, in answer to their own action (a click on a
+   * highlight, a command). A tab is switched to. A side section opens the right-hand pane
+   * and scrolls into view; on the Notes, Outline and Darlings tabs, where the section is
+   * hidden, nothing moves. false with no book open, where nothing moved, or once the
+   * plugin failed to activate.
+   */
+  show(): boolean;
+}
+
+/** What activate(neo) receives for API 3: API 2, with side sections. */
+interface NeoApiV3 extends Omit<NeoApiV2, 'addPane'> {
+  /**
+   * As API 1's addPane, and with side: true a section of the right-hand pane instead of
+   * a tab: the title as its heading and the element under it, after NEO's own lists. It
+   * shows wherever the pane shows Notes & Comments, so beside the manuscript and not on
+   * the Notes, Outline or Darlings tabs. Tabs and sections share one set of ids. Throws
+   * TypeError as API 1's does, and for a key other than id, title and side, or a side
+   * that is not a boolean.
+   */
+  addPane(pane: { id: string; title: string; side?: boolean }): NeoPaneV3;
+}
+
 interface NeoPluginBase {
   /** The id in the plugin's plugin.json. */
   id: string;
@@ -202,10 +228,15 @@ interface NeoPluginV2 extends NeoPluginBase {
   activate(neo: NeoApiV2): void | Promise<void>;
 }
 
-type NeoPlugin = NeoPluginV1 | NeoPluginV2;
+interface NeoPluginV3 extends NeoPluginBase {
+  apiVersion: 3;
+  activate(neo: NeoApiV3): void | Promise<void>;
+}
+
+type NeoPlugin = NeoPluginV1 | NeoPluginV2 | NeoPluginV3;
 
 declare const NeoPlugins: {
-  readonly apiVersions: readonly (1 | 2)[];
+  readonly apiVersions: readonly (1 | 2 | 3)[];
   register(plugin: NeoPlugin): void;
   /**
    * true when a value is a place: an object with chId a non-empty string, pIdx, off and
