@@ -1,8 +1,10 @@
 // The wiki in the window. Import to Wiki asks the main half, which runs the file picker
-// and the questions; Open Wiki opens the wiki book; and [[links]] are drawn on the page
-// of any book and followed with Ctrl+click (Cmd+click on a Mac) or Follow Link, into
-// the wiki, opening it first when another book is open. Nothing here runs while the
-// writer types but a redraw of the links, once typing pauses.
+// and the questions. [[links]] are drawn on the page of any book and followed with
+// Ctrl+click (Cmd+click on a Mac) or Follow Link: from another book the page shows in
+// the wiki pane beside it (pane.ts), so the writer keeps their place; in the wiki book
+// the caret goes to the page. Edit Wiki as a Book opens the wiki book itself, which is
+// where pages are edited until the pane can. Nothing here runs while the writer types
+// but a redraw of the links, once typing pauses.
 //
 // While the wiki is open the body carries data-hoard-wiki, so the plugin's stylesheet
 // can set its pages flush left: they are Markdown, not prose. It also carries NEO's own
@@ -12,6 +14,7 @@
 // opened again.
 import type { Applied, WikiPages } from './store.ts';
 import { linkAt, linksIn, pageIndex } from './links.ts';
+import { startWikiPane } from './pane.ts';
 
 const REDRAW_MS = 300;
 const STATUS_MS = 4_000;
@@ -106,9 +109,19 @@ export function startWiki(neo: NeoApiV4) {
     return opened;
   };
 
-  // The page a link names, opening the wiki first when another book is open. The book
-  // takes the writer back to where they last were a frame after it opens, so the page
-  // is gone to once that is done.
+  // The wiki book opened at a page. The book takes the writer back to where they last
+  // were a frame after it opens, so the page is gone to once that is done.
+  const editInBook = async (chId: string) => {
+    if (!wikiOpen()) {
+      if (!(await openWiki())) return;
+      await frames(2);
+    }
+    if (!neo.go({ chId, pIdx: 0, off: 0, len: 0 })) say('The page could not be shown.');
+  };
+
+  const pane = startWikiPane(neo, { resolve: () => index(), editInBook });
+
+  // The page a link names: in the pane beside another book, or in the wiki book itself.
   const follow = async (target: string) => {
     if (!wiki) await refresh();
     const chId = index().get(target);
@@ -116,11 +129,11 @@ export function startWiki(neo: NeoApiV4) {
       say(`No wiki page is called “${target}”.`);
       return;
     }
-    if (!wikiOpen()) {
-      if (!(await openWiki())) return;
-      await frames(2);
+    if (wikiOpen()) {
+      if (!neo.go({ chId, pIdx: 0, off: 0, len: 0 })) say(`The page “${target}” could not be shown.`);
+      return;
     }
-    if (!neo.go({ chId, pIdx: 0, off: 0, len: 0 })) say(`The page “${target}” could not be shown.`);
+    await pane.open(chId);
   };
 
   const linkHere = (): string | null => {
@@ -140,6 +153,7 @@ export function startWiki(neo: NeoApiV4) {
       await refresh();
       drawLinks();
       if (answer.outcome === 'imported' && answer.open) await openWiki();
+      else if (pane.shown()) await pane.reload();
     } finally {
       importing = false;
     }
@@ -174,5 +188,5 @@ export function startWiki(neo: NeoApiV4) {
   });
   neo.on('chapter-change', redrawSoon);
 
-  return { openWiki, follow, pages: () => wiki, drawLinks };
+  return { openWiki, follow, pages: () => wiki, drawLinks, pane };
 }

@@ -96,7 +96,7 @@ test('picked pages come into the wiki, open in NEO, and their links are followed
     const told = await boxes(app);
     expect(told.map((b) => b.message)).toEqual(['Import 2 pages into the wiki?', '2 pages are in the wiki.']);
     expect(told[0].detail).toContain('Coming in: Harbour, Tide Tables.');
-    expect(told[1].buttons).toEqual(['Open Wiki', 'Close']);
+    expect(told[1].buttons).toEqual(['Open Wiki Book', 'Close']);
 
     const wiki = await page.evaluate(() => ({ id: book.id, order: book.chapterOrder, titles: book.chapterTitles, kinds: book.chapterKinds }));
     const [harbour, tides] = wiki.order;
@@ -139,11 +139,37 @@ test('picked pages come into the wiki, open in NEO, and their links are followed
     expect(JSON.parse(readFileSync(path.join(library, wiki.id, 'book.json'), 'utf8')).chapterOrder).toEqual(wiki.order);
     expect(git(library, 'status', '--porcelain', '--', '.neo')).toBe('');
 
-    // a link in a manuscript is drawn and followed into the wiki, which opens for it
+    // a link in a manuscript is drawn and its page shown in the wiki pane beside the
+    // book, the caret staying where the writer was
     await page.evaluate((id) => openBook(id), novel);
     await expect.poll(() => drawnText(page, 'wiki-link')).toEqual(['[[Harbour]]']);
     await caretIn(page, '[[Harbour]]');
+    const before = await page.evaluate(() => captureCaret());
     await menu(app, 'Follow Link');
+    const pane = page.locator('.hoard-wiki-pane');
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Harbour');
+    await expect(pane).toBeVisible();
+    await expect(pane.locator('.hoard-wiki-line')).toHaveText(['The harbour wall faces east.', 'See [[Tide Tables]].']);
+    expect(await page.evaluate(() => [book.id, captureCaret()])).toEqual([novel, before]);
+
+    // links in the pane move it along, and Back and Forward walk the trail
+    await pane.getByRole('button', { name: '[[Tide Tables]]' }).click();
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tide Tables');
+    await expect(pane.locator('.hoard-wiki-missing')).toHaveText('[[Nowhere]]');
+    await pane.getByRole('button', { name: '‹ Back' }).click();
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Harbour');
+    // from the keyboard: Forward is disabled at the end of the trail, and the focus
+    // goes to the page's title rather than out of the pane
+    await pane.getByRole('button', { name: 'Forward ›' }).focus();
+    await page.keyboard.press('Enter');
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tide Tables');
+    await expect(pane.locator('.hoard-wiki-title')).toBeFocused();
+    await page.keyboard.press('Alt+ArrowLeft');
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Harbour');
+    expect(await page.evaluate(() => book.id)).toBe(novel);
+
+    // Edit in Wiki Book opens the wiki book at that page
+    await pane.getByRole('button', { name: 'Edit in Wiki Book' }).click();
     await expect.poll(() => page.evaluate(() => book && book.id)).toBe(wiki.id);
     await expect.poll(() => page.evaluate(() => captureCaret()?.chId)).toBe(harbour);
   } finally {

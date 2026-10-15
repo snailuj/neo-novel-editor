@@ -183,3 +183,16 @@ test('importing while the wiki is open is refused, and nothing is written', asyn
   await assert.rejects(wiki.apply(wiki.sort([page('a/Two.md', '2\n')]), bookId), /open/);
   assert.equal(readFileSync(path.join(library, bookId, 'book.json'), 'utf8'), before);
 });
+
+// Rule: the wiki pane reads one page as its chapter file holds it, with the title the
+// wiki's book.json gives it; a page the wiki does not list is not read.
+test('a page is read for the pane by its chapter id, and only a page of the wiki', async (t) => {
+  const { library, wiki, page } = setup(t);
+  assert.equal(wiki.page('ch-none'), null, 'no wiki yet');
+  await wiki.apply(wiki.sort([page('lore/Fox.md', 'Red [[Owl]].\n')]), null);
+  const bookId = wiki.wikiId()!;
+  const [chId] = bookOf(library, bookId).chapterOrder;
+  assert.deepEqual(wiki.page(chId), { bookId, chId, title: 'Fox', html: '<p>Red [[Owl]].</p>' });
+  assert.equal(wiki.page('ch-not-listed'), null);
+  assert.throws(() => wiki.page('../book.json'), TypeError);
+});

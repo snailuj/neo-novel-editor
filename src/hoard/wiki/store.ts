@@ -1,6 +1,7 @@
 // The wiki on the main side: one NEO book whose chapters are the wiki's pages, made by
 // the first import and named in .neo/wiki.json. It is on no shelf, because only the
-// window writes library.json; Plugins > Open Wiki opens it.
+// window writes library.json; Plugins > Edit Wiki as a Book opens it, and the wiki pane
+// (wiki/pane.ts) reads single pages beside another book.
 //
 // An import first sorts the picked files (sort), which reads but never writes, so the
 // writer can be told what would happen. Applying it sorts the files again, in case they
@@ -138,6 +139,16 @@ export class WikiStore {
     const book = this.#readBook(bookId);
     const titles = book.chapterTitles ?? {};
     return { bookId, pages: book.chapterOrder.map((chId) => ({ chId, title: titles[chId] ?? '' })) };
+  }
+
+  /** One page as its chapter file holds it, for the wiki pane; null for a page the wiki does not list. */
+  page(chId: string): { bookId: string; chId: string; title: string; html: string } | null {
+    oneName(chId, 'chId');
+    const wiki = this.pages();
+    const listed = wiki?.pages.find((p) => p.chId === chId);
+    if (!wiki || !listed) return null;
+    const html = readFileSync(path.join(this.#library, wiki.bookId, 'chapters', `${chId}.html`), 'utf8');
+    return { bookId: wiki.bookId, chId, title: listed.title, html };
   }
 
   // Each page already in the wiki: its source (by path) and its title (by link key).

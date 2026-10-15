@@ -11,7 +11,7 @@ import path from 'node:path';
 import type { HoardPingV1 } from '../generated/ipc/hoard-ping-v1.js';
 import {
   validateHoardGitBlameV1, validateHoardGitCheckpointV1, validateHoardMarksAddV1, validateHoardMarksListV1,
-  validateHoardMarksReplyV1, validateHoardMarksStateV1, validateHoardPingV1, validateHoardWikiImportV1,
+  validateHoardMarksReplyV1, validateHoardMarksStateV1, validateHoardPingV1, validateHoardWikiImportV1, validateHoardWikiPageV1,
 } from '../generated/validators.cjs';
 import { textconvCommand } from './git/blame.ts';
 import { GitLayer, resolveSettings } from './git/layer.ts';
@@ -121,6 +121,7 @@ function startWiki(host: NeoMainHost, layer: GitLayer, marks: MarkStore): void {
     log: host.log.bind(host),
   });
   host.handle('wiki.pages', () => wiki.pages());
+  host.handle('wiki.page', (payload) => wiki.page(checked('wiki.page', validateHoardWikiPageV1, payload).chId));
   host.handle('wiki.import', async (payload) => {
     const { openBookId } = checked('wiki.import', validateHoardWikiImportV1, payload);
     const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
@@ -161,7 +162,7 @@ function startWiki(host: NeoMainHost, layer: GitLayer, marks: MarkStore): void {
     const done = await messageBox({
       type: 'info', message: `${n} page${n === 1 ? ' is' : 's are'} in the wiki.`,
       detail: `${applied.marks ? `${applied.marks} mark${applied.marks === 1 ? '' : 's'} came with them.` : ''}${kept}`.trim(),
-      buttons: ['Open Wiki', 'Close'], defaultId: 0, cancelId: 1, noLink: true,
+      buttons: ['Open Wiki Book', 'Close'], defaultId: 0, cancelId: 1, noLink: true,
     });
     return { outcome: 'imported', bookId: applied.bookId, imported: applied.imported, open: done.response === 0 };
   });
