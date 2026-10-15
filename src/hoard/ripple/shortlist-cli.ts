@@ -1,13 +1,14 @@
 // npm run ripple:shortlist -- --vault <hoard> --out <folder> [--source <relpath> ...]
-//   [--pick N --rulings <RIPPLE.jsonl>] [--git] [--k 30] [--embed <model>] [--seed 1]
-// Writes sheet.md (blind lists to read by hand) and key.json to --out, never inside the
-// vault. A spike for choosing ripple's shortlist method; not part of the app.
+//   [--pick N --rulings <RIPPLE.jsonl>] [--git] [--k 30] [--embed <model> ...]
+// Writes sheet.md (each candidate once, to tick by hand) and key.json to --out, never
+// inside the vault. `--score <folder>` then reads the ticks back into score.md. A spike
+// for choosing ripple's shortlist method; not part of the app.
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { readText } from '../../librarian/vault-fs.ts';
-import { buildSheet, pastTargets, pickSources, type SheetCase, type SheetList } from './sheet.ts';
+import { buildSheet, pastTargets, pickSources, renderScore, scoreSheet, type Key, type SheetCase, type SheetList } from './sheet.ts';
 import {
   ROSTER_ZONES, blend, buildCorpus, embeddingRank, inRoster, lexicalRank, rosterChars, rosterRank,
   type Embed, type Source,
@@ -42,15 +43,27 @@ async function loadEmbedder(o: EmbedOptions): Promise<Embed> {
     const spec = '@huggingface/transformers';
     lib = await import(spec);
   } catch (err) {
-    throw new UsageError(`--embed needs transformers.js: npm i --no-save @huggingface/transformers (${(err as Error).message})`);
+    throw new UsageError(`--embed needs transformers.js 4.3.1 or later: npm i --no-save @huggingface/transformers (${(err as Error).message})`);
   }
   const gemma = /embeddinggemma/i.test(o.model);
   const prefix = gemma ? { query: 'task: search result | query: ', document: 'title: none | text: ' } : { query: '', document: '' };
   const started = Date.now();
   let run: (texts: string[]) => Promise<number[][]>;
   if (gemma) {
+    // EmbeddingGemma 2 is multimodal; with the vision and audio encoders nulled in its
+    // config only the 270M text model loads (onnx-community/embeddinggemma-2-ONNX card).
+    // Google's card warns against fp16, so q8 or fp32. Needs transformers.js 4.3.1 or later.
     const tokenizer = await lib.AutoTokenizer.from_pretrained(o.model);
-    const model = await lib.AutoModel.from_pretrained(o.model, { dtype: o.dtype, device: o.device });
+    let config: any;
+    try {
+      config = await lib.AutoConfig.from_pretrained(o.model);
+      if ('vision_config' in config) config.vision_config = null;
+      if ('audio_config' in config) config.audio_config = null;
+    } catch (err) {
+      log(`loading the whole model, as its config did not read: ${(err as Error).message}`);
+      config = undefined;
+    }
+    const model = await lib.AutoModel.from_pretrained(o.model, { dtype: o.dtype, device: o.device, config });
     run = async (texts) => {
       const inputs = await tokenizer(texts, { padding: true, truncation: true });
       return (await model(inputs)).sentence_embedding.tolist();
@@ -108,14 +121,23 @@ async function main(argv: string[]): Promise<void> {
       rulings: { type: 'string' },
       git: { type: 'boolean', default: false },
       k: { type: 'string', default: '30' },
-      embed: { type: 'string' },
+      embed: { type: 'string', multiple: true },
+      score: { type: 'string' },
       pooling: { type: 'string', default: 'mean' },
       dtype: { type: 'string', default: 'q8' },
       device: { type: 'string' },
       'brief-chars': { type: 'string', default: '20338' },
-      seed: { type: 'string', default: '1' },
     },
   });
+  if (values.score) {
+    const dir = path.resolve(values.score);
+    const key = JSON.parse(readFileSync(path.join(dir, 'key.json'), 'utf8')) as Key;
+    const score = scoreSheet(readFileSync(path.join(dir, 'sheet.md'), 'utf8'), key);
+    writeFileSync(path.join(dir, 'score.md'), renderScore(score));
+    for (const t of score.totals) log(`${t.method}: caught ${t.caught} of ${t.ticked} ticked, ${t.size} listed`);
+    log(`wrote ${path.join(dir, 'score.md')}`);
+    return;
+  }
   if (!values.vault || !values.out) throw new UsageError('--vault and --out are required');
   const vault = path.resolve(values.vault);
   const out = path.resolve(values.out);
@@ -132,10 +154,14 @@ async function main(argv: string[]): Promise<void> {
   if (!sources.length) throw new UsageError('name a --source, or --pick N with --rulings');
   mkdirSync(out, { recursive: true });
 
-  const embed = values.embed ? await loadEmbedder({
-    model: values.embed, pooling: values.pooling, dtype: values.dtype, device: values.device,
-    cacheFile: path.join(out, `embed-cache-${values.embed.replace(/[^\w.-]+/g, '_')}.jsonl`),
-  }) : null;
+  // The blend fills from the last model named, so name the preferred one last.
+  const embedders: { model: string; embed: Embed }[] = [];
+  for (const model of values.embed ?? []) {
+    embedders.push({ model, embed: await loadEmbedder({
+      model, pooling: values.pooling, dtype: values.dtype, device: values.device,
+      cacheFile: path.join(out, `embed-cache-${model.replace(/[^\w.-]+/g, '_')}.jsonl`),
+    }) });
+  }
 
   let live: ReturnType<typeof buildCorpus> | null = null;
   if (!values.git) {
@@ -172,13 +198,15 @@ async function main(argv: string[]): Promise<void> {
     lap('lexical');
     const lists: SheetList[] = [{ method: 'roster', ranked: roster.slice(0, k) }, { method: 'lexical', ranked: lexical.slice(0, k) }];
     let fill = lexical;
-    if (embed) {
+    let filler = 'lexical';
+    for (const { model, embed } of embedders) {
       const embedded = await embeddingRank(corpus!, source, embed);
-      lap('embedding');
-      lists.push({ method: 'embedding', ranked: embedded.slice(0, k) });
+      lap(`embedding ${model}`);
+      lists.push({ method: `embedding ${model}`, ranked: embedded.slice(0, k) });
       fill = embedded;
+      filler = model;
     }
-    lists.push({ method: 'blend', ranked: blend(roster, fill, k) });
+    lists.push({ method: filler === 'lexical' ? 'blend' : `blend ${filler}`, ranked: blend(roster, fill, k) });
     timings[rel] = t;
     cases.push({
       source: rel, corpus: corpus!, lists, readAt, briefChars, sourceChars: source.text.length,
@@ -186,12 +214,12 @@ async function main(argv: string[]): Promise<void> {
     });
   }
 
-  const { sheet, key } = buildSheet(cases, Number(values.seed));
+  const { sheet, key } = buildSheet(cases);
   writeFileSync(path.join(out, 'sheet.md'), sheet);
-  writeFileSync(path.join(out, 'key.json'), `${JSON.stringify({ ...key, k, model: values.embed ?? null, timings }, null, 2)}\n`);
+  writeFileSync(path.join(out, 'key.json'), `${JSON.stringify({ ...key, k, models: values.embed ?? [], timings }, null, 2)}\n`);
   for (const c of key.cases) {
     log(`${c.source}: whole roster packet ${c.wholeRosterPacketChars} chars; `
-      + c.lists.map((l) => `${l.letter} ${l.packetChars}`).join(', '));
+      + c.lists.map((l) => `${l.method} ${l.packetChars}`).join(', '));
   }
   log(`wrote ${path.join(out, 'sheet.md')} and key.json`);
 }

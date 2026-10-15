@@ -10,7 +10,7 @@ import {
   blend, buildCorpus, card, chunks, embeddingRank, inRoster, lexicalRank, packetChars, rosterChars, rosterRank,
   type Embed, type Source,
 } from '../../src/hoard/ripple/shortlist.ts';
-import { buildSheet, pastTargets, pickSources } from '../../src/hoard/ripple/sheet.ts';
+import { buildSheet, pastTargets, pickSources, scoreSheet } from '../../src/hoard/ripple/sheet.ts';
 import { readSnapshot } from '../../src/hoard/ripple/snapshot.ts';
 import { isolateGitConfig, tempDir } from './git-support.ts';
 
@@ -142,23 +142,46 @@ test('past targets are the applied, hop-0 proposals of a source, newest record p
   assert.throws(() => pastTargets('{"id":"a"}\nnot json\n', sourceRel), /line 2/);
 });
 
-// Rule: the sheet never says which list came from which method; only the key does.
-test('the sheet is blind and the key says which letter is which', () => {
+// Rule: the sheet never says which method put a page there, and asks about each page once.
+test('the sheet lists each candidate once, by name, and the key says which lists held it', () => {
   const roster = rosterRank(corpus, source);
   const lists = [
     { method: 'roster', ranked: roster.slice(0, 4) },
     { method: 'lexical', ranked: lexicalRank(corpus, source).slice(0, 4) },
   ];
-  const { sheet, key } = buildSheet([{ source: sourceRel, corpus, lists, pastTargets: ['wren-calder'], rosterChars: 9999, briefChars: 100, sourceChars: 50 }], 7);
+  const union = new Set(lists.flatMap((l) => l.ranked.map((r) => r.relpath)));
+  assert.ok(union.size < 8, 'baseline: the two lists overlap');
+  const { sheet, key } = buildSheet([{ source: sourceRel, corpus, lists, pastTargets: ['wren-calder'], rosterChars: 9999, briefChars: 100, sourceChars: 50 }]);
   assert.doesNotMatch(sheet, /roster|lexical|embedding|blend|named|hop \d/i);
-  assert.match(sheet, /- \[ \] /);
-  const letters = key.cases[0]!.lists.map((l) => l.letter).sort();
-  assert.deepEqual(letters, ['A', 'B']);
-  assert.deepEqual(key.cases[0]!.lists.map((l) => l.method).sort(), ['lexical', 'roster']);
-  const again = buildSheet([{ source: sourceRel, corpus, lists, pastTargets: [], rosterChars: 1, briefChars: 1, sourceChars: 1 }], 7);
-  assert.deepEqual(again.key.cases[0]!.lists.map((l) => l.method), key.cases[0]!.lists.map((l) => l.method), 'the shuffle is seeded');
-  const roster0 = key.cases[0]!.lists.find((l) => l.method === 'roster')!;
-  assert.equal(roster0.pastCaught, 1);
+  const rows = sheet.split('\n').filter((l) => l.startsWith('- [ ] '));
+  assert.equal(rows.length, union.size);
+  for (const rel of union) assert.equal(rows.filter((r) => r.includes(`(${rel})`)).length, 1, rel);
+  const names = rows.map((r) => /\[\[([^\]]*)\]\]/.exec(r)![1]!);
+  assert.deepEqual(names, [...names].sort((a, b) => a.localeCompare(b)), 'rows are in name order, not list order');
+  assert.deepEqual(key.cases[0]!.lists.map((l) => l.method), ['roster', 'lexical']);
+  assert.deepEqual(key.cases[0]!.lists[0]!.pages, lists[0]!.ranked.map((r) => r.relpath));
+  assert.equal(key.cases[0]!.lists.find((l) => l.method === 'roster')!.pastCaught, 1);
+});
+
+// Rule: a method scores by the author's ticks alone: the share of ticked pages its list
+// held, and the share of its list that was ticked.
+test('scoring reads the ticks back against each list', () => {
+  const lists = [
+    { method: 'roster', ranked: rosterRank(corpus, source).slice(0, 4) },
+    { method: 'lexical', ranked: lexicalRank(corpus, source).slice(0, 4) },
+  ];
+  const { sheet, key } = buildSheet([{ source: sourceRel, corpus, lists, pastTargets: [], rosterChars: 1, briefChars: 1, sourceChars: 1 }]);
+  const ticked = sheet.replace('- [ ] [[Brine-Works]]', '- [x] [[Brine-Works]]').replace('- [ ] [[Wren-Calder]]', '- [X] [[Wren-Calder]]');
+  assert.notEqual(ticked, sheet, 'baseline: the ticks landed');
+  const score = scoreSheet(ticked, key);
+  const by = Object.fromEntries(score.cases[0]!.lists.map((l) => [l.method, l]));
+  assert.equal(score.cases[0]!.ticked, 2);
+  assert.equal(by['lexical']!.caught, lists[1]!.ranked.filter((r) => ['lore/Brine-Works.md', 'lore/Wren-Calder.md'].includes(r.relpath)).length);
+  assert.equal(by['roster']!.caught, 1, 'the roster list holds Wren-Calder, not Brine-Works');
+  assert.equal(by['roster']!.recall, 0.5);
+  assert.equal(by['roster']!.precision, 0.25);
+  assert.equal(score.totals.find((t) => t.method === 'roster')!.caught, 1);
+  assert.throws(() => scoreSheet('# nothing\n', key), /case/);
 });
 
 // Rule: a case is read as the vault stood before its source came in, so a link the
@@ -187,7 +210,7 @@ test('a git snapshot reads the corpus at the parent of the commit that added the
   assert.throws(() => readSnapshot(repo, 'sources/Missing.md'), /never added/);
 });
 
-test('the command writes a sheet and a key, and refuses to write inside the vault', (t) => {
+test('the command writes a sheet and a key, scores the ticks, and refuses to write inside the vault', (t) => {
   const out = tempDir(t, 'ripple-out-');
   const cli = path.join(root, 'src/hoard/ripple/shortlist-cli.ts');
   const ok = spawnSync(process.execPath, [cli, '--vault', vault, '--out', out, '--source', sourceRel,
@@ -196,6 +219,14 @@ test('the command writes a sheet and a key, and refuses to write inside the vaul
   assert.ok(existsSync(path.join(out, 'sheet.md')));
   const key = JSON.parse(readFileSync(path.join(out, 'key.json'), 'utf8'));
   assert.deepEqual(key.cases[0].lists.map((l: { method: string }) => l.method).sort(), ['blend', 'lexical', 'roster']);
+  const sheetFile = path.join(out, 'sheet.md');
+  writeFileSync(sheetFile, readFileSync(sheetFile, 'utf8').replace('- [ ] [[Wren-Calder]]', '- [x] [[Wren-Calder]]'));
+  const scored = spawnSync(process.execPath, [cli, '--score', out], { encoding: 'utf8' });
+  assert.equal(scored.status, 0, scored.stderr);
+  assert.match(readFileSync(path.join(out, 'score.md'), 'utf8'), /\| roster \| 1 of 1 \|/);
+  const noLib = spawnSync(process.execPath, [cli, '--vault', vault, '--out', out, '--source', sourceRel, '--embed', 'some/model'], { encoding: 'utf8' });
+  assert.equal(noLib.status, 2);
+  assert.match(noLib.stderr, /npm i --no-save @huggingface\/transformers/);
   const bad = spawnSync(process.execPath, [cli, '--vault', vault, '--out', path.join(vault, 'lore'), '--source', sourceRel], { encoding: 'utf8' });
   assert.equal(bad.status, 2);
   assert.match(bad.stderr, /inside the vault/);
