@@ -25,6 +25,9 @@
 // and, for a plugin written for API 3, side sections (see addPane) and:
 //   hold(chIds)               chapters the writer can read, select and copy
 //                             but not type in (see hold)
+// and, for a plugin written for API 4:
+//   open(bookId)              another book opened, by the shelf's own path:
+//                             the open one is saved and closed first
 // None of them writes a file: replace edits the page as typing does, and a
 // chapter reaches the disk through persistChapter alone. That is no wall.
 // A plugin's script runs in NEO's page, where window.neo, NEO's own way to
@@ -40,7 +43,7 @@
 'use strict';
 
 (() => {
-  const API_VERSIONS = Object.freeze([1, 2, 3]);
+  const API_VERSIONS = Object.freeze([1, 2, 3, 4]);
   const EVENTS = ['book-open', 'book-close', 'chapter-change', 'chapter-saved', 'selection', 'rendered'];
 
   // One entry per plugin that registered: { id, listeners, panes, commands,
@@ -981,7 +984,23 @@
     }
     // nor holds anything
     if (apiVersion >= 3) api.hold = (chIds) => hold(entry, chIds);
+    // nor opens anything
+    if (apiVersion >= 4) api.open = (bookId) => open(entry, bookId);
     return Object.freeze(api);
+  }
+
+  // Opens a book of the library, on a shelf or not, as the writer would:
+  // back to the shelf, which saves and closes the open book, then the book.
+  // Resolves true once it is the open book (at once when it already is),
+  // false when it did not open (it does not read, or the plugin failed to
+  // activate), which leaves the writer on the shelf.
+  function open(entry, bookId) {
+    if (typeof bookId !== 'string' || !bookId) throw new TypeError(`open takes a book's id, not ${shown(bookId)}`);
+    if (entry.disposed || !get || typeof get.openBook !== 'function') return Promise.resolve(false);
+    return Promise.resolve(get.openBook(bookId)).then((opened) => opened === true, (err) => {
+      log(entry.id, `open ${bookId} failed: ${err && err.message !== undefined ? err.message : text(err)}`);
+      return false;
+    });
   }
 
   function dropStyle(id) {
