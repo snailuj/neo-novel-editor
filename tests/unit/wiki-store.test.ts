@@ -16,7 +16,7 @@ import type { Mark } from '../../src/generated/hoard-marks-v1.js';
 import { validateHoardChangeV1, validateHoardMarksV1, validateHoardPageV1, validateHoardWikiV1 } from '../../src/generated/validators.cjs';
 import { locate } from '../../src/hoard/marks/anchor.ts';
 import { MarkStore } from '../../src/hoard/marks/store.ts';
-import { paragraphsHtml } from '../../src/hoard/wiki/convert.ts';
+import { paragraphTexts } from '../../src/hoard/html.ts';
 import { WikiStore } from '../../src/hoard/wiki/store.ts';
 import { ManifestError, parseManifest } from '../../src/librarian/manifest.ts';
 import { tempDir } from './git-support.ts';
@@ -44,6 +44,8 @@ function setup(t: T) {
   return { library, vault, wiki, wrote, lines, page };
 }
 
+// a page's HTML without its block ids, which are made new each import
+const noIds = (html: string) => html.replace(/ data-block="[^"]+"/g, '');
 const json = (file: string) => JSON.parse(readFileSync(file, 'utf8'));
 const bookOf = (library: string, bookId: string) => json(path.join(library, bookId, 'book.json'));
 
@@ -70,8 +72,9 @@ test('the first import makes the wiki book and brings each page in as an unnumbe
   assert.deepEqual([book.chapterKinds[first], book.chapterKinds[second]], ['unnumbered', 'unnumbered']);
   for (const f of ['notes.html', 'outline.html', 'darlings.json', 'stickies.json']) assert.ok(existsSync(path.join(library, bookId, f)), f);
 
-  assert.equal(readFileSync(path.join(library, bookId, 'chapters', `${second}.html`), 'utf8'),
-    '<p># Tide Tables</p><p>High water at [[Harbour]].</p>');
+  const tideHtml = readFileSync(path.join(library, bookId, 'chapters', `${second}.html`), 'utf8');
+  assert.equal(noIds(tideHtml), '<p class="wiki-h1">Tide Tables</p><p>High water at [[Harbour]].</p>');
+  assert.equal(tideHtml.match(/ data-block="b-t\d+"/g)?.length, 2);
   const sidecar = json(path.join(library, '.neo', bookId, 'pages', `${second}.json`));
   assert.ok(validateHoardPageV1(sidecar), JSON.stringify(validateHoardPageV1.errors));
   assert.deepEqual(sidecar.frontmatter, { type: 'lore' });
@@ -121,7 +124,7 @@ test('a page already in the wiki is skipped, a changed source is not written ove
   const book = bookOf(library, wiki.wikiId()!);
   assert.deepEqual(book.chapterOrder.map((id: string) => book.chapterTitles[id]), ['Fox', 'Owl', 'Hare']);
   const owlId = book.chapterOrder[1];
-  assert.equal(readFileSync(path.join(library, wiki.wikiId()!, 'chapters', `${owlId}.html`), 'utf8'), '<p>Grey.</p>');
+  assert.equal(noIds(readFileSync(path.join(library, wiki.wikiId()!, 'chapters', `${owlId}.html`), 'utf8')), '<p>Grey.</p>');
   assert.equal(parseManifest(readFileSync(path.join(library, '.neo', 'manifest.jsonl'), 'utf8')).length, parseManifest(before).length + 1);
 });
 
@@ -150,7 +153,7 @@ test('CriticMarkup marks land in the marks sidecar, found on the words they were
   const saved = json(path.join(library, '.neo', bookId, 'chapters', `${chId}.json`)) as { version: 1; marks: Mark[] };
   assert.ok(validateHoardMarksV1(saved), JSON.stringify(validateHoardMarksV1.errors));
   const paragraphs = ['The gulls always cried.', 'She waited there.', 'A lone {>>note<<} stays.'];
-  assert.equal(readFileSync(path.join(library, bookId, 'chapters', `${chId}.html`), 'utf8'), paragraphsHtml(paragraphs));
+  assert.deepEqual(paragraphTexts(readFileSync(path.join(library, bookId, 'chapters', `${chId}.html`), 'utf8')), paragraphs);
   assert.deepEqual(saved.marks.map((m) => [m.kind, m.state, m.proposed ?? null, m.thread.map((e) => e.body), locate(paragraphs, m.anchor)]), [
     ['insertion', 'open', 'grey ', [], { pIdx: 0, off: 4, len: 0 }],
     ['deletion', 'open', null, [], { pIdx: 0, off: 10, len: 7 }],
@@ -192,7 +195,47 @@ test('a page is read for the pane by its chapter id, and only a page of the wiki
   await wiki.apply(wiki.sort([page('lore/Fox.md', 'Red [[Owl]].\n')]), null);
   const bookId = wiki.wikiId()!;
   const [chId] = bookOf(library, bookId).chapterOrder;
-  assert.deepEqual(wiki.page(chId), { bookId, chId, title: 'Fox', html: '<p>Red [[Owl]].</p>' });
+  const read = wiki.page(chId)!;
+  assert.deepEqual({ ...read, html: noIds(read.html) }, { bookId, chId, title: 'Fox', html: '<p>Red [[Owl]].</p>' });
   assert.equal(wiki.page('ch-not-listed'), null);
   assert.throws(() => wiki.page('../book.json'), TypeError);
+});
+
+// Rule: with history kept, an import is the author's commit (their words on the pages,
+// quotations and code, and nothing else of the pages) and then the librarian's (the
+// whole pages, their sidecars, the manifest and the change log), so blame credits each
+// paragraph to whoever owns it.
+test('an import commits the pages twice: the author\'s blocks, then the whole pages', async (t) => {
+  const library = tempDir(t);
+  const vault = tempDir(t);
+  let n = 0;
+  const newId = (prefix: string) => `${prefix}-t${n++}`;
+  const log = () => {};
+  const marks = new MarkStore({ library: () => library, newId, log });
+  const seen: { part: string; html: string[]; manifest: boolean }[] = [];
+  const wiki: WikiStore = new WikiStore({
+    library: () => library, newId, marks, log,
+    commit: async (part) => {
+      const bookId = wiki.wikiId()!;
+      const dir = path.join(library, bookId, 'chapters');
+      seen.push({
+        part,
+        html: readdirSync(dir).sort().map((f) => noIds(readFileSync(path.join(dir, f), 'utf8'))),
+        manifest: existsSync(path.join(library, '.neo', 'manifest.jsonl')),
+      });
+    },
+  });
+  const file = path.join(vault, 'Quay.md');
+  writeFileSync(file, '# Quay\n> "Mind the step," she said.\n> -- [[Log]] (Ada)\nThe quay is old.\n');
+  const plain = path.join(vault, 'Plain.md');
+  writeFileSync(plain, 'Nothing quoted.\n');
+  await wiki.apply(wiki.sort([file, plain]), null);
+  assert.deepEqual(seen, [
+    { part: 'author', html: ['<p><br></p>', '<p class="wiki-quote" data-depth="1">"Mind the step," she said.</p>'], manifest: false },
+    {
+      part: 'librarian',
+      html: ['<p>Nothing quoted.</p>', '<p class="wiki-h1">Quay</p><p class="wiki-quote" data-depth="1">"Mind the step," she said.</p><p class="wiki-quote" data-depth="1">-- [[Log]] (Ada)</p><p>The quay is old.</p>'],
+      manifest: true,
+    },
+  ]);
 });
