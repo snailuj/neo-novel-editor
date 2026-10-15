@@ -170,6 +170,28 @@ export function checkFiles(files: readonly StagedFile[], context: CheckContext):
   return findings;
 }
 
+const SHOWN = 20;
+
+/** The findings box's words: held files first, then one line per finding, cut at SHOWN lines. */
+export function describeFindings(findings: readonly Finding[], held: readonly string[]): { message: string; detail: string } {
+  if (!findings.length && !held.length) {
+    return {
+      message: 'No file committed since NEO started has a finding.',
+      detail: 'NEO checks the wiki\'s pages and hoard\'s files each time it commits.',
+    };
+  }
+  const counts = [
+    findings.length ? `${findings.length} finding${findings.length === 1 ? '' : 's'}` : '',
+    held.length ? `${held.length} librarian edit${held.length === 1 ? '' : 's'} held out of history until ${held.length === 1 ? 'it is' : 'they are'} fixed` : '',
+  ].filter(Boolean);
+  const lines = [
+    ...(held.length ? ['Held out of history:', ...held, ...(findings.length ? [''] : [])] : []),
+    ...findings.map((f) => `${f.path}: ${f.message}`),
+  ];
+  const cut = lines.length > SHOWN ? [...lines.slice(0, SHOWN), `and ${lines.length - SHOWN} more, in neo-errors.log.`] : lines;
+  return { message: `${counts.join(', and ')}.`, detail: cut.join('\n') };
+}
+
 /** A librarian edit the gate refused: nothing was committed, and these are why. */
 export class GateRefused extends Error {
   override name = 'GateRefused';

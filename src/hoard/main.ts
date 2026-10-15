@@ -4,7 +4,8 @@
 // book closing, and quitting makes one last commit. It keeps the writer's marks in
 // sidecars under .neo/, which the history commits with the chapters, and brings hoard's
 // Markdown pages into the wiki book. The library's repository is looked
-// at after activate returns, so NEO's start never waits on git.
+// at after activate returns, so NEO's start never waits on git. Every commit runs the
+// pre-commit gate (git/gate.ts) over what it stages.
 import { app, BrowserWindow, dialog } from 'electron';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -14,6 +15,7 @@ import {
   validateHoardMarksReplyV1, validateHoardMarksStateV1, validateHoardPingV1, validateHoardWikiImportV1, validateHoardWikiPageV1,
 } from '../generated/validators.cjs';
 import { textconvCommand } from './git/blame.ts';
+import { startGate } from './git/gate-main.ts';
 import { GitLayer, resolveSettings } from './git/layer.ts';
 import { startLibrarianPairs } from './git/librarian-main.ts';
 import { createGit } from './git/runner.ts';
@@ -193,6 +195,7 @@ async function keepHistory(host: NeoMainHost, layer: GitLayer) {
 export function activate(host: NeoMainHost): void {
   host.handle('ping', ping);
   const layer = startHistory(host);
+  startGate(host, layer);
   startLibrarianPairs(host, layer);
   const marks = startMarks(host, layer);
   startWiki(host, layer, marks);
