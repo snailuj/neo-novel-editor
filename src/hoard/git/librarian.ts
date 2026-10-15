@@ -4,7 +4,7 @@
 // commits the chapter as the librarian's once the save holding the edit has landed; and
 // only then is the chapter let go, whatever happened on the way.
 import type { Begun, Ended } from './pair.ts';
-import type { Holds } from '../holds.ts';
+import { Holds } from '../holds.ts';
 
 export type LibrarianEdit<T> =
   | ({ ok: true; result: T } & Ended)
@@ -53,3 +53,9 @@ export function librarianEdits(neo: Neo, holds: Holds) {
 }
 
 export type LibrarianEdits = ReturnType<typeof librarianEdits>;
+
+/** The librarian's edits for this window, and hoard's gathered holds. */
+export function startLibrarian(neo: Neo & Pick<NeoApiV3, 'hold'>) {
+  const holds = new Holds((chIds) => neo.hold(chIds));
+  return { holds, ...librarianEdits(neo, holds) };
+}
