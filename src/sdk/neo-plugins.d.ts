@@ -114,9 +114,10 @@ interface NeoApi {
  * - missing: the place is not on the page, by the rules go uses.
  * - stale: the text at the place is not expectedText.
  * - blocked: the plugin failed to activate; the place is on a ghost line (an outline
- *   note) or in a chapter the writer cannot type in; a beforeinput listener cancelled
- *   the edit, or the editor would not make it; or the paragraph came out other than
- *   asked, in which case an edit the editor made is undone.
+ *   note) or in a chapter the writer cannot type in that no plugin holds; a
+ *   beforeinput listener cancelled the edit, or the editor would not make it; or the
+ *   paragraph came out other than asked, in which case an edit the editor made is
+ *   undone.
  */
 type NeoReplaceRefusal = 'busy' | 'hidden' | 'missing' | 'stale' | 'blocked';
 
@@ -188,8 +189,22 @@ interface NeoPaneV3 {
   show(): boolean;
 }
 
-/** What activate(neo) receives for API 3: API 2, with side sections. */
+/** What activate(neo) receives for API 3: API 2, with side sections and holds. */
 interface NeoApiV3 extends Omit<NeoApiV2, 'addPane'> {
+  /**
+   * Holds chapters of the open book, in place of those this plugin held before; [] lets
+   * them go. A held chapter can be read, selected and copied but not typed in: no key,
+   * paste, cut, drop or input method changes it. Its body is not editable, as NEO's
+   * contents page is not, its .chapter section carries data-held for the plugin's
+   * stylesheet, and the host moves and draws the caret there (the neo-held-caret
+   * highlight). Only typing stops: Find and Replace, moving outline cards and a chapter
+   * from another device still change it. A chapter is held while any plugin holds it.
+   * Holds go when the book closes, with nothing kept while no book is open, and when the
+   * plugin fails to activate. replace still edits a held chapter, outside the writer's
+   * undo: the writer's Ctrl+Z (⌘Z) does not take that edit back. Throws TypeError for
+   * anything but an array of non-empty strings.
+   */
+  hold(chIds: readonly string[]): void;
   /**
    * As API 1's addPane, and with side: true a section of the right-hand pane instead of
    * a tab: the title as its heading and the element under it, after NEO's own lists. It
