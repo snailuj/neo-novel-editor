@@ -12135,8 +12135,9 @@ function persistChapter(chId, html) {
       r = await window.neo.writeChapter(bookId, chId, html, r.conflict);
     }
     if (r && typeof r.conflict === 'string') throw new Error('chapter keeps changing on disk');
+    const previous = key in diskKnown ? diskKnown[key] : null;
     knowDisk(bookId, chId, html);
-    if (window.NeoPlugins) NeoPlugins.emit('chapter-saved', { bookId, chId });
+    if (window.NeoPlugins) NeoPlugins.emit('chapter-saved', { bookId, chId, html, previous });
     return r;
   };
   const p = (chapterChain[key] || Promise.resolve()).catch(() => {}).then(run);
@@ -13277,6 +13278,8 @@ function resetNativeUndo() {
   if (!bodyEl) return;
   bodyEl.contentEditable = 'false';
   bodyEl.contentEditable = 'true';
+  // a plugin's held chapter stays one the writer cannot type in (plugins.js)
+  if (window.NeoPlugins && NeoPlugins.held(caret.chId)) bodyEl.contentEditable = 'false';
   restoreCaret(caret);
 }
 

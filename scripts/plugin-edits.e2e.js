@@ -5,13 +5,13 @@
 // paragraphs on the page, off and len in UTF-16 units across any inline
 // elements. The fixture plugins are those of scripts/fixtures/plugins: the
 // probe, written for API 2, keeps what it was handed as window.__probe.neo;
-// old-api is written for API 1; and fleeting, written for API 2, registers
-// when asked, highlights, and fails.
+// old-api is written for API 1; and fleeting, written for API 3, registers
+// when asked, highlights and holds, and fails.
 // Run with `npm run test:plugin-edits`.
 
 'use strict';
 
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, clipboard } = require('electron');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
@@ -130,6 +130,12 @@ const undoKey = () => {
   const modifiers = [process.platform === 'darwin' ? 'meta' : 'control'];
   for (const type of ['keyDown', 'keyUp']) wc.sendInputEvent({ type, keyCode: 'z', modifiers });
 };
+
+// whether the writer can type in a chapter, and whether it is marked held
+const editable = (chId) => js(`document.querySelector('.chapter[data-id="${chId}"] .chapter-body').isContentEditable`);
+const markedHeld = (chId) => js(`document.querySelector('.chapter[data-id="${chId}"]').hasAttribute('data-held')`);
+// the probe's hold call
+const hold = (chIds) => js(`window.__probe.neo.hold(${str(chIds)})`);
 
 // the probe's highlight call
 const highlight = (name, places) => js(`window.__probe.neo.highlight(${str(name)}, ${str(places)})`);
@@ -353,8 +359,12 @@ test('replace saves', async () => {
   assert.equal((await lines(one))[0], 'One passage.');
   const saves = async () => (await heard('chapter-saved')).filter((saved) => saved.chId === one);
   await until(async () => (await saves()).length, 'chapter-saved');
-  assert.deepEqual(await saves(), [{ bookId: book.id, chId: one }]);
+  const all = await saves();
+  assert.deepEqual(all.map(({ bookId, chId }) => ({ bookId, chId })), [{ bookId: book.id, chId: one }]);
   assert.match(chapterFile(one), /One passage\./);
+  // the save says what the edit wrote and what it replaced
+  assert.equal(all[0].html, chapterFile(one));
+  assert.match(all[0].previous, /One paragraph\./);
 });
 
 // the engine's own undo, as for typing: "replace saves" left "One passage."
@@ -711,7 +721,7 @@ test('bad input', async () => {
 
 test('old API', async () => {
   assert.equal(await js('window.__oldApi.activated'), true);
-  assert.deepEqual(await js('[...NeoPlugins.apiVersions]'), [1, 2]);
+  assert.deepEqual(await js('[...NeoPlugins.apiVersions]'), [1, 2, 3]);
   assert.deepEqual(await js('[typeof window.__oldApi.neo.where, typeof window.__oldApi.neo.go, typeof window.__oldApi.neo.replace, typeof window.__oldApi.neo.highlight]'), ['undefined', 'undefined', 'undefined', 'undefined']);
 });
 
@@ -780,9 +790,12 @@ test('clears', async () => {
   // every highlight it made, and no other plugin's
   await js(`window.__registerFleeting(${str([place])})`);
   assert.deepEqual(await keysOf('fleeting'), ['plugin-fleeting-one', 'plugin-fleeting-two']);
+  assert.equal(await editable(one), false, 'fleeting holds the chapter of its places');
   await js('window.__fleeting.fail()');
   await tick();
   assert.deepEqual(await keysOf('fleeting'), []);
+  // and every chapter it held, so the writer can type there again
+  assert.equal(await editable(one), true);
   assert.deepEqual(await marked('plugin-probe-others'), [{ text: 'paragraph', onPage: true }]);
   // once disposed, it marks nothing
   await js(`window.__fleeting.neo.highlight('three', ${str([place])})`);
@@ -915,6 +928,183 @@ test('a book closing clears them', async () => {
   await js(`openBook(${str(book.id)})`);
   await tick(500);
   assert.deepEqual(await keysOf('probe'), [], 'the book opened again shows none of them');
+});
+
+// A held chapter takes no input from the writer, keeps what the writer can
+// do without typing (moving, selecting, copying), and goes back to taking
+// typing when it is let go.
+const ctl = process.platform === 'darwin' ? 'meta' : 'control';
+const wordKey = process.platform === 'darwin' ? 'alt' : 'control';
+// a key pressed, as the writer presses it
+function press(keyCode, modifiers = []) {
+  wc.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
+  // a letter, and Enter, type through a char event of their own
+  const char = keyCode === 'Enter' ? '\r' : keyCode;
+  if (char.length === 1 && !modifiers.includes('control') && !modifiers.includes('meta')) wc.sendInputEvent({ type: 'char', keyCode: char, modifiers });
+  wc.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
+}
+// every way in that the writer has, each one on its own
+const INPUTS = {
+  letter: () => press('x'),
+  enter: () => press('Enter'),
+  backspace: () => press('Backspace'),
+  delete: () => press('Delete'),
+  tab: () => press('Tab'),
+  bold: () => press('b', [ctl]),
+  paste: () => { clipboard.writeText('PASTED'); wc.paste(); },
+  cut: () => wc.cut(),
+  'input method': () => wc.insertText('IME'),
+  'edit menu replace': () => wc.replace('REPL')
+};
+// the first and second paragraphs of a chapter, and its file
+const state = async (chId) => ({ lines: (await lines(chId)).slice(0, 2), file: chapterFile(chId) });
+
+test('a held chapter takes no input from the writer, where one not held takes each', async () => {
+  const [, two, three] = book.chapters;
+  try {
+    await hold([two]);
+    assert.equal(await editable(two), false);
+    assert.equal(await markedHeld(two), true);
+    for (const [name, input] of Object.entries(INPUTS)) {
+      // the baseline: the same input changes a chapter not held
+      await setChapter(three, '<p>Short words here.</p><p>And more.</p>');
+      await saved();
+      const free = await state(three);
+      await select(three, 0, 6, 11);
+      input();
+      await tick(150);
+      await saved();
+      assert.notDeepEqual(await state(three), free, `${name} changes a chapter not held`);
+      // and leaves the held one as it was, on the page and on disk
+      const was = await state(two);
+      await select(two, 1, 2, 5);
+      input();
+      await tick(150);
+      await saved();
+      assert.deepEqual(await state(two), was, `${name} leaves the held chapter alone`);
+    }
+  } finally {
+    await hold([]);
+  }
+});
+
+test('moving, selecting and copying on a held chapter', async () => {
+  const [, two] = book.chapters;
+  try {
+    await hold([two]);
+    const text = (await lines(two))[1];
+    // a click on text that cannot be typed in leaves nothing focused
+    await js('document.activeElement && document.activeElement.blur()');
+    await select(two, 1, 0, 0);
+    // the caret, which a page that cannot be typed in does not draw, is drawn
+    const caret = () => js(`(() => { const h = CSS.highlights.get('neo-held-caret'); return h ? [...h].map((r) => r.toString()) : []; })()`);
+    assert.deepEqual(await caret(), [text[0]]);
+    press('Right', ['shift']);
+    await tick(80);
+    assert.equal((await selection()).text, text.slice(0, 1));
+    assert.deepEqual(await caret(), [], 'no caret drawn over a selection');
+    press('Right', ['shift', wordKey]);
+    await tick(80);
+    assert.equal((await selection()).text, text.slice(0, text.indexOf(' ')));
+    wc.copy();
+    await tick(150);
+    assert.equal(clipboard.readText(), text.slice(0, text.indexOf(' ')));
+    press('Right');
+    await tick(80);
+    const here = at(await where());
+    assert.equal(here.chId, two);
+    assert.equal(here.pIdx, 1);
+    assert.equal(here.len, 0);
+    assert.ok(here.off > 0, `the caret moved on, to ${here.off}`);
+    assert.deepEqual(await caret(), [text[here.off]]);
+    press('Left');
+    await tick(80);
+    assert.equal(at(await where()).off, here.off - 1);
+  } finally {
+    await hold([]);
+  }
+  assert.deepEqual(await js(`CSS.highlights.has('neo-held-caret')`), false, 'no caret drawn once nothing is held');
+});
+
+test('letting go of a chapter gives typing back', async () => {
+  const [, two] = book.chapters;
+  await hold([two]);
+  await hold([]);
+  assert.equal(await editable(two), true);
+  assert.equal(await markedHeld(two), false);
+  const was = (await lines(two))[0];
+  await select(two, 0, 2, 2);
+  press('k');
+  await tick(150);
+  assert.notEqual((await lines(two))[0], was);
+  undoKey();
+  await until(async () => (await lines(two))[0] === was, 'the undo');
+});
+
+test('a hold lasts through a redraw and through resetNativeUndo', async () => {
+  const [, two] = book.chapters;
+  try {
+    await hold([two]);
+    await js('renderChapters()');
+    assert.equal(await editable(two), false, 'after a redraw');
+    assert.equal(await markedHeld(two), true, 'after a redraw');
+    await select(two, 0, 1, 1);
+    await js('resetNativeUndo()');
+    assert.equal(await editable(two), false, 'after resetNativeUndo');
+  } finally {
+    await hold([]);
+  }
+});
+
+test('replace edits a held chapter, which stays held', async () => {
+  const [, two] = book.chapters;
+  try {
+    await hold([two]);
+    const text = (await lines(two))[2];
+    assert.deepEqual(await replace({ chId: two, pIdx: 2, off: 0, len: 5 }, text.slice(0, 5), 'THIRD'), { ok: true });
+    assert.equal((await lines(two))[2], 'THIRD' + text.slice(5));
+    await saved();
+    assert.ok(chapterFile(two).includes('THIRD' + text.slice(5)));
+    assert.equal(await editable(two), false);
+    assert.deepEqual(await replace({ chId: two, pIdx: 2, off: 0, len: 5 }, 'THIRD', text.slice(0, 5)), { ok: true });
+  } finally {
+    await hold([]);
+  }
+});
+
+test('holding a chapter keeps the writer\'s undo in another', async () => {
+  const [one, two] = book.chapters;
+  try {
+    const was = (await lines(one))[1];
+    await select(one, 1, 0, 0);
+    for (const k of 'abc') press(k);
+    await tick(150);
+    assert.notEqual((await lines(one))[1], was);
+    await hold([two]);
+    await select(one, 1, 3, 3);
+    undoKey();
+    await until(async () => (await lines(one))[1] === was, 'the undo of the typing in chapter one');
+  } finally {
+    await hold([]);
+  }
+});
+
+test('a hold is for the open book: it goes when the book closes', async () => {
+  const [, two] = book.chapters;
+  await hold([two]);
+  await js('backToShelf()');
+  await tick(300);
+  await hold([two]);
+  await js(`openBook(${str(book.id)})`);
+  await tick(500);
+  assert.equal(await editable(two), true, 'the book opened again holds nothing');
+  assert.equal(await markedHeld(two), false);
+});
+
+test('hold takes a list of chapter ids', async () => {
+  const refused = await js(`[undefined, 'ch', [''], [7], {}]
+    .map((v) => { try { window.__probe.neo.hold(v); return 'held'; } catch (err) { return err.name; } })`);
+  assert.deepEqual(refused, ['TypeError', 'TypeError', 'TypeError', 'TypeError', 'TypeError']);
 });
 
 /* ---------- runner ---------- */
