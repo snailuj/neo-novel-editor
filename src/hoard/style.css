@@ -5,6 +5,7 @@
 ::highlight(plugin-hoard-comment) { background-color: color-mix(in srgb, var(--accent) 26%, transparent); }
 ::highlight(plugin-hoard-highlight) { background-color: color-mix(in srgb, var(--muted) 30%, transparent); }
 ::highlight(plugin-hoard-suggestion) { text-decoration: underline dotted var(--accent); }
+::highlight(plugin-hoard-insertion) { text-decoration: underline double var(--accent); }
 ::highlight(plugin-hoard-flagged) { background-color: color-mix(in srgb, var(--red) 26%, transparent); }
 ::highlight(plugin-hoard-active) {
   background-color: color-mix(in srgb, var(--accent) 50%, transparent);
@@ -68,3 +69,19 @@ body[data-hoard-wiki] .chapter-body p { text-indent: 0; text-align: start; hyphe
 }
 .hoard-wiki-missing { color: var(--muted); text-decoration: underline dotted; }
 .hoard-wiki-empty { font-size: 12px; color: var(--muted); }
+
+/* Suggest mode: the librarian's pages take suggestions (review/window.ts). A held page
+   carries a quiet rule at its edge; the Comments section says why and offers the way
+   out. The mode line's buttons, like the rest of the section's, show on hover or focus. */
+.chapter[data-held] .chapter-body { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 35%, transparent); }
+.hoard-mode { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-inline: 12px; margin-block-end: 8px; }
+.hoard-mode-text { flex: 1 1 100%; margin: 0; font-size: 11px; color: var(--muted); }
+.hoard-mode button {
+  background: none; border: none; color: var(--muted); font-size: 11px; padding: 0;
+  min-block-size: 44px; min-inline-size: 44px; opacity: 0;
+}
+.hoard-marks:hover .hoard-mode button, .hoard-mode button:focus-visible { opacity: 1; }
+.hoard-mode button:hover { color: var(--accent); }
+.hoard-extra { display: inline-flex; gap: 8px; margin-inline-start: 8px; }
+.hoard-extra[hidden] { display: none; }
+.hoard-mark .hoard-extra button { min-block-size: 44px; min-inline-size: 44px; }

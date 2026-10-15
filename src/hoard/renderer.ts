@@ -14,6 +14,7 @@
 // needs API 4's open.
 import { startLibrarian } from './git/librarian.ts';
 import { startMarks } from './marks/window.ts';
+import { startReview } from './review/window.ts';
 import { startWiki } from './wiki/window.ts';
 
 NeoPlugins.register({
@@ -47,6 +48,7 @@ NeoPlugins.register({
     const marks = startMarks(neo);
     const wiki = startWiki(neo);
     const librarian = startLibrarian(neo);
-    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, librarian }) });
+    const review = startReview(neo, marks, { pages: wiki.index, librarian });
+    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, librarian, review }) });
   },
 });

@@ -8,7 +8,9 @@
     { "id": "add-comment", "title": "Add Comment" },
     { "id": "import-wiki", "title": "Import to Wiki…" },
     { "id": "open-wiki", "title": "Edit Wiki as a Book" },
-    { "id": "follow-link", "title": "Follow Link" }
+    { "id": "follow-link", "title": "Follow Link" },
+    { "id": "suggest-change", "title": "Suggest Change" },
+    { "id": "edit-directly", "title": "Suggest or Edit Directly" }
   ],
   "style": "style.css"
 }
