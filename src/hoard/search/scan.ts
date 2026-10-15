@@ -11,7 +11,10 @@ import { fold, foldQuery, originalSpan, type Folded } from './fold.ts';
 export interface ChapterText {
   bookId: string;
   chId: string;
+  /** The chapter's own title, which a search looks in; '' for none. */
   title: string;
+  /** What the results list calls it: its title, or its place in the book. */
+  label?: string;
   paragraphs: readonly string[];
 }
 
@@ -19,6 +22,8 @@ export interface Hit {
   kind: 'title' | 'text';
   bookId: string;
   chId: string;
+  /** The chapter's label (its title, or its place in the book). */
+  chapter: string;
   pIdx: number;
   off: number;
   len: number;
@@ -75,7 +80,7 @@ export function searchChapters(chapters: Iterable<ChapterText>, query: string, o
   for (const chapter of list) {
     if (found.capped) return found;
     if (chapter.title && fold(chapter.title).text.includes(q)) {
-      add({ kind: 'title', bookId: chapter.bookId, chId: chapter.chId, pIdx: 0, off: 0, len: 0, before: '', match: chapter.title, after: '' });
+      add({ kind: 'title', bookId: chapter.bookId, chId: chapter.chId, chapter: chapter.label ?? chapter.title, pIdx: 0, off: 0, len: 0, before: '', match: chapter.title, after: '' });
     }
   }
   for (const chapter of list) {
@@ -86,7 +91,7 @@ export function searchChapters(chapters: Iterable<ChapterText>, query: string, o
         if (found.capped) return found;
         const { off, len } = originalSpan(text, folded.at, a, a + q.length);
         add({
-          kind: 'text', bookId: chapter.bookId, chId: chapter.chId, pIdx, off, len,
+          kind: 'text', bookId: chapter.bookId, chId: chapter.chId, chapter: chapter.label ?? chapter.title, pIdx, off, len,
           before: before(text, off), match: text.slice(off, off + len), after: after(text, off + len),
         });
       }
