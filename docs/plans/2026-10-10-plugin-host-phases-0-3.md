@@ -2,7 +2,7 @@
 
 > For agentic workers: REQUIRED SUB-SKILL: use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-Goal: a fork of Neo 1.4.7 with a TypeScript tool chain, chapter writes proven under a kill, a tested one-paragraph-per-line chapter format, and a versioned plugin host that reads the book (API 1) and then edits and marks it through Neo's own undo and save path (API 2).
+Goal: a fork of Neo, now on upstream 1.5.5, with a TypeScript tool chain, chapter writes proven under a kill, per-paragraph chapter history through git drivers that leave chapter files as upstream writes them, and a versioned plugin host that reads the book (API 1) and then edits and marks it through Neo's own undo and save path (API 2).
 
 Architecture: upstream files stay plain JavaScript. New `plugins.js` (renderer) and `plugins-main.js` (main process) hold the host; app.js, main.js, preload.js and index.html gain one-line hooks. Our layer is TypeScript under `src/`, built by esbuild into `plugins/hoard/`, with JSON Schema as the one definition of data shapes.
 
@@ -10,7 +10,7 @@ Tech stack: Electron 43, Node 24, TypeScript (strict, `erasableSyntaxOnly`), esb
 
 Spec: E:\Dev\neo-hoard\neo-hoard-architecture-2026-10-10.md (sections 1, 3, 5) and E:\Dev\neo-hoard\neo-hoard-review-2026-10-10.md ("Patterns"; "must be fixed in any design").
 
-Paths are relative to E:\Dev\neo-hoard\.worktrees\plugin-host (branch `neo-hoard/plugin-host-20261010`, upstream 1.4.7 at 3d32960) unless they start with a drive letter.
+Paths are relative to E:\Dev\neo-hoard\neo-novel-editor (branch `main`, on upstream 1.5.5 at 6877943) unless they start with a drive letter. The plan was written on upstream 1.4.7 (3d32960), so the measurements below and their line numbers are of 1.4.7.
 
 ## Global constraints
 
@@ -80,7 +80,7 @@ Upstream: `plugins.js`, `plugins-main.js`, hook lines, `scripts/fixtures/plugins
 
 ## Phase 0: base and tool chain (fork only)
 
-Goal: the ported baseline spec passes on untouched 1.4.7; `npm start` and packaging build the TypeScript layer; a schema-drift check fails on a mismatch.
+Goal: the ported baseline spec passes on untouched upstream; `npm start` and packaging build the TypeScript layer; a schema-drift check fails on a mismatch.
 
 ### Task 0.1: port the baseline end-to-end spec
 
@@ -129,9 +129,9 @@ Interfaces: `validators.cjs` default-exports one `validate<Name>` per schema, he
 - [ ] Step 5: refactor: one schema walk shared by `gen` and `build`.
 - [ ] Step 6: commit `build: JSON Schema defines the contracts; generate types and standalone validators, with a drift check`.
 
-## Phase 1: durable writes and the paragraph-per-line spike
+## Phase 1: durable writes and chapter history by textconv
 
-Goal: prove a killed save leaves the old or the new file, and find out whether chapter files can hold one paragraph per line under Neo's save, refresh and reopen.
+Goal: prove a killed save leaves the old or the new file, and give chapters per-paragraph history in git while their files stay as upstream writes them.
 
 ### Task 1.1: kill test for chapter and aux writes (characterisation)
 
@@ -145,22 +145,16 @@ Interfaces: `write-forever.cjs <dir> <chapter|aux> [--in-place]` loads main.js t
 - [ ] Step 2: `node --test tests/unit/write-kill.test.ts`. Expected: PASS. A failure of the first two is an upstream defect: stop and report it. A failing control means the test cannot see truncation: fix the test.
 - [ ] Step 3: commit `test: a killed chapter or notes save leaves the old or the new file whole`.
 
-### Task 1.2: spike, one paragraph per line
+### Task 1.2: chapter history by textconv (replaces the paragraph-per-line spike)
 
-Files: modify `app.js` (SAVING, beside `persistChapter` at :10849); create `scripts/paragraph-lines.test.js`; fork: `tests/e2e/paragraph-lines.spec.mjs`.
+The spike first changed `persistChapter` to write one paragraph per line, and reported go for paragraph-level blame. On 2026-10-11 the owner chose Chapter-Format-Route textconv instead: "GitHub isn't necessary or suited for prose". The fork save patch, its tests and the lined snapshot changes were dropped (Drop-Fork-Save-Patch).
 
-Interfaces: `paragraphLines(html: string): string` puts one `\n` after each top-level block close (`</p>`, `</div>`, `</h1>` to `</h6>`, `</blockquote>`) followed by a block or the end, drops other whitespace between top-level blocks, and changes nothing inside a block.
-
-Approach: `persistChapter` writes `paragraphLines(html)` and records it as `savedHTML`; when `paragraphLines(chapterHTML[chId])` equals it, `chapterHTML[chId]` takes the lined form too. captureBody, renderChapters and main.js stay untouched, so scripts/spans.test.js stays green, and Pocket gets the same rule from the same app.js.
-
-- [ ] Step 1: tests.
-  - `scripts/paragraph-lines.test.js` (vm slice as in scripts/spans.test.js:11-14): `'<p>a</p><p class="scene-break">***</p><p><br></p>'` gives `'<p>a</p>\n<p class="scene-break">***</p>\n<p><br></p>\n'`; idempotent; `'<p>a <i>b</i>\nc</p>'` keeps its inner newline; `'<p>a</p>\n\n  <p>b</p>'` gives `'<p>a</p>\n<p>b</p>\n'`.
-  - `tests/e2e/paragraph-lines.spec.mjs`, with a three-paragraph lined text F built in code, never a fixture file, and seeded through `writeChapter`: `untouched book writes nothing` (two flushes keep bytes and mtime); `an edit rewrites one line` (after typing in paragraph 2, lines 1 and 3 equal F's, each `<p` starts a line, final `\n`); `Enter makes its own line`; `reopen round trip` (edit, save, `backToShelf()`, `openBook(id)`, two flushes: bytes and mtime unchanged, `captureBody(body)` equals the file); `own save is not news` (`await refreshFromDisk()`: chapter order and Darlings unchanged, no "Updated from your other device"); `outside edit is adopted` (line 3 rewritten on disk appears after `refreshFromDisk()`, and the next flush writes nothing); `no rewrite loop` (Review focus 3: a compact `chapterHTML`, as `keepOtherDeviceVersion` leaves it at app.js:10899, is written once; two more flushes keep its mtime).
-- [ ] Step 2: run both. Expected: FAIL, `paragraphLines is not defined`; the edit test finds one line.
-- [ ] Step 3: implement `paragraphLines` and the `persistChapter` change.
-- [ ] Step 4: both again, `npm test`, the baseline spec. Expected: PASS.
-- [ ] Step 5: refactor: none outside SAVING. Record here: go or no-go for passage-level blame in phase 4, and anything the `\n` text nodes broke on the page.
-- [ ] Step 6: commit app.js and its test as `Chapter files keep one paragraph per line`, then the spec as `test: paragraph-per-line round trips through save, refresh and reopen`.
+What holds now:
+- Chapter files are byte-identical to upstream's (ba4c3e2, with a chapter-bytes spec that was red 7 of 7 before it).
+- `tools/git/` holds a textconv driver that shows chapters one paragraph per line for diff, log and blame, and a merge driver for edits to different paragraphs (c223554). Chapter files are marked `-text`.
+- `neo-compact.js` turns settled conflicts back into Neo's compact form.
+- `setup-chapter-git.mjs` prints the git configuration by default and applies it only with `--apply` (1f51650). It has not been run; the Git-Remembers-Everything step runs it when history is turned on.
+- The spec records the route (524b494).
 
 ## Phase 2: read-only plugin host and main half (upstream PR 2)
 
@@ -301,7 +295,7 @@ Interfaces: `highlight(name, places): void`; `name` matches `^[a-z][a-z0-9-]{0,3
 ## Open risks
 
 - Insert-Text-Is-Deprecated: Chromium still supports `execCommand('insertText')`, and Neo calls `execCommand` 60 times, so a Chromium change would break far more than `replace`.
-- Whitespace-Nodes-From-Lined-Files: a lined file leaves `\n` text nodes between paragraphs in the editable body. Word counts skip them (app.js:634-638); caret and paste code may not. The spike records what breaks.
+- Whitespace-Nodes-From-Lined-Files: closed by the textconv decision. Chapter files keep upstream's compact form, so no `\n` text nodes reach the editable body.
 - Line-Endings-Under-Git: with `autocrlf=true`, a chapter checked out as CRLF and saved as LF is a whole-file diff; phase 4 needs `eol=lf` for chapters.
 - No-Isolation-Between-Plugins: plugins share the page and can call `window.neo.writeChapter`, skipping `persistChapter`. Bundled code is trusted; task 0.2 guards our own code.
 - CSP-Outside-App-Folder: `'self'` is tested only inside the app folder; plugins from userData need their own check.
@@ -311,12 +305,12 @@ Interfaces: `highlight(name, places): void`; `name` matches `^[a-z][a-z0-9-]{0,3
 
 ## Decisions only the user can make
 
-Fill Override in the review pane (`/review-pane` opens it), or reply with `Item: override` lines. A blank Override keeps the proposal once you have reviewed the table; a blank cell alone does not authorise the work. The spike in task 1.2 has not run, so its outcome is unknown.
+Fill Override in the review pane (`/review-pane` opens it), or reply with `Item: override` lines. A blank Override keeps the proposal once you have reviewed the table; a blank cell alone does not authorise the work. The textconv decision has since replaced the spike in task 1.2.
 
 | Item | Proposed action | Override | Reason |
 | --- | --- | --- | --- |
 | Atomic-Writes-Proposal | Drop upstream proposal 1 and keep only the kill test of task 1.1 | | Upstream 1.4.7 already writes chapters and notes atomically, with its own tests. |
-| Paragraph-Lines-Upstream-Or-Fork | Carry the paragraph-per-line change as a fork patch; decide on upstream after the spike | | Every chapter's bytes change on its next save, and an older Neo writes the compact form back. |
+| Paragraph-Lines-Upstream-Or-Fork | Carry the paragraph-per-line change as a fork patch; decide on upstream after the spike | Superseded: Chapter-Format-Route textconv, 2026-10-11 | Every chapter's bytes change on its next save, and an older Neo writes the compact form back. |
 | Main-Half-In-Which-Pull-Request | Ship task 2.6 as the last commit of PR 2 | | `invoke` then joins API 1 with no version change between pull requests. |
 | Plugin-Commands-Menu-Placement | Add a top-level Plugins menu only when a plugin declares commands | | Neo's contribution rules resist new chrome, and an empty menu would be clutter. |
 | Panes-Beside-The-Manuscript | Defer side panes to phase 6 and ship tab panes now | | Screens S7 and S8 need a pane beside the page, but nothing in phases 0 to 3 does. |
