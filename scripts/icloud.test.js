@@ -15,6 +15,10 @@ const vm = require('node:vm');
 const { createRequire } = require('node:module');
 const { describe, test } = require('node:test');
 
+// Read before the vm context fakes 'darwin'; the suite's placeholder test
+// (a size and no blocks) only means iCloud on macOS, NTFS reports 0 blocks for small files.
+const onMac = process.platform === 'darwin';
+
 const root = path.join(__dirname, '..');
 const localRequire = createRequire(path.join(root, 'main.js'));
 const source = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
@@ -103,7 +107,10 @@ function libraryWithBook() {
   return { dir, book, bookDir: path.join(dir, book.id) };
 }
 
-describe('files still in iCloud', { concurrency: 1 }, () => {
+describe('files still in iCloud', {
+  concurrency: 1,
+  skip: onMac ? false : 'st_blocks only means iCloud on macOS'
+}, () => {
   test('everything on this Mac: reads answer at once, as before', () => {
     const { book } = libraryWithBook();
     assert.equal(main.call('chapter:read', book.id, 'ch-aaa'), '<p>The harbor was empty.</p>');
