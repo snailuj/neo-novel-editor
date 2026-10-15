@@ -6,14 +6,13 @@
 // `topics` entry becomes the bare basename; a rename map swaps the target with no pipe
 // added; a merge map pipes like an alias hit. The rewrite is permitted in author bytes too.
 //
-// Left out here: the receipt test (`test_piped_rewrite_is_invisible_to_quotes_normalise`)
-// needs quotes.ts, which this branch does not have yet; `--apply` and its tests are not
-// ported (Relink-Reports-Only); the `--check` command-line cases are in cli.test.ts.
+// Left out here: `--apply` and its tests are not ported (Relink-Reports-Only); the `--check` command-line cases are in cli.test.ts.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { FrontmatterIntegrityError } from '../../../src/librarian/frontmatter.ts';
 import { type Occurrence, WIKILINK } from '../../../src/librarian/links.ts';
 import { PageIndex } from '../../../src/librarian/page-index.ts';
+import { normalise } from '../../../src/librarian/quotes.ts';
 import {
   type Scope, type Target, parseMap, plan, reportLines, rewriteLink, rewriteText, validateMap,
 } from '../../../src/librarian/relink.ts';
@@ -48,6 +47,16 @@ test('alias hit in a body is piped with the written text', () => {
   assert.equal(rewriteLink(occ('[[mirelo#Sheet]]'), IDX, NONE), "[[Mirel'o#Sheet|Sheet]]");
   assert.equal(rewriteLink(occ('[[mirelo#Sheet|her]]'), IDX, NONE), "[[Mirel'o#Sheet|her]]");
   assert.equal(rewriteLink(occ('![[mirelo]]'), IDX, NONE), "![[Mirel'o|mirelo]]");
+});
+
+// Receipts stay byte-stable through the alias repair: normalise flattens a link to its
+// display text, so a quote and its source still match after relink pipes the link.
+test('a piped rewrite is invisible to the receipt check', () => {
+  for (const link of ['[[mirelo]]', '[[mirelo|her]]', '[[mirelo#Sheet]]', '[[mirelo#Sheet|her]]']) {
+    const rewritten = rewriteLink(occ(link), IDX, NONE);
+    assert.notEqual(rewritten, null, link);
+    assert.equal(normalise(`she said ${link} then`), normalise(`she said ${rewritten} then`), link);
+  }
 });
 
 test('basename, path, case and piped basename are left alone', () => {
