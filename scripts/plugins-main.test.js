@@ -1012,6 +1012,8 @@ function loadMain(profile, appDir) {
     process: { platform: process.platform, on() {} },
     console,
     setInterval: () => ({}),
+    // startup schedules the iCloud fetch; nothing here waits for it
+    setTimeout: () => ({ unref() {} }),
     libraryRoot
   });
   vm.runInContext(fs.readFileSync(path.join(root, 'main.js'), 'utf8'), context, { filename: path.join(root, 'main.js') });
@@ -1083,7 +1085,7 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
     assert.equal(order.at(-1), 'activate probe');
     const neo = windowNeo((channel, ...args) => main.call(channel, ...args));
     assert.deepEqual(await neo.pluginInvoke('probe', 'echo', { a: 1 }), { a: 1 });
-    assert.doesNotMatch(errorLog(), /[(startup|plugins)]/);
+    assert.doesNotMatch(errorLog(), /\b(startup|plugins)\b/);
   });
 
   // main.js wraps every ipcMain.handle: a rejection is logged under the
