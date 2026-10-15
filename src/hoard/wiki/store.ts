@@ -11,6 +11,10 @@
 // from, so the next import knows it. Nothing is written into the wiki's book.json while
 // the wiki is open, because the window writes its own copy of it whole.
 //
+// With history kept, an import is two commits, so blame credits each paragraph to whoever
+// owns it: first the author's, holding what they wrote meanwhile and each page with only
+// its quotations and code (convert.ts), then the librarian's, with the whole pages.
+//
 // A page's source that changed since it came in is never written over: the page may
 // hold words written in NEO since. It is listed instead.
 import { createHash, randomBytes } from 'node:crypto';
@@ -27,7 +31,7 @@ import { oneName, writeJson, writeWhole } from '../files.ts';
 import { anchorAt, anchorPoint } from '../marks/anchor.ts';
 import { newMark } from '../marks/model.ts';
 import type { MarkStore } from '../marks/store.ts';
-import { convertPage, type ConvertedPage } from './convert.ts';
+import { convertPage, pageHtml, type ConvertedPage } from './convert.ts';
 
 type Level = 'error' | 'warn' | 'info' | 'debug';
 
@@ -40,6 +44,8 @@ export interface WikiStoreOptions {
   head?: () => Promise<string | null>;
   /** Told after the writes, so the library's history takes them. */
   wrote?: (name: string) => void;
+  /** Commits the library as it stands, as the author's or the librarian's; resolves once it has landed. */
+  commit?: (part: 'author' | 'librarian') => Promise<void>;
   log: (level: Level, message: string, data?: unknown) => void;
 }
 
@@ -198,7 +204,7 @@ export class WikiStore {
       if (names.has(key(p.name))) return { ...p, kind: 'clash' };
       let page: ConvertedPage;
       try {
-        page = convertPage(bytes.toString('utf8'));
+        page = convertPage(bytes.toString('utf8'), () => this.#id('b'));
       } catch (err) {
         return { ...p, kind: 'unreadable', why: err instanceof Error ? err.message : String(err) };
       }
@@ -236,22 +242,28 @@ export class WikiStore {
     const changesFile = path.join(neo, 'changes.jsonl');
     let records = existsSync(manifestFile) ? parseManifest(readFileSync(manifestFile, 'utf8')) : [];
     const changesBefore = existsSync(changesFile) ? readFileSync(changesFile, 'utf8') : '';
-    const commit = this.#o.head ? await this.#o.head() : null;
+    const base = this.#o.head ? await this.#o.head() : null;
 
     bookId ??= this.#makeWiki();
     applied.bookId = bookId;
     const at = this.#now();
+    const chIds = pages.map(() => this.#id('ch'));
+    const chapterFile = (chId: string) => path.join(this.#library, bookId!, 'chapters', `${oneName(chId, 'chId')}.html`);
+    if (this.#o.commit) {
+      pages.forEach((page, n) => writeWhole(chapterFile(chIds[n]!), pageHtml(page.page.blocks, 'author')));
+      await this.#o.commit('author');
+    }
     const made: { chId: string; name: string; dest: string; src: string; srcSha: string; fileSha: string }[] = [];
-    for (const page of pages) {
-      const chId = this.#id('ch');
+    for (const [n, page] of pages.entries()) {
+      const chId = chIds[n]!;
       const dest = `${bookId}/chapters/${chId}.html`;
-      writeWhole(path.join(this.#library, bookId, 'chapters', `${oneName(chId, 'chId')}.html`), page.page.html);
+      writeWhole(chapterFile(chId), page.page.html);
       const sidecar: HoardPageV1 = {
         version: 1, source: { path: page.path, name: page.name, sha256: page.sha256 }, frontmatter: page.page.frontmatter, imported: at,
       };
       if (!validateHoardPageV1(sidecar)) throw new TypeError(`wiki: refusing to write a page sidecar: ${JSON.stringify(validateHoardPageV1.errors)}`);
       writeWhole(this.#pageFile(bookId, chId), `${JSON.stringify(sidecar, null, 2)}\n`);
-      const marks = this.#marks(page.page, commit, at);
+      const marks = this.#marks(page.page, base, at);
       await this.#o.marks.addAll(bookId, chId, marks);
       applied.marks += marks.length;
       applied.keptAsText += page.page.keptAsText;
@@ -281,6 +293,7 @@ export class WikiStore {
     this.#o.log('info', 'wiki.import', { bookId, pages: made.length, marks: applied.marks, keptAsText: applied.keptAsText });
     this.#o.wrote?.(bookId);
     this.#o.wrote?.('.neo');
+    await this.#o.commit?.('librarian');
     return applied;
   }
 
@@ -336,6 +349,10 @@ export class WikiStore {
   }
 
   #id(prefix: string): string {
-    return this.#o.newId ? this.#o.newId(prefix) : prefix === 'ch' ? randomChapterId() : `${prefix}-${Date.now().toString(36)}-${randomBytes(4).toString('hex').slice(0, 6)}`;
+    if (this.#o.newId) return this.#o.newId(prefix);
+    if (prefix === 'ch') return randomChapterId();
+    // a block's id is short, as Obsidian's are, since a citation carries it
+    if (prefix === 'b') return randomBytes(4).toString('hex').slice(0, 6);
+    return `${prefix}-${Date.now().toString(36)}-${randomBytes(4).toString('hex').slice(0, 6)}`;
   }
 }

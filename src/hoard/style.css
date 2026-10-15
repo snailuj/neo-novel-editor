@@ -44,10 +44,49 @@
 .hoard-composer { cursor: default; }
 
 /* The wiki: a [[link]] to a page is underlined in the accent, one to no page dotted and
-   muted. Its pages are Markdown, set flush left without indents (window.ts). */
+   muted. Its pages are set flush left without indents (window.ts). */
 ::highlight(plugin-hoard-wiki-link) { color: var(--accent); text-decoration: underline solid var(--accent); }
 ::highlight(plugin-hoard-wiki-missing) { color: var(--muted); text-decoration: underline dotted var(--muted); }
 body[data-hoard-wiki] .chapter-body p { text-indent: 0; text-align: start; hyphens: manual; }
+
+/* A wiki page's blocks, in the wiki book and in the pane alike: each is a paragraph whose
+   class names what it is (wiki/convert.ts). Markers are drawn, so they are never text. */
+:is(.chapter-body, .hoard-wiki-page) p:is(.wiki-h1, .wiki-h2, .wiki-h3, .wiki-h4, .wiki-h5, .wiki-h6) {
+  font-weight: 700; line-height: 1.25; margin-block: 0.9em 0.3em;
+}
+:is(.chapter-body, .hoard-wiki-page) p.wiki-h1 { font-size: 1.6em; }
+:is(.chapter-body, .hoard-wiki-page) p.wiki-h2 { font-size: 1.35em; }
+:is(.chapter-body, .hoard-wiki-page) p.wiki-h3 { font-size: 1.15em; }
+:is(.chapter-body, .hoard-wiki-page) p:is(.wiki-h4, .wiki-h5, .wiki-h6) { font-size: 1em; }
+:is(.chapter-body, .hoard-wiki-page) p.wiki-h6 { color: var(--muted); }
+:is(.chapter-body, .hoard-wiki-page) p.wiki-li { position: relative; padding-inline-start: 1.4em; margin-block: 0.15em; }
+:is(.chapter-body, .hoard-wiki-page) p.wiki-li::before {
+  content: '•'; position: absolute; inset-inline-start: 0.3em; color: var(--muted);
+}
+:is(.chapter-body, .hoard-wiki-page) p.wiki-li[data-n]::before { content: attr(data-n) '.'; inset-inline-start: 0; }
+:is(.chapter-body, .hoard-wiki-page) p.wiki-li[data-task='open']::before { content: '☐'; }
+:is(.chapter-body, .hoard-wiki-page) p.wiki-li[data-task='done']::before { content: '☑'; }
+:is(.chapter-body, .hoard-wiki-page) p.wiki-li[data-task='done'] { color: var(--muted); }
+:is(.chapter-body, .hoard-wiki-page) p.wiki-li[data-depth='1'] { margin-inline-start: 1.4em; }
+:is(.chapter-body, .hoard-wiki-page) p.wiki-li[data-depth='2'] { margin-inline-start: 2.8em; }
+:is(.chapter-body, .hoard-wiki-page) p.wiki-li[data-depth='3'] { margin-inline-start: 4.2em; }
+:is(.chapter-body, .hoard-wiki-page) p.wiki-li:is([data-depth='4'], [data-depth='5'], [data-depth='6']) { margin-inline-start: 5.6em; }
+:is(.chapter-body, .hoard-wiki-page) p:is(.wiki-quote, .wiki-callout) {
+  border-inline-start: 3px solid var(--muted); padding-inline-start: 0.8em; margin-block: 0;
+}
+:is(.chapter-body, .hoard-wiki-page) p.wiki-quote[data-depth='2'] { margin-inline-start: 1em; }
+:is(.chapter-body, .hoard-wiki-page) p.wiki-quote:is([data-depth='3'], [data-depth='4'], [data-depth='5']) { margin-inline-start: 2em; }
+:is(.chapter-body, .hoard-wiki-page) p.wiki-callout { border-inline-start-color: var(--accent); font-weight: 600; }
+:is(.chapter-body, .hoard-wiki-page) p.wiki-callout::before {
+  content: attr(data-callout); display: block; font-size: 0.75em; text-transform: uppercase; color: var(--accent);
+}
+:is(.chapter-body, .hoard-wiki-page) p:is(.wiki-code, .wiki-table) {
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.85em; white-space: pre-wrap; margin-block: 0;
+}
+:is(.chapter-body, .hoard-wiki-page) p.wiki-code { background: color-mix(in srgb, var(--muted) 12%, transparent); padding-inline: 0.6em; }
+:is(.chapter-body, .hoard-wiki-page) p.wiki-table[data-head] { font-weight: 700; }
+:is(.chapter-body, .hoard-wiki-page) code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.9em; }
+.hoard-wiki-page p.scene-break { text-align: center; color: var(--muted); }
 
 /* The wiki pane beside the book: a page looked up, with Back, Forward and a way into
    the wiki book. Links on the page are buttons that look like links. */

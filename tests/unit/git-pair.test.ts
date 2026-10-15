@@ -113,8 +113,8 @@ test('an edit that fails still has what it changed committed as the librarian\'s
   }), /the edit broke/);
   assert.deepEqual((await history(git, library))[0], 'Librarian|librarian-after');
   write(C1, '<p>The writer again.</p>');
-  await layer.commitNow('import');
-  assert.deepEqual((await history(git, library))[0], 'Ada|import');
+  await layer.commitNow('import-author');
+  assert.deepEqual((await history(git, library))[0], 'Ada|import-author');
 });
 
 test('when the author\'s commit fails the edit never runs', async (t) => {
@@ -202,8 +202,8 @@ test('a chapter whose save never lands refuses the edit, and makes no commit', a
   assert.deepEqual(await pairs.begin(ask('<p>Never saved.</p>')), { refused: 'unsaved' });
   assert.deepEqual(await history(git, library), ['Ada|recovered']);
   write(C1, '<p>The writer again.</p>');
-  await layer.commitNow('import');
-  assert.equal((await history(git, library))[0], 'Ada|import', 'the checkpoints were never held');
+  await layer.commitNow('import-author');
+  assert.equal((await history(git, library))[0], 'Ada|import-author', 'the checkpoints were never held');
 });
 
 test('an edit the window never ends is committed as the librarian\'s after a while', async (t) => {
