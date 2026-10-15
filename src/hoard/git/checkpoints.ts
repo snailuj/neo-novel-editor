@@ -41,7 +41,12 @@ export class Checkpoints {
   #queued: Reason | null = null;
 
   constructor(options: CheckpointOptions) {
-    this.#options = { settleMs: 1_000, settleMaxMs: 5_000, clock: systemClock, ...options };
+    this.#options = {
+      ...options,
+      settleMs: options.settleMs ?? 1_000,
+      settleMaxMs: options.settleMaxMs ?? 5_000,
+      clock: options.clock ?? systemClock,
+    };
   }
 
   /** A write from the window has landed. */
