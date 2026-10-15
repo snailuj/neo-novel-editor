@@ -7,7 +7,7 @@ import { captureLogs } from '../../../src/librarian/log.ts';
 import { PageIndex } from '../../../src/librarian/page-index.ts';
 import { HOARD_LAYOUT } from '../../../src/librarian/scheme.ts';
 import { HUMAN_OPENER, LIBRARIAN_OPENER, humanSpanLines } from '../../../src/librarian/spans.ts';
-import { includeAttachment, includeNote, zoneOf } from '../../../src/librarian/vault.ts';
+import { byPathParts, includeAttachment, includeNote, zoneOf } from '../../../src/librarian/vault.ts';
 
 /** PageIndex over relpath to text, in the order given. */
 function index(pages: Record<string, string>): PageIndex {
@@ -153,4 +153,10 @@ test("an inline citation's target survives a table-escaped pipe", () => {
   const m = new RegExp(INLINE_CITE.source, 'u').exec('| "quoted" ([[the-mill\\|Path - The Mill]] -- Ada, opening) |');
   assert.equal(m?.[1], 'the-mill');
   assert.equal(m?.[2], 'Ada, opening');
+});
+
+// Hoard's walk sorts Path objects, which compare part by part.
+test('paths sort part by part, as the walk visits them', () => {
+  assert.deepEqual(['a-b/x.md', 'a/x.md', '_deprecated/x.md', 'lore/x.md', 'lore.md'].sort(byPathParts),
+    ['_deprecated/x.md', 'a/x.md', 'a-b/x.md', 'lore/x.md', 'lore.md']);
 });

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import {
-  PyDate, byCodePoint, casefold, pyLen, pyRepr, pySlice, pyStr, pyStrip, sequenceRatio, splitlines,
+  PyDate, byCodePoint, casefold, pyLen, pyRepr, pySlice, pySplit, pyStr, pyStrip, sequenceRatio, splitlines,
 } from '../../../src/librarian/py.ts';
 
 const srcDir = fileURLToPath(new URL('../../../src/librarian/', import.meta.url));
@@ -86,4 +86,10 @@ test('no librarian module but the command line and vault reader touches disk, cl
   for (const file of files) {
     assert.doesNotMatch(readFileSync(path.join(srcDir, file), 'utf8'), forbidden, file);
   }
+});
+
+test('pySplit splits on runs of Python whitespace and drops empty parts', () => {
+  assert.deepEqual(pySplit('  a \t b\x1fc\n'), ['a', 'b', 'c']);
+  assert.deepEqual(pySplit('a\ufeffb'), ['a\ufeffb']);
+  assert.deepEqual(pySplit(''), []);
 });

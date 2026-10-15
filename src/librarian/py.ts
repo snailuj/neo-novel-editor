@@ -50,6 +50,22 @@ export function pyRstrip(text: string, chars?: string): string {
   return cps.slice(0, j).join('');
 }
 
+/** str.split() with no separator: runs of Python whitespace split, and no empty parts. */
+export function pySplit(text: string): string[] {
+  const parts: string[] = [];
+  let word = '';
+  for (const ch of text) {
+    if (isPySpace(ch)) {
+      if (word) parts.push(word);
+      word = '';
+    } else {
+      word += ch;
+    }
+  }
+  if (word) parts.push(word);
+  return parts;
+}
+
 function stripTest(chars?: string): (ch: string) => boolean {
   if (chars === undefined) return isPySpace;
   const set = new Set(Array.from(chars));
