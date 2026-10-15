@@ -304,6 +304,30 @@ for (const target of TARGETS) {
       }
     });
 
+    // hoard keeps the library's history with git: git, and no other program, may run, and
+    // only with its working folder inside the run's temp folder and nothing pointing it out.
+    test('starts git only inside its temp folder', async () => {
+      const execFile = r.childProcess.execFile;
+      assert.equal(execFile.neoTestStub, true);
+      for (const [file, args, options] of [
+        ['git', ['status'], { cwd: r.developer }],
+        ['git', ['status'], undefined],
+        ['git', ['-C', r.developer, 'status'], { cwd: r.tempRoot }],
+        ['git', ['--git-dir=/elsewhere/.git', 'status'], { cwd: r.tempRoot }],
+        ['git', ['--work-tree', r.developer, 'status'], { cwd: r.tempRoot }],
+        [path.join(r.tempRoot, 'git'), ['status'], { cwd: r.developer }],
+        ['osascript', [], { cwd: r.tempRoot }],
+      ] as const) {
+        assert.throws(() => execFile(file, args, options, () => {}), /disabled in tests/, `${file} ${args.join(' ')}`);
+      }
+      const out = await new Promise<string>((resolve, reject) => {
+        execFile('git', ['--version'], { cwd: r.tempRoot }, (err: unknown, stdout: string) => (err ? reject(err) : resolve(stdout)));
+      });
+      assert.match(out, /^git version/);
+      assert.equal(r.process.env.GIT_CONFIG_NOSYSTEM, '1');
+      assert.ok(inside(r.tempRoot, r.process.env.GIT_CONFIG_GLOBAL), 'git reads a config of the run\'s own');
+    });
+
     // main.js forks the spell worker and nothing else.
     test('starts no utility process but the spell worker', () => {
       const fork = r.electron.utilityProcess.fork;
