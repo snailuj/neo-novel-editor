@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "One line of hoard's provenance manifest, version 1: a JSON object recording where a page came from and the hash it had when it arrived. The manifest is append-only, and the latest line for a dest is the one that counts. dest is vault-relative by convention. A retire line is a tombstone for a dest that was renamed or discarded, naming its successor if any; a rename line pins a page that was authored in the vault and then moved. Lines may carry keys this schema does not name.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["dest", "method"],
+  "properties": {
+    "src": { "type": ["string", "null"] },
+    "dest": { "type": "string" },
+    "method": { "enum": ["verbatim", "converted", "snapshot", "split", "retire", "rename"] },
+    "src_sha256": { "type": ["string", "null"] },
+    "body_sha256": { "type": ["string", "null"] },
+    "file_sha256": { "type": ["string", "null"] },
+    "successor": { "type": ["string", "null"] },
+    "reason": { "type": "string" },
+    "ingested_at": { "type": "string" },
+    "retired_at": { "type": "string" },
+    "moved_at": { "type": "string" },
+    "moved_from": { "type": "string" },
+    "reviewed": { "type": "string" },
+    "paired_at": { "type": "string" },
+    "pairing_reason": { "type": "string" },
+    "shadow_pair": { "type": "boolean" }
+  }
+}

@@ -10,6 +10,7 @@ import type { HoardMarksListV1 } from './ipc/hoard-marks-list-v1.js';
 import type { HoardMarksReplyV1 } from './ipc/hoard-marks-reply-v1.js';
 import type { HoardMarksStateV1 } from './ipc/hoard-marks-state-v1.js';
 import type { HoardPingV1 } from './ipc/hoard-ping-v1.js';
+import type { ManifestRecordV1 } from './manifest-record-v1.js';
 import type { PlaceV1 } from './place-v1.js';
 import type { PluginManifestV1 } from './plugin-manifest-v1.js';
 
@@ -28,5 +29,6 @@ export const validateHoardMarksListV1: Validator<HoardMarksListV1>;
 export const validateHoardMarksReplyV1: Validator<HoardMarksReplyV1>;
 export const validateHoardMarksStateV1: Validator<HoardMarksStateV1>;
 export const validateHoardPingV1: Validator<HoardPingV1>;
+export const validateManifestRecordV1: Validator<ManifestRecordV1>;
 export const validatePlaceV1: Validator<PlaceV1>;
 export const validatePluginManifestV1: Validator<PluginManifestV1>;

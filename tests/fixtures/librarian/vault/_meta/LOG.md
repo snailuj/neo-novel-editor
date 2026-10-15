@@ -1,0 +1,1 @@
+- 2026-08-18 · ingest · quiet-notes: no speaker found, rungs 1-2 checked, recorded Unattributed
