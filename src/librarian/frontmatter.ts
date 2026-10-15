@@ -13,6 +13,15 @@ export class FrontmatterError extends Error {
   override name = 'FrontmatterError';
 }
 
+/**
+ * A splice failed its own postcondition. That is the splicing code breaking, not a
+ * defect the writer can fix by editing the note, so it escalates to the caller and is
+ * never a finding.
+ */
+export class FrontmatterIntegrityError extends Error {
+  override name = 'FrontmatterIntegrityError';
+}
+
 const DELIM = '---\n';
 const CLOSE = '\n---\n';
 
