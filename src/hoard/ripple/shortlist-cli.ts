@@ -1,0 +1,202 @@
+// npm run ripple:shortlist -- --vault <hoard> --out <folder> [--source <relpath> ...]
+//   [--pick N --rulings <RIPPLE.jsonl>] [--git] [--k 30] [--embed <model>] [--seed 1]
+// Writes sheet.md (blind lists to read by hand) and key.json to --out, never inside the
+// vault. A spike for choosing ripple's shortlist method; not part of the app.
+import { createHash } from 'node:crypto';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { parseArgs } from 'node:util';
+import { readText } from '../../librarian/vault-fs.ts';
+import { buildSheet, pastTargets, pickSources, type SheetCase, type SheetList } from './sheet.ts';
+import {
+  ROSTER_ZONES, blend, buildCorpus, embeddingRank, inRoster, lexicalRank, rosterChars, rosterRank,
+  type Embed, type Source,
+} from './shortlist.ts';
+import { readSnapshot } from './snapshot.ts';
+
+class UsageError extends Error {}
+
+const log = (message: string): void => { process.stderr.write(`ripple-shortlist: ${message}\n`); };
+
+function walk(root: string, rel = ''): string[] {
+  return readdirSync(path.join(root, rel), { withFileTypes: true }).flatMap((e) => {
+    if (e.name.startsWith('.')) return [];
+    const child = rel ? `${rel}/${e.name}` : e.name;
+    return e.isDirectory() ? walk(root, child) : e.isFile() ? [child] : [];
+  });
+}
+
+function inside(child: string, parent: string): boolean {
+  const rel = path.relative(parent, child);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+interface EmbedOptions { model: string; pooling: string; dtype: string; device?: string; cacheFile: string }
+
+// transformers.js is optional and never a dependency of the fork: a run on the author's
+// machine installs it with `npm i --no-save`. Vectors are cached by chunk hash, so cases
+// read at different commits embed only what changed.
+async function loadEmbedder(o: EmbedOptions): Promise<Embed> {
+  let lib: any;
+  try {
+    const spec = '@huggingface/transformers';
+    lib = await import(spec);
+  } catch (err) {
+    throw new UsageError(`--embed needs transformers.js: npm i --no-save @huggingface/transformers (${(err as Error).message})`);
+  }
+  const gemma = /embeddinggemma/i.test(o.model);
+  const prefix = gemma ? { query: 'task: search result | query: ', document: 'title: none | text: ' } : { query: '', document: '' };
+  const started = Date.now();
+  let run: (texts: string[]) => Promise<number[][]>;
+  if (gemma) {
+    const tokenizer = await lib.AutoTokenizer.from_pretrained(o.model);
+    const model = await lib.AutoModel.from_pretrained(o.model, { dtype: o.dtype, device: o.device });
+    run = async (texts) => {
+      const inputs = await tokenizer(texts, { padding: true, truncation: true });
+      return (await model(inputs)).sentence_embedding.tolist();
+    };
+  } else {
+    const extract = await lib.pipeline('feature-extraction', o.model, { dtype: o.dtype, device: o.device });
+    run = async (texts) => (await extract(texts, { pooling: o.pooling, normalize: true })).tolist();
+  }
+  log(`loaded ${o.model} (${o.dtype}) in ${Date.now() - started} ms`);
+  const cache = new Map<string, number[]>();
+  if (existsSync(o.cacheFile)) {
+    for (const line of readFileSync(o.cacheFile, 'utf8').split('\n')) {
+      if (!line) continue;
+      try {
+        const { h, v } = JSON.parse(line) as { h: string; v: number[] };
+        cache.set(h, v);
+      } catch {
+        log(`skipped a torn line in ${o.cacheFile}`);
+      }
+    }
+    log(`${cache.size} cached vectors`);
+  }
+  return async (texts, role) => {
+    const keyed = texts.map((t) => {
+      const input = prefix[role] + t;
+      return { input, h: createHash('sha256').update(`${o.model}\0${o.dtype}\0${input}`).digest('hex') };
+    });
+    const missing = [...new Map(keyed.filter((k) => !cache.has(k.h)).map((k) => [k.h, k])).values()];
+    const t0 = Date.now();
+    for (let i = 0; i < missing.length; i += 16) {
+      const batch = missing.slice(i, i + 16);
+      const vectors = await run(batch.map((b) => b.input));
+      batch.forEach((b, j) => {
+        cache.set(b.h, vectors[j]!);
+        appendFileSync(o.cacheFile, `${JSON.stringify({ h: b.h, v: vectors[j] })}\n`);
+      });
+      if ((i / 16) % 30 === 29) log(`embedded ${i + batch.length} of ${missing.length}`);
+    }
+    if (missing.length) {
+      const ms = Date.now() - t0;
+      log(`embedded ${missing.length} ${role} chunks in ${ms} ms (${(missing.length / (ms / 1000 || 1)).toFixed(1)} a second)`);
+    }
+    return keyed.map((k) => cache.get(k.h)!);
+  };
+}
+
+async function main(argv: string[]): Promise<void> {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      vault: { type: 'string' },
+      out: { type: 'string' },
+      source: { type: 'string', multiple: true },
+      pick: { type: 'string' },
+      rulings: { type: 'string' },
+      git: { type: 'boolean', default: false },
+      k: { type: 'string', default: '30' },
+      embed: { type: 'string' },
+      pooling: { type: 'string', default: 'mean' },
+      dtype: { type: 'string', default: 'q8' },
+      device: { type: 'string' },
+      'brief-chars': { type: 'string', default: '20338' },
+      seed: { type: 'string', default: '1' },
+    },
+  });
+  if (!values.vault || !values.out) throw new UsageError('--vault and --out are required');
+  const vault = path.resolve(values.vault);
+  const out = path.resolve(values.out);
+  if (inside(out, vault)) throw new UsageError(`refusing to write inside the vault: ${out}`);
+  const k = Number(values.k);
+  const briefChars = Number(values['brief-chars']);
+  if (!(k > 0) || !(briefChars >= 0)) throw new UsageError('--k and --brief-chars take numbers');
+  const rulings = values.rulings ? readFileSync(values.rulings, 'utf8') : '';
+  const sources = [...(values.source ?? [])];
+  if (values.pick) {
+    if (!rulings) throw new UsageError('--pick needs --rulings');
+    sources.push(...pickSources(rulings, Number(values.pick)).filter((s) => !sources.includes(s)));
+  }
+  if (!sources.length) throw new UsageError('name a --source, or --pick N with --rulings');
+  mkdirSync(out, { recursive: true });
+
+  const embed = values.embed ? await loadEmbedder({
+    model: values.embed, pooling: values.pooling, dtype: values.dtype, device: values.device,
+    cacheFile: path.join(out, `embed-cache-${values.embed.replace(/[^\w.-]+/g, '_')}.jsonl`),
+  }) : null;
+
+  let live: ReturnType<typeof buildCorpus> | null = null;
+  if (!values.git) {
+    const t0 = Date.now();
+    const files = walk(vault).filter((rel) => inRoster(rel, ROSTER_ZONES));
+    live = buildCorpus(files.map((rel) => [rel, readText(path.join(vault, rel))] as const));
+    log(`read ${live.docs.length} roster pages in ${Date.now() - t0} ms`);
+  }
+
+  const cases: SheetCase[] = [];
+  const timings: Record<string, Record<string, number>> = {};
+  for (const rel of sources) {
+    const t: Record<string, number> = {};
+    let mark = Date.now();
+    const lap = (name: string) => { const now = Date.now(); t[name] = now - mark; mark = now; };
+    let corpus = live;
+    let source: Source;
+    let readAt: string | undefined;
+    if (values.git) {
+      const snap = readSnapshot(vault, rel);
+      corpus = buildCorpus(snap.notes);
+      source = snap.source;
+      readAt = snap.before ?? undefined;
+      log(`${rel}: read ${corpus.docs.length} pages at ${snap.before?.slice(0, 12) ?? 'the empty tree'}`);
+    } else {
+      const file = path.join(vault, rel);
+      if (!existsSync(file)) throw new UsageError(`no such source: ${rel}`);
+      source = { relpath: rel, text: readText(file) };
+    }
+    lap('read');
+    const roster = rosterRank(corpus!, source);
+    lap('roster');
+    const lexical = lexicalRank(corpus!, source);
+    lap('lexical');
+    const lists: SheetList[] = [{ method: 'roster', ranked: roster.slice(0, k) }, { method: 'lexical', ranked: lexical.slice(0, k) }];
+    let fill = lexical;
+    if (embed) {
+      const embedded = await embeddingRank(corpus!, source, embed);
+      lap('embedding');
+      lists.push({ method: 'embedding', ranked: embedded.slice(0, k) });
+      fill = embedded;
+    }
+    lists.push({ method: 'blend', ranked: blend(roster, fill, k) });
+    timings[rel] = t;
+    cases.push({
+      source: rel, corpus: corpus!, lists, readAt, briefChars, sourceChars: source.text.length,
+      pastTargets: rulings ? pastTargets(rulings, rel) : [], rosterChars: rosterChars(corpus!, source),
+    });
+  }
+
+  const { sheet, key } = buildSheet(cases, Number(values.seed));
+  writeFileSync(path.join(out, 'sheet.md'), sheet);
+  writeFileSync(path.join(out, 'key.json'), `${JSON.stringify({ ...key, k, model: values.embed ?? null, timings }, null, 2)}\n`);
+  for (const c of key.cases) {
+    log(`${c.source}: whole roster packet ${c.wholeRosterPacketChars} chars; `
+      + c.lists.map((l) => `${l.letter} ${l.packetChars}`).join(', '));
+  }
+  log(`wrote ${path.join(out, 'sheet.md')} and key.json`);
+}
+
+main(process.argv.slice(2)).catch((err: unknown) => {
+  log(err instanceof Error ? err.message : String(err));
+  process.exitCode = err instanceof UsageError ? 2 : 1;
+});
