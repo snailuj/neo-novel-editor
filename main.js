@@ -2119,8 +2119,9 @@ async function dailyBackup() {
       for (const name of names) {
         if (rel === '' && skip.has(name)) continue;
         // only NEO's own things: a library kept in a busy folder (Dropbox,
-        // Documents) doesn't zip everything else in there every day
-        if (rel === '' && !(name.startsWith('book-') || name.startsWith('library.json') || name === '_catalog.txt')) continue;
+        // Documents) doesn't zip everything else in there every day. .neo holds
+        // what plugins keep beside the books (a writer's comments, say).
+        if (rel === '' && !(name.startsWith('book-') || name.startsWith('library.json') || name === '_catalog.txt' || name === '.neo')) continue;
         // a book's snapshots stay out: the zip stays the size of the books,
         // and the snapshots are already a history of their own
         if (name === 'snapshots' && rel.startsWith('book-') && !rel.includes('/')) continue;
