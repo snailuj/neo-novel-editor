@@ -118,6 +118,7 @@
       "artifactName": "${productName}-${version}-portable.${ext}"
     },
     "asarUnpack": [
+      "plugins/hoard/textconv.cjs",
       "node_modules/dictionary-ro/**",
       "node_modules/dictionary-pt/**",
       "node_modules/dictionary-hu/**",

@@ -2,5 +2,8 @@
   "id": "hoard",
   "apiVersion": 1,
   "renderer": "renderer.js",
-  "main": "main.cjs"
+  "main": "main.cjs",
+  "commands": [
+    { "id": "keep-history", "title": "Keep Library History" }
+  ]
 }

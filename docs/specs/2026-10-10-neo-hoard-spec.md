@@ -49,6 +49,19 @@ Limits:
 - A chapter with a merge conflict holds the lined text with conflict markers, so the writer can settle it. Once settled, the file is still lined, and upstream Neo loads the line breaks between paragraphs as text nodes. `node tools/git/neo-compact.js <library folder>` makes it compact again with `compactLines` from `tools/git/neo-lines.js`: it lists the chapters it would change, `--write` rewrites them in place (through a temp file and a rename), and it refuses a file that still holds conflict markers or would not line back to what it was. Close Neo, or the book, before running it with `--write`, because a save made between the tool's read and its rename would be lost.
 - Libraries last saved by an earlier build of this fork hold lined chapters, which load the same way until `neo-compact.js` has converted them.
 
+## Library history
+
+Built 15 October 2026 (roadmap step 2, Git-Remembers-Everything); the plan is `port-plan/plans/git-remembers-everything.md` in the project files. It lives in the hoard plugin's main half, under `src/hoard/git/`, and changes no upstream file.
+
+- The library's history is kept only when the library folder is the top of its own git repository. A library with none waits for Plugins > Keep Library History, which runs `git init`, adds any missing lines to `.gitignore` and `.gitattributes`, and commits what is there; running it again changes nothing. A library inside a bigger repository, or a machine with no git, keeps no history and NEO works as usual.
+- `.gitignore` leaves out `*.tmp`, `*.bak`, `.DS_Store`, `*.icloud`, `book-*/snapshots/` (upstream's snapshots are a second history of whole chapters), `Backups/`, `Exports/`, `neo-errors.log` and `_catalog.txt`. `.gitattributes` gets the chapter line above.
+- A commit comes 60 s after the last landed write, and when the caret moves into another chapter or a book closes, once no write has landed for a second (at most five). Quitting makes one last commit within five seconds; what it misses, or a crash leaves, is committed at the next start as `recovered`. Commits run one at a time. Opening runs a fixed handful of git commands and never walks the log.
+- Author commits take the identity from git config, with `user.useConfigOnly`, so a machine with none makes no commit rather than a guessed one. Librarian commits take `Librarian <librarian@neo-hoard.invalid>`. Both can be set in settings.json under `plugins.hoard.git` (`author`, `librarian`, `path` for the git binary, `idleSeconds`), checked by `schemas/hoard-settings-v1.json`. Each commit carries a `Neo-Checkpoint:` trailer naming why it was made.
+- Every git call skips the repository's own hooks, never signs and never prompts. A failure keeps git's exit code and stderr, and the same failure is logged once, not on every pause.
+- A book folder with a `.git` of its own (upstream PR #369's per-book version history) is left out of the library's commits and logged, because staging it would make an embedded repository and drop its words from the history.
+- Blame is per paragraph on any machine: the plugin passes the chapter textconv and its attributes line on git's command line, and the build bundles the textconv as `plugins/hoard/textconv.cjs`, unpacked from the asar, run by Electron as node. `alignBlame` puts the lines against the window's paragraphs; one whose text has changed since the file was written is credited to no one. Showing authors waits for the thread pane (step 3).
+- Not built yet: the librarian's commit before and after an applied edit (step 7, which needs the host's save event to carry the text and a hold on typing), and the validation gate before a commit (the static checks port). A library that Syncthing or iCloud Drive syncs is only warned about in the log.
+
 ## Suggestion and review model
 
 The author's requirement, in their words (10 October 2026):

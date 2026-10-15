@@ -21,7 +21,10 @@ const sandboxes: string[] = [];
 function sandbox(): string {
   const dir = mkdtempSync(path.join(tmpdir(), 'hoard-build-'));
   sandboxes.push(dir);
-  for (const name of ['schemas', 'src']) cpSync(path.join(root, name), path.join(dir, name), { recursive: true });
+  // tools/git holds the chapter textconv, which the build bundles for blame.
+  for (const name of ['schemas', 'src', path.join('tools', 'git')]) {
+    cpSync(path.join(root, name), path.join(dir, name), { recursive: true });
+  }
   copyFileSync(path.join(root, 'tsconfig.json'), path.join(dir, 'tsconfig.json'));
   // The generated validators load Ajv's runtime helpers, and nothing above a temporary
   // root holds a node_modules. A link to the repository's would reach back into it.
@@ -94,14 +97,20 @@ test('packaging builds first', () => {
 test('clean build', () => {
   const dir = sandbox();
   const log = build(dir);
-  for (const file of ['renderer.js', 'main.cjs', 'plugin.json']) {
+  for (const file of ['renderer.js', 'main.cjs', 'plugin.json', 'textconv.cjs']) {
     assert.ok(statSync(path.join(dir, 'plugins', 'hoard', file)).size > 0, `${file} is written`);
   }
   const events = log.trim().split('\n').map((line) => JSON.parse(line));
   assert.deepEqual(
     events.map((e) => e.name).sort(),
-    ['main', 'manifest', 'renderer'],
+    ['main', 'manifest', 'renderer', 'textconv'],
   );
+  // The bundled textconv, which blame runs in the packaged app, lines a chapter as tools/git's does.
+  const chapter = path.join(dir, 'chapter.html');
+  writeFileSync(chapter, '<p>One.</p><blockquote><p>Two.</p></blockquote><p>Three.</p>');
+  const lined = (script: string) => execFileSync(process.execPath, [script, chapter], { encoding: 'utf8' });
+  assert.equal(lined(path.join(dir, 'plugins', 'hoard', 'textconv.cjs')), '<p>One.</p>\n<blockquote><p>Two.</p></blockquote>\n<p>Three.</p>\n');
+  assert.equal(lined(path.join(dir, 'plugins', 'hoard', 'textconv.cjs')), lined(path.join(root, 'tools', 'git', 'neo-textconv.js')));
   for (const e of events) {
     assert.equal(e.event, 'build.target');
     assert.equal(typeof e.ms, 'number');
