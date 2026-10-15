@@ -1,17 +1,22 @@
 // hoard's main half, which plugins-main.js starts once NEO's window is up. It answers the
 // window half's health check (ping), and keeps the library's history in git: every
 // landed write feeds the checkpoints, the window asks for one on a chapter switch or a
-// book closing, and quitting makes one last commit. The library's repository is looked
+// book closing, and quitting makes one last commit. It keeps the writer's marks in
+// sidecars under .neo/, which the history commits with the chapters. The library's repository is looked
 // at after activate returns, so NEO's start never waits on git.
 import { app, BrowserWindow, dialog } from 'electron';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { HoardPingV1 } from '../generated/ipc/hoard-ping-v1.js';
-import { validateHoardGitBlameV1, validateHoardGitCheckpointV1, validateHoardPingV1 } from '../generated/validators.cjs';
+import {
+  validateHoardGitBlameV1, validateHoardGitCheckpointV1, validateHoardMarksAddV1, validateHoardMarksListV1,
+  validateHoardMarksReplyV1, validateHoardMarksStateV1, validateHoardPingV1,
+} from '../generated/validators.cjs';
 import { textconvCommand } from './git/blame.ts';
 import { GitLayer, resolveSettings } from './git/layer.ts';
 import { createGit } from './git/runner.ts';
 import { ATTRIBUTES } from './git/start.ts';
+import { MarkStore } from './marks/store.ts';
 
 function checked<T>(name: string, validate: { (data: unknown): data is T; errors?: { instancePath: string; message?: string }[] | null }, payload: unknown): T {
   if (!validate(payload)) {
@@ -81,6 +86,21 @@ function startHistory(host: NeoMainHost): GitLayer {
   return layer;
 }
 
+// Marks the writer makes in the window. The window sends ids and words; the store adds
+// the time, the commit and who made it, which from this channel is always the author.
+function startMarks(host: NeoMainHost, layer: GitLayer): void {
+  const store = new MarkStore({
+    library: () => host.paths.library(),
+    head: () => layer.head(),
+    wrote: (name) => layer.wrote(name),
+    log: host.log.bind(host),
+  });
+  host.handle('marks.list', (payload) => store.list(checked('marks.list', validateHoardMarksListV1, payload).bookId));
+  host.handle('marks.add', (payload) => store.add(checked('marks.add', validateHoardMarksAddV1, payload), 'author'));
+  host.handle('marks.reply', (payload) => store.reply(checked('marks.reply', validateHoardMarksReplyV1, payload), 'author'));
+  host.handle('marks.state', (payload) => store.setState(checked('marks.state', validateHoardMarksStateV1, payload), 'author'));
+}
+
 // The writer chose Keep Library History from the Plugins menu, so the answer is theirs
 // to read: a message box, never while they type.
 async function keepHistory(host: NeoMainHost, layer: GitLayer) {
@@ -105,5 +125,6 @@ async function keepHistory(host: NeoMainHost, layer: GitLayer) {
 export function activate(host: NeoMainHost): void {
   host.handle('ping', ping);
   const layer = startHistory(host);
+  startMarks(host, layer);
   layer.open().catch((err: unknown) => host.log('error', 'git.open failed', String(err)));
 }

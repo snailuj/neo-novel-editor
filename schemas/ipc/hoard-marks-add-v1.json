@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "A mark the writer makes from the window, version 1: a comment with its words, or a highlight. The main half adds the time, the author and the commit.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["bookId", "chId", "kind", "anchor"],
+  "properties": {
+    "bookId": { "type": "string", "minLength": 1 },
+    "chId": { "type": "string", "minLength": 1 },
+    "kind": { "enum": ["comment", "highlight"] },
+    "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exact", "prefix", "suffix", "pIdx", "off"],
+      "properties": {
+        "exact": { "type": "string", "minLength": 1, "maxLength": 20000, "pattern": "^[^\\n]*$" },
+        "prefix": { "type": "string", "maxLength": 32 },
+        "suffix": { "type": "string", "maxLength": 32 },
+        "pIdx": { "type": "integer", "minimum": 0 },
+        "off": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "body": { "type": "string", "minLength": 1, "maxLength": 20000 }
+  }
+}
