@@ -18,6 +18,7 @@ import { GitLayer, resolveSettings } from './git/layer.ts';
 import { createGit } from './git/runner.ts';
 import { ATTRIBUTES } from './git/start.ts';
 import { MarkStore } from './marks/store.ts';
+import { startReview } from './review/main.ts';
 import { WikiStore } from './wiki/store.ts';
 import { describeSort } from './wiki/summary.ts';
 
@@ -194,5 +195,6 @@ export function activate(host: NeoMainHost): void {
   const layer = startHistory(host);
   const marks = startMarks(host, layer);
   startWiki(host, layer, marks);
+  startReview(host, marks);
   layer.open().catch((err: unknown) => host.log('error', 'git.open failed', String(err)));
 }

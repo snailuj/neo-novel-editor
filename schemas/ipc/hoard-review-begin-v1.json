@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The librarian is about to apply the writer's suggestion, version 1: the history takes what is waiting first, so the change sits between two commits.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "bookId",
+    "chId",
+    "markId"
+  ],
+  "properties": {
+    "bookId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "chId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "markId": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

@@ -13,7 +13,7 @@ import path from 'node:path';
 import type { HoardMarksV1, Mark, MarkAnchor, MarkKind, MarkState, MarkWho } from '../../generated/hoard-marks-v1.js';
 import { validateHoardMarksV1 } from '../../generated/validators.cjs';
 import { oneName, writeWhole } from '../files.ts';
-import { newMark, reply, transition } from './model.ts';
+import { isSuggestion, newMark, reply, transition } from './model.ts';
 
 type Level = 'error' | 'warn' | 'info' | 'debug';
 
@@ -120,6 +120,19 @@ export class MarkStore {
 
   async setState(req: StateRequest, who: MarkWho): Promise<{ marks: Mark[] }> {
     return this.#change(req, (mark) => transition(mark, req.state, who, this.#now()), `state:${req.state}`);
+  }
+
+  /**
+   * A reviewer's verdict on a suggestion: the change of state and, when there is one, the
+   * reviewer's reason as a comment in its thread, in one write.
+   */
+  async review(req: StateRequest, who: MarkWho, note?: string): Promise<{ marks: Mark[] }> {
+    return this.#change(req, (mark) => {
+      if (!isSuggestion(mark.kind)) throw new RangeError(`${req.markId} is a ${mark.kind}, not a suggestion`);
+      const at = this.#now();
+      const moved = transition(mark, req.state, who, at);
+      return note === undefined ? moved : reply(moved, { id: this.#id('e'), who, at, body: note });
+    }, `review:${req.state}`);
   }
 
   async #change(req: ChapterIds & { markId: string }, change: (mark: Mark) => Mark, action: string): Promise<{ marks: Mark[] }> {

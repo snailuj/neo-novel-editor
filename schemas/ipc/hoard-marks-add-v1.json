@@ -1,25 +1,108 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "description": "A mark the writer makes from the window, version 1: a comment with its words, or a highlight. The main half adds the time, the author and the commit.",
+  "description": "A mark the writer makes from the window, version 1: a comment with its words, a highlight, or a suggestion (insertion, deletion or substitution) with the words it proposes. Only an insertion has an empty quote. The main half adds the time, the author and the commit, and the mark's model refuses proposed words where they do not belong or are missing.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["bookId", "chId", "kind", "anchor"],
+  "required": [
+    "bookId",
+    "chId",
+    "kind",
+    "anchor"
+  ],
   "properties": {
-    "bookId": { "type": "string", "minLength": 1 },
-    "chId": { "type": "string", "minLength": 1 },
-    "kind": { "enum": ["comment", "highlight"] },
+    "bookId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "chId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "enum": [
+        "comment",
+        "highlight",
+        "insertion",
+        "deletion",
+        "substitution"
+      ]
+    },
     "anchor": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["exact", "prefix", "suffix", "pIdx", "off"],
+      "required": [
+        "exact",
+        "prefix",
+        "suffix",
+        "pIdx",
+        "off"
+      ],
       "properties": {
-        "exact": { "type": "string", "minLength": 1, "maxLength": 20000, "pattern": "^[^\\n]*$" },
-        "prefix": { "type": "string", "maxLength": 32 },
-        "suffix": { "type": "string", "maxLength": 32 },
-        "pIdx": { "type": "integer", "minimum": 0 },
-        "off": { "type": "integer", "minimum": 0 }
+        "exact": {
+          "type": "string",
+          "maxLength": 20000,
+          "pattern": "^[^\\n]*$"
+        },
+        "prefix": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "suffix": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "pIdx": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "off": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
-    "body": { "type": "string", "minLength": 1, "maxLength": 20000 }
+    "body": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000
+    },
+    "proposed": {
+      "type": "string",
+      "maxLength": 20000,
+      "pattern": "^[^\\r\\n]*$"
+    }
+  },
+  "if": {
+    "properties": {
+      "kind": {
+        "const": "insertion"
+      }
+    }
+  },
+  "then": {
+    "properties": {
+      "anchor": {
+        "type": "object",
+        "properties": {
+          "exact": {
+            "type": "string",
+            "maxLength": 0
+          }
+        }
+      }
+    }
+  },
+  "else": {
+    "properties": {
+      "anchor": {
+        "type": "object",
+        "properties": {
+          "exact": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
   }
 }
