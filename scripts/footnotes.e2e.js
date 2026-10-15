@@ -31,6 +31,8 @@ const loadFile = BrowserWindow.prototype.loadFile;
 BrowserWindow.prototype.loadFile = function (file, opts) {
   return loadFile.call(this, path.resolve(__dirname, '..', file), opts);
 };
+// no window of the run reaches the screen or takes the keyboard (see isolate-test-app.js)
+require('./isolate-test-app.js').hideWindows();
 require('../main.js');
 
 let wc;
