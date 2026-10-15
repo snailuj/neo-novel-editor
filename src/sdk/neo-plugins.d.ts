@@ -32,7 +32,13 @@ interface NeoEvents {
   'book-close': { readonly bookId: string };
   /** At most once a frame for each chapter that changed. */
   'chapter-change': { readonly bookId: string; readonly chId: string };
-  'chapter-saved': { readonly bookId: string; readonly chId: string };
+  /**
+   * After each write of a chapter lands. html is the text the write put in the file;
+   * previous is what the file held just before it, as this window knew it (read when the
+   * book opened, written by it, or handed back by another device's change), and null
+   * when it never knew, as for a chapter it has just made.
+   */
+  'chapter-saved': { readonly bookId: string; readonly chId: string; readonly html: string; readonly previous: string | null };
   /** At most once a frame; place is null off the manuscript. */
   selection: { readonly place: Readonly<NeoPlace> | null };
   /** The chapters were drawn anew; the host has already rebuilt every highlight. */
