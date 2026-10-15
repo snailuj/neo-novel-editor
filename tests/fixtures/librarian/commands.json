@@ -1,0 +1,17 @@
+[
+  ["lint"],
+  ["dangling"],
+  ["dangling", "--match", "RIVERS-and"],
+  ["quotes"],
+  ["verify"],
+  ["repair"],
+  ["duplicates"],
+  ["check", "--src", "old/harbour.md", "--src-file", "sources/harbour-talk.md"],
+  ["check", "--src", "old/new.md", "--src-file", "sources/harbour-talk.md"],
+  ["relink", "--check"],
+  ["relink", "--check", "--scope", "librarian"],
+  ["relink", "--check", "--scope", "author"],
+  ["relink", "--check", "--map", "Old-Name=Tidecraft"],
+  ["relink", "--check", "--map-only", "--map", "Old-Name=Tidecraft"],
+  ["relink", "--check", "--map", "Kell'a=Tidecraft"]
+]
