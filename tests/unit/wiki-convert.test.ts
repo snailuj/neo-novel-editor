@@ -67,7 +67,7 @@ test('each kind of mark lands on the words it was about, the text reading as rej
 });
 
 test('a mark says who made it and when, where its attributes say', () => {
-  const page = convertPage('A {author="librarian" date="2026-03-04"==quiet==}{>>Check this.<<} bay. A {author="Julian"--loud --}gull.');
+  const page = convertPage('A {author="librarian" date="2026-03-04"==quiet==}{>>Check this.<<} bay. A {author="Ada"--loud --}gull.');
   assert.deepEqual(page.marks.map((m) => [m.kind, m.who, m.at]), [
     ['comment', 'librarian', '2026-03-04T00:00:00.000Z'],
     ['deletion', 'author', null],

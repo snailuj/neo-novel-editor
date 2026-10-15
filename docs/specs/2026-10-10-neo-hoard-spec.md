@@ -73,6 +73,18 @@ Built 15 October 2026 (roadmap step 3, Marks-Live-In-Sidecars); the plan is `por
 - The daily backup zip keeps `.neo` with the books.
 - Not built yet: suggestions and their review (step 8), references in comments (step 5's wiki gives them pages), CriticMarkup at the Markdown boundaries, and marks across paragraphs (a host place lies in one paragraph). Sidecars stay where they are when a book is duplicated or a chapter goes to Darlings.
 
+## Wiki as built
+
+Built 15 October 2026 (roadmap step 5, Wiki-Moves-Into-Neo); the plan is `port-plan/plans/wiki-moves-into-neo.md` in the project files. The window half is `src/hoard/wiki/window.ts`, the main half `src/hoard/wiki/store.ts`; the host gained API 4's `open(bookId)` in `plugins.js`, with one function and one getter in `app.js`.
+
+- The wiki is one NEO book, made by the first import as `book:create` makes a book and named in `.neo/wiki.json`. It is on no shelf, because only the window writes `library.json`: Plugins > Open Wiki opens it, and File > Reshelve a Book puts it on a shelf. Each page is an `unnumbered` chapter titled with its file's name.
+- Plugins > Import to Wiki… takes Markdown files from the OS file picker. A message box says what comes in and what does not, and why: already in the wiki, changed since it came in (never written over, as the page may hold newer words), a name already taken, or a file that does not read. Nothing is imported while the wiki is the open book, because the window writes its own copy of `book.json` whole.
+- A page's words arrive as written, one paragraph per line with the Markdown kept as text, since every place, mark, blame line and replace counts paragraphs. Blank lines go, except inside a code fence. The frontmatter goes to `.neo/<bookId>/pages/<chId>.json` (`schemas/hoard-page-v1.json`) with the source path and its SHA-256.
+- CriticMarkup becomes open marks in the chapter's marks sidecar, the page reading as if each were rejected: insertions, deletions, substitutions, highlights, and comments on a highlight or a suggestion. A mark that cannot be one here (a lone comment, an AI mark, one across lines) stays in the text as written, and the summary counts it. Insertions anchor at a point and are listed, not drawn, until step 8.
+- Each page adds a `converted` line to `.neo/manifest.jsonl` and a `page-imported` line to `.neo/changes.jsonl` (`schemas/hoard-change-v1.json`) for ripple to read later. Writes go chapter files and sidecars first, `book.json` next, the manifest and change log last; the page sidecars, not the manifest, say what the wiki holds. The import is one commit, `Pages imported to the wiki`, under the author's identity.
+- `[[links]]` are drawn in every book, `wiki-link` when the target names a page (by title, as Obsidian resolves it, never through an alias) and `wiki-missing` when it does not. Ctrl+click (Cmd+click) or Plugins > Follow Link goes to the page, opening the wiki first. While the wiki is open its pages are set flush left without a drop cap.
+- Not built yet: search (step 6), updating a page from a changed source, rendering the Markdown, attachments and embeds, and writing pages into books.
+
 ## Suggestion and review model
 
 The author's requirement, in their words (10 October 2026):
