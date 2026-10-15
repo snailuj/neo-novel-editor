@@ -1,0 +1,162 @@
+// Rule: a librarian edit sits between two commits. What the writer wrote before it is
+// committed as the author's, the edit alone as the librarian's, and no checkpoint runs
+// in between; the checkpoints run again however the edit ends, and pairs never overlap.
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import type { Clock } from '../../src/hoard/git/checkpoints.ts';
+import { GitLayer, resolveSettings } from '../../src/hoard/git/layer.ts';
+import type { Git } from '../../src/hoard/git/runner.ts';
+import { isolateGitConfig, log, tempDir, tempLibrary } from './git-support.ts';
+
+const root = fileURLToPath(new URL('../..', import.meta.url));
+const C1 = 'book-fox-1/chapters/c1.html';
+
+// Timers that run only when fire() is called, so a test decides when a checkpoint is due.
+function manualClock() {
+  const timers = new Map<number, () => void>();
+  let next = 1;
+  const clock: Clock = {
+    now: () => 0,
+    setTimeout(fn) {
+      timers.set(next, fn);
+      return next++;
+    },
+    clearTimeout(id) {
+      timers.delete(id as number);
+    },
+  };
+  const fire = () => {
+    const due = [...timers.values()];
+    timers.clear();
+    for (const fn of due) fn();
+  };
+  return { clock, fire };
+}
+
+export function pairLayer(t: { after(fn: () => void): void }, git: Git, library: string, clock?: Clock) {
+  const lines: { level: string; message: string; data?: unknown }[] = [];
+  const layer = new GitLayer({
+    git,
+    library,
+    settings: resolveSettings({}, () => {}),
+    attributesFile: path.join(tempDir(t), 'attributes'),
+    textconv: { command: `"${process.execPath}" "${path.join(root, 'tools', 'git', 'neo-textconv.js')}"` },
+    log: (level, message, data) => lines.push({ level, message, data }),
+    clock,
+  });
+  t.after(() => layer.stop());
+  return { layer, lines };
+}
+
+const history = (git: Git, library: string) => log(git, library, '%an|%(trailers:key=Neo-Checkpoint,valueonly)');
+const filesOf = async (git: Git, library: string, rev: string) => {
+  const { stdout } = await git.run(library, ['show', '--name-only', '--format=', rev]);
+  return stdout.split('\n').filter(Boolean).sort();
+};
+
+async function tracked(t: { after(fn: () => void): void }, clock?: Clock) {
+  isolateGitConfig(t, { name: 'Ada', email: 'ada@example.com' });
+  const lib = tempLibrary(t);
+  await lib.git.run(lib.library, ['init', '-q']);
+  const { layer, lines } = pairLayer(t, lib.git, lib.library, clock);
+  await layer.open();
+  await layer.drained();
+  return { ...lib, layer, lines };
+}
+
+test('the writer\'s words go in the author\'s commit, the edit alone in the librarian\'s', async (t) => {
+  const { library, git, write, layer } = await tracked(t);
+  write(C1, '<p>One.</p><p>Two, typed.</p>');
+  const paired = await layer.around([C1], async () => {
+    write(C1, '<p>One.</p><p>Two, amended.</p>');
+    write('book-fox-1/chapters/c2.html', '<p>Typed in another chapter meanwhile.</p>');
+    return 'applied';
+  });
+  assert.equal(paired.result, 'applied');
+  assert.deepEqual((await history(git, library)).slice(0, 2), ['Librarian|librarian-after', 'Ada|librarian-before']);
+  const [after, before] = await log(git, library, '%H');
+  assert.equal(paired.after, after);
+  assert.equal(paired.before, before);
+  assert.deepEqual(await filesOf(git, library, after), [C1]);
+  const { stdout: was } = await git.run(library, ['show', `${before}:${C1}`]);
+  assert.equal(was, '<p>One.</p><p>Two, typed.</p>');
+  const { stdout: left } = await git.run(library, ['status', '--porcelain']);
+  assert.deepEqual(left.split('\n').filter(Boolean), ['?? book-fox-1/chapters/c2.html'], 'the other chapter waits for the author');
+});
+
+test('no checkpoint commits inside the pair, and the one that fired runs after it', async (t) => {
+  const time = manualClock();
+  const { library, git, write, layer } = await tracked(t, time.clock);
+  let fired = 0;
+  await layer.around([C1], async () => {
+    write(C1, '<p>One.</p><p>Two, amended.</p>');
+    layer.wrote('c1');
+    time.fire();
+    layer.request('chapter-switch');
+    time.fire();
+    fired = (await history(git, library)).length;
+  });
+  assert.equal(fired, 1, 'only the recovered commit existed while the edit ran');
+  write('book-fox-1/chapters/c2.html', '<p>Later.</p>');
+  await layer.drained();
+  assert.deepEqual(await history(git, library), ['Ada|chapter-switch', 'Librarian|librarian-after', 'Ada|recovered']);
+});
+
+test('an edit that fails still has what it changed committed as the librarian\'s, and the checkpoints resume', async (t) => {
+  const { library, git, write, layer } = await tracked(t);
+  await assert.rejects(layer.around([C1], async () => {
+    write(C1, '<p>Half done.</p>');
+    throw new Error('the edit broke');
+  }), /the edit broke/);
+  assert.deepEqual((await history(git, library))[0], 'Librarian|librarian-after');
+  write(C1, '<p>The writer again.</p>');
+  await layer.commitNow('import');
+  assert.deepEqual((await history(git, library))[0], 'Ada|import');
+});
+
+test('when the author\'s commit fails the edit never runs', async (t) => {
+  isolateGitConfig(t, null);
+  const lib = tempLibrary(t);
+  await lib.git.run(lib.library, ['init', '-q']);
+  const { layer } = pairLayer(t, lib.git, lib.library);
+  await layer.open();
+  await layer.drained();
+  let ran = false;
+  await assert.rejects(layer.around([C1], async () => { ran = true; }));
+  assert.equal(ran, false);
+  assert.deepEqual(await history(lib.git, lib.library).catch(() => []), []);
+});
+
+test('pairs run one after the other', async (t) => {
+  const { library, git, write, layer } = await tracked(t);
+  const order: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const first = layer.around([C1], async () => {
+    order.push('first in');
+    write(C1, '<p>First.</p>');
+    await gate;
+    order.push('first out');
+  });
+  const second = layer.around(['book-fox-1/chapters/c2.html'], async () => {
+    order.push('second in');
+    write('book-fox-1/chapters/c2.html', '<p>Second.</p>');
+  });
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  release();
+  await Promise.all([first, second]);
+  assert.deepEqual(order, ['first in', 'first out', 'second in']);
+  assert.deepEqual((await history(git, library)).slice(0, 2), ['Librarian|librarian-after', 'Librarian|librarian-after']);
+});
+
+test('in a library with no history the edit runs alone, with no commits', async (t) => {
+  isolateGitConfig(t, { name: 'Ada', email: 'ada@example.com' });
+  const lib = tempLibrary(t);
+  const { layer } = pairLayer(t, lib.git, lib.library);
+  await layer.open();
+  const paired = await layer.around([C1], async () => 7);
+  assert.deepEqual(paired, { result: 7, before: null, after: null });
+  assert.equal(await layer.head(), null);
+});
