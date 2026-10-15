@@ -1,9 +1,11 @@
 {
   "id": "hoard",
-  "apiVersion": 1,
+  "apiVersion": 3,
   "renderer": "renderer.js",
   "main": "main.cjs",
   "commands": [
-    { "id": "keep-history", "title": "Keep Library History" }
-  ]
+    { "id": "keep-history", "title": "Keep Library History" },
+    { "id": "add-comment", "title": "Add Comment" }
+  ],
+  "style": "style.css"
 }

@@ -1,0 +1,31 @@
+/* hoard's Comments section and the marks on the page. Cards borrow NEO's .sticky look
+   (and its light and bright themes); only what differs is here. Controls stay hidden
+   until the card is hovered or holds the keyboard focus. */
+::highlight(plugin-hoard-comment) { background-color: color-mix(in srgb, var(--accent) 26%, transparent); }
+::highlight(plugin-hoard-highlight) { background-color: color-mix(in srgb, #e3c04c 32%, transparent); }
+::highlight(plugin-hoard-suggestion) { text-decoration: underline dotted var(--accent); }
+::highlight(plugin-hoard-flagged) { background-color: color-mix(in srgb, var(--red) 26%, transparent); }
+::highlight(plugin-hoard-active) { background-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+
+.hoard-marks-head { display: flex; align-items: baseline; gap: 8px; margin: 0 12px 8px; min-height: 18px; }
+.hoard-blame { flex: 1; margin: 0; font-size: 11px; color: var(--muted); }
+.hoard-add { background: none; border: none; color: var(--muted); font-size: 11px; opacity: 0; }
+.hoard-marks:hover .hoard-add, .hoard-add:focus-visible { opacity: 1; }
+.hoard-add:hover { color: var(--accent); }
+.hoard-note { margin: 0 12px 8px; font-size: 12px; color: var(--red); }
+
+.hoard-mark { cursor: default; }
+.hoard-mark.active { border-left-color: #e3c04c; }
+.hoard-mark.resolved { opacity: 0.6; border-left-color: var(--muted); }
+.hoard-mark.stale { border-left-style: dashed; }
+.hoard-quote {
+  display: block; width: 100%; text-align: left; background: none; border: none; padding: 0;
+  font: inherit; font-size: 10px; cursor: pointer; text-transform: none; letter-spacing: 0;
+}
+.hoard-quote:disabled { cursor: default; font-style: italic; }
+.hoard-entry { margin: 6px 0 0; white-space: pre-wrap; }
+.hoard-who { display: block; font-size: 10px; color: var(--muted); }
+.hoard-mark .hoard-reply, .hoard-mark .s-actions { opacity: 0; }
+.hoard-mark:hover .hoard-reply, .hoard-mark:hover .s-actions,
+.hoard-mark:focus-within .hoard-reply, .hoard-mark:focus-within .s-actions { opacity: 1; }
+.hoard-composer { cursor: default; }

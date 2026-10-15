@@ -27,4 +27,5 @@ export const bundles = [
 
 export const copies = [
   { name: 'manifest', from: 'src/hoard/plugin.json', to: 'hoard/plugin.json' },
+  { name: 'style', from: 'src/hoard/style.css', to: 'hoard/style.css' },
 ];
