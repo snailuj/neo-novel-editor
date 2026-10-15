@@ -1,12 +1,15 @@
 // What the window draws for one chapter's marks: where each is found now, the places to
 // highlight under each name, and which are stale. Pure, so it is tested without a page.
 // Only open and flagged marks are drawn; resolved, accepted and rejected ones stay in
-// the list but not on the page. A mark whose quote is gone is stale: listed, not drawn.
+// the list but not on the page. An open or flagged mark whose quote is gone is stale:
+// listed, not drawn. A closed one is not, since an accepted change takes its words away.
+// An insertion has no words, so it is drawn on the letter after its point, or the one
+// before at a paragraph's end.
 import type { Mark } from '../../generated/hoard-marks-v1.js';
 import { locate, type Span } from './anchor.ts';
 import { isSuggestion } from './model.ts';
 
-export const NAMES = ['comment', 'highlight', 'suggestion', 'flagged'] as const;
+export const NAMES = ['comment', 'highlight', 'suggestion', 'insertion', 'flagged'] as const;
 export type DrawName = (typeof NAMES)[number];
 
 export interface Place { chId: string; pIdx: number; off: number; len: number }
@@ -21,22 +24,35 @@ export interface Drawn {
 const drawnUnder = (mark: Mark): DrawName | null => {
   if (mark.state === 'flagged') return 'flagged';
   if (mark.state !== 'open') return null;
+  if (mark.kind === 'insertion') return 'insertion';
   if (isSuggestion(mark.kind)) return 'suggestion';
   return mark.kind === 'highlight' ? 'highlight' : 'comment';
 };
 
+const isHigh = (code: number) => code >= 0xd800 && code <= 0xdbff;
+const isLow = (code: number) => code >= 0xdc00 && code <= 0xdfff;
+
+// The letter beside an insertion's point, whole even when it is a surrogate pair.
+function letterBeside(text: string, off: number): { off: number; len: number } | null {
+  if (off < text.length) return { off, len: isHigh(text.charCodeAt(off)) && isLow(text.charCodeAt(off + 1)) ? 2 : 1 };
+  if (off === 0) return null;
+  const pair = off >= 2 && isLow(text.charCodeAt(off - 1)) && isHigh(text.charCodeAt(off - 2));
+  return pair ? { off: off - 2, len: 2 } : { off: off - 1, len: 1 };
+}
+
 export function drawChapter(chId: string, marks: readonly Mark[], paragraphs: readonly string[]): Drawn {
-  const drawn: Drawn = { found: new Map(), places: { comment: [], highlight: [], suggestion: [], flagged: [] }, stale: [] };
+  const drawn: Drawn = { found: new Map(), places: { comment: [], highlight: [], suggestion: [], insertion: [], flagged: [] }, stale: [] };
   for (const mark of marks) {
     const span = locate(paragraphs, mark.anchor);
     drawn.found.set(mark.id, span);
+    const name = drawnUnder(mark);
     if (span === null) {
-      drawn.stale.push(mark.id);
+      if (name) drawn.stale.push(mark.id);
       continue;
     }
-    const name = drawnUnder(mark);
-    // an insertion's quote is empty: there are no words to draw it on
-    if (name && span.len > 0) drawn.places[name].push({ chId, ...span });
+    if (!name) continue;
+    const at = span.len > 0 ? span : letterBeside(paragraphs[span.pIdx], span.off);
+    if (at) drawn.places[name].push({ chId, pIdx: span.pIdx, off: at.off, len: at.len });
   }
   return drawn;
 }
