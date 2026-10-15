@@ -3,7 +3,8 @@
 // calls these instead, so a finding falls on the same line and sorts in the same order.
 
 // Every terminator str.splitlines() honours: \n, \r, \r\n, \v, \f, \x1c to \x1e, \x85,
-// \u2028 and \u2029.
+// \u2028 and \u2029. Control characters are the point here.
+// oxlint-disable-next-line no-control-regex
 const LINE_BREAK = /\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/g;
 
 /** str.splitlines(keepends): no empty last line for a trailing terminator, [] for ''. */
@@ -21,6 +22,7 @@ export function splitlines(text: string, keepends = false): string[] {
 
 // str.isspace() for one code point: Python counts \x1c to \x1f as whitespace and not
 // \ufeff, which JavaScript's \s and trim() treat the other way round.
+// oxlint-disable-next-line no-control-regex
 const PY_SPACE = /^[\t\n\v\f\r\x1c-\x1f \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]$/u;
 
 export function isPySpace(ch: string): boolean {
@@ -76,9 +78,7 @@ export function byCodePoint(a: string, b: string): number {
 
 /** len() of a str: code points, not UTF-16 units. */
 export function pyLen(text: string): number {
-  let n = 0;
-  for (const _ of text) n++;
-  return n;
+  return Array.from(text).length;
 }
 
 /** text[:n] by code point. */
