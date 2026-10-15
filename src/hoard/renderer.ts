@@ -8,12 +8,15 @@
 // and it runs Keep Library History from the Plugins menu.
 //
 // The writer's comments are drawn on the page and listed in a Comments section beside
-// the manuscript (marks/window.ts), which needs API 3's side sections.
+// the manuscript (marks/window.ts), which needs API 3's side sections. The wiki
+// (wiki/window.ts) imports pages, opens the wiki book and follows links into it, which
+// needs API 4's open.
 import { startMarks } from './marks/window.ts';
+import { startWiki } from './wiki/window.ts';
 
 NeoPlugins.register({
   id: 'hoard',
-  apiVersion: 3,
+  apiVersion: 4,
   async activate(neo) {
     const ping = (payload: unknown) => neo.invoke('ping', payload);
     const sent = { n: 1 };
@@ -40,6 +43,7 @@ NeoPlugins.register({
     const blame = (bookId: string, chId: string) => neo.invoke('git.blame', { bookId, chId });
     const gitStatus = () => neo.invoke('git.status');
     const marks = startMarks(neo);
-    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks }) });
+    const wiki = startWiki(neo);
+    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki }) });
   },
 });
