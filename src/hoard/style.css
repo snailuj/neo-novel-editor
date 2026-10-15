@@ -42,7 +42,7 @@
 .hoard-mark .hoard-label, .hoard-mark .hoard-reply, .hoard-mark .s-actions { opacity: 0; }
 .hoard-mark:hover .hoard-label, .hoard-mark:hover .hoard-reply, .hoard-mark:hover .s-actions,
 .hoard-mark:focus-within .hoard-label, .hoard-mark:focus-within .hoard-reply, .hoard-mark:focus-within .s-actions { opacity: 1; }
-.hoard-composer { cursor: default; }
+.hoard-composer, .hoard-suggest-composer { cursor: default; }
 
 /* The wiki: a [[link]] to a page is underlined in the accent, one to no page dotted and
    muted. Its pages are Markdown, set flush left without indents (window.ts). */

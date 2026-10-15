@@ -89,7 +89,7 @@ export function startReview(neo: NeoApiV4, marks: Marks, o: { pages: () => Pages
   mode.hidden = true;
   marks.mount(mode);
 
-  const composer = el('div', 'sticky hoard-composer hoard-suggest-composer');
+  const composer = el('div', 'sticky hoard-suggest-composer');
   const composerQuote = el('div', 's-ch');
   const textLabel = el('label', 'hoard-label', 'Your change (Enter suggests it, Esc cancels)');
   const text = el('textarea');
