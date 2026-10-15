@@ -82,7 +82,8 @@ test('a comment survives edits around it, a commit and a restart, and takes a re
     await menu(app, 'Add Comment');
     const box = page.locator('.hoard-composer textarea');
     await expect(box).toBeFocused();
-    await expect(page.locator('.hoard-composer .s-ch')).toHaveText('“counted”');
+    await expect(page.locator('.hoard-composer .s-ch')).toHaveText('On “counted”');
+    await expect(page.getByLabel(/Your comment/)).toBeFocused();
     await box.fill('Which boats?');
     await box.press('Control+Enter');
 
@@ -160,6 +161,63 @@ test('a comment whose words are deleted is listed as not found, and comes back w
     await page.keyboard.press('Control+z');
     await expect.poll(() => drawnText(page, 'comment')).toEqual(['boats']);
     await expect(card).not.toContainText('Quote not found');
+  } finally {
+    await fixture.close();
+  }
+});
+
+// Repeated gestures: a second Add Comment keeps the open comment and its words; adding,
+// resolving and replying twice before the first answer lands does each once.
+test('each action runs once however often it is asked for before it lands', async () => {
+  const { profile, library } = await trackedProfile();
+  const fixture = await launchProfile(profile);
+  try {
+    const { app, page } = fixture;
+    await ready(page);
+    const bookId = await seedBook(page, TEXT);
+    await select(page, 'tide');
+    await menu(app, 'Add Comment');
+    const box = page.getByLabel(/Your comment/);
+    await box.fill('High water.');
+    await select(page, 'dusk');
+    await menu(app, 'Add Comment');
+    await expect(box).toBeFocused();
+    await expect(box).toHaveValue('High water.');
+    await expect(page.locator('.hoard-composer .s-ch')).toHaveText('On “tide”');
+
+    // the button, then the keys, before the first add has its answer
+    await page.evaluate(() => {
+      const add = [...document.querySelectorAll('.hoard-composer button')].find((b) => b.textContent === 'Add comment');
+      const text = document.querySelector('.hoard-composer textarea');
+      const keys = () => text.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }));
+      add.click();
+      keys();
+      keys();
+    });
+    await expect.poll(() => readMarks(sidecar(library, bookId)).length).toBe(1);
+    await page.waitForTimeout(500);
+    expect(readMarks(sidecar(library, bookId)).length).toBe(1);
+    const [{ id }] = readMarks(sidecar(library, bookId));
+
+    const card = page.locator(`.hoard-mark[data-mark="${id}"]`);
+    await card.locator('.hoard-reply').fill('Twice?');
+    await card.evaluate((node) => {
+      const [reply, resolve] = node.querySelectorAll('.s-actions button');
+      reply.click();
+      reply.click();
+      resolve.click();
+    });
+    await expect.poll(() => readMarks(sidecar(library, bookId))[0].thread.length).toBe(2);
+    await card.evaluate((node) => {
+      const resolve = node.querySelectorAll('.s-actions button')[1];
+      resolve.click();
+      resolve.click();
+    });
+    await expect.poll(() => readMarks(sidecar(library, bookId))[0].state).toBe('resolved');
+    await page.waitForTimeout(500);
+    expect(readMarks(sidecar(library, bookId))[0].history.map((h) => h.state)).toEqual(['resolved']);
+    await expect(card.locator('.s-actions button').nth(1)).toHaveText('Reopen');
+    await expect(page.getByRole('status')).toContainText('Comment resolved');
   } finally {
     await fixture.close();
   }

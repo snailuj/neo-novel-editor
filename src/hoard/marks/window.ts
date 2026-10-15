@@ -7,7 +7,10 @@
 // focus; it only marks the mark under the caret as the active one. The section opens
 // when the writer asks (Add Comment, from the Plugins menu or its own button), and a
 // redraw never rebuilds a box the writer is typing in. Every write goes through the main
-// half, which answers with the chapter's marks as the file now holds them.
+// half, which answers with the chapter's marks as the file now holds them. Each action
+// runs once at a time: its button is disabled and its handler refuses while it is out.
+// The state machine this follows is in the plan (Marks-Live-In-Sidecars, "Comments
+// section states").
 import type { Mark, MarkState } from '../../generated/hoard-marks-v1.js';
 import { alignBlame } from '../git/align.ts';
 import type { BlameLine } from '../git/blame.ts';
@@ -22,11 +25,13 @@ interface Item {
   thread: HTMLDivElement;
   shown: string;
   reply: HTMLTextAreaElement;
+  replyButton: HTMLButtonElement;
   stateButton: HTMLButtonElement;
 }
 
 const REDRAW_MS = 300;
 const BLAME_EVERY_MS = 15_000;
+const STATUS_MS = 4_000;
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] => {
   const node = document.createElement(tag);
@@ -35,12 +40,19 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text 
   return node;
 };
 
+const button = (className: string, text: string) => {
+  const b = el('button', className, text);
+  b.type = 'button';
+  return b;
+};
+
 const when = (at: string | number) => new Date(at).toLocaleString(undefined, {
   day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
 });
 const who = (w: string) => (w === 'librarian' ? 'Librarian' : 'You');
 const clip = (text: string, n = 140) => (text.length > n ? `${text.slice(0, n - 1)}…` : text);
 const submitKey = (e: KeyboardEvent) => e.key === 'Enter' && (e.ctrlKey || e.metaKey);
+const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 export function startMarks(neo: NeoApiV3) {
   const pane = neo.addPane({ id: 'comments', title: 'Comments', side: true });
@@ -51,40 +63,47 @@ export function startMarks(neo: NeoApiV3) {
   let here: Place | null = null;
   let active: string | null = null;
   let composing: Composing | null = null;
-  const pending = new Set<string>();
+  let submitting = false;
+  const busy = new Set<string>();
   let redrawTimer: ReturnType<typeof setTimeout> | undefined;
   const blame = new Map<string, { at: number; lines: BlameLine[] }>();
   let blameTimer: ReturnType<typeof setTimeout> | undefined;
+  let statusTimer: ReturnType<typeof setTimeout> | undefined;
 
   // ---- the section's parts, made once --------------------------------------------
   const root = pane.element;
   root.classList.add('hoard-marks');
   const head = el('div', 'hoard-marks-head');
   const blameLine = el('p', 'hoard-blame');
-  const addButton = el('button', 'hoard-add', 'Add comment');
-  addButton.type = 'button';
+  const addButton = button('hoard-add', 'Add comment');
   head.append(blameLine, addButton);
-  const note = el('p', 'hoard-note');
+  const alert = el('p', 'hoard-alert');
+  alert.setAttribute('role', 'alert');
+  const status = el('p', 'hoard-status');
+  status.setAttribute('role', 'status');
   const composer = el('div', 'sticky hoard-composer');
   const composerQuote = el('div', 's-ch');
+  const composerLabel = el('label', 'hoard-label', 'Your comment (Ctrl+Enter adds it, Esc cancels)');
   const composerText = el('textarea');
-  composerText.placeholder = 'Comment… (Ctrl+Enter to add, Esc to cancel)';
+  composerText.id = 'hoard-compose-text';
+  composerLabel.htmlFor = composerText.id;
   const composerActions = el('div', 's-actions');
-  const composeAdd = el('button', '', 'Add');
-  const composeCancel = el('button', '', 'Cancel');
+  const composeAdd = button('', 'Add comment');
+  const composeCancel = button('', 'Cancel');
   composerActions.append(composeAdd, el('span', 's-sep', '·'), composeCancel);
-  composer.append(composerQuote, composerText, composerActions);
+  composer.append(composerQuote, composerLabel, composerText, composerActions);
   composer.hidden = true;
   const list = el('div', 'hoard-list');
-  const empty = el('p', 'stickies-empty hoard-empty', 'No comments in this chapter.');
-  root.append(head, note, composer, list, empty);
+  const empty = el('p', 'stickies-empty hoard-empty', 'No comments in this chapter. Select some words, then choose Add Comment.');
+  root.append(head, alert, status, composer, list, empty);
   const items = new Map<string, Item>();
 
-  const say = (text: string) => {
-    note.textContent = text;
-    note.hidden = !text;
+  const warn = (text: string) => { alert.textContent = text; };
+  const tell = (text: string) => {
+    status.textContent = text;
+    clearTimeout(statusTimer);
+    if (text) statusTimer = setTimeout(() => { status.textContent = ''; }, STATUS_MS);
   };
-  say('');
 
   // ---- drawing -------------------------------------------------------------------
   const redraw = (chId: string) => {
@@ -112,30 +131,29 @@ export function startMarks(neo: NeoApiV3) {
     if (known) return known;
     const itemRoot = el('div', 'sticky hoard-mark');
     itemRoot.dataset.mark = mark.id;
-    const quote = el('button', 's-ch hoard-quote');
-    quote.type = 'button';
+    const quote = button('s-ch hoard-quote', '');
     quote.addEventListener('click', () => goTo(mark.id));
     const thread = el('div', 'hoard-thread');
     const reply = el('textarea', 'hoard-reply');
-    reply.placeholder = 'Reply… (Ctrl+Enter)';
+    reply.id = `hoard-reply-${mark.id}`;
+    const label = el('label', 'hoard-label', 'Reply (Ctrl+Enter sends it)');
+    label.htmlFor = reply.id;
     const actions = el('div', 's-actions');
-    const replyButton = el('button', '', 'Reply');
-    replyButton.type = 'button';
-    const stateButton = el('button');
-    stateButton.type = 'button';
+    const replyButton = button('', 'Reply');
+    const stateButton = button('', '');
     actions.append(replyButton, el('span', 's-sep', '·'), stateButton);
-    itemRoot.append(quote, thread, reply, actions);
+    itemRoot.append(quote, thread, label, reply, actions);
     const send = () => sendReply(mark.id, reply);
     replyButton.addEventListener('click', send);
     reply.addEventListener('keydown', (e) => {
       if (submitKey(e)) { e.preventDefault(); send(); }
-      if (e.key === 'Escape') { e.preventDefault(); reply.value = ''; reply.blur(); }
+      if (e.key === 'Escape') { e.preventDefault(); reply.blur(); }
     });
     stateButton.addEventListener('click', () => {
       const now = currentMark(mark.id);
       if (now) changeState(mark.id, now.state === 'resolved' ? 'open' : 'resolved');
     });
-    const item: Item = { root: itemRoot, quote, thread, shown: '', reply, stateButton };
+    const item: Item = { root: itemRoot, quote, thread, shown: '', reply, replyButton, stateButton };
     items.set(mark.id, item);
     return item;
   };
@@ -145,8 +163,11 @@ export function startMarks(neo: NeoApiV3) {
     item.root.classList.toggle('stale', stale);
     item.root.classList.toggle('resolved', closed);
     item.root.classList.toggle('active', mark.id === active);
+    if (mark.id === active) item.root.setAttribute('aria-current', 'true');
+    else item.root.removeAttribute('aria-current');
     item.quote.textContent = `${stale ? 'Quote not found: ' : ''}“${clip(mark.anchor.exact)}”${closed ? ` · ${mark.state}` : ''}`;
     item.quote.disabled = stale;
+    item.quote.title = stale ? 'These words are no longer in the chapter; the comment stays here.' : 'Go to these words';
     const shown = mark.thread.map((e) => e.id).join(' ');
     if (shown !== item.shown) {
       item.thread.replaceChildren(...mark.thread.map((entry) => {
@@ -158,6 +179,8 @@ export function startMarks(neo: NeoApiV3) {
     }
     item.stateButton.textContent = mark.state === 'resolved' ? 'Reopen' : 'Resolve';
     item.stateButton.hidden = mark.kind !== 'comment' && mark.kind !== 'highlight';
+    item.replyButton.disabled = busy.has(mark.id);
+    item.stateButton.disabled = busy.has(mark.id);
   };
 
   function render() {
@@ -177,8 +200,10 @@ export function startMarks(neo: NeoApiV3) {
     // the order really changed
     const now = [...list.children];
     if (now.length !== wanted.length || now.some((node, i) => node !== wanted[i])) list.replaceChildren(...wanted);
-    empty.hidden = wanted.length > 0 || !bookId;
-    if (chId && unreadable.has(chId)) say('This chapter\'s comments file could not be read; see neo-errors.log. It is left as it is.');
+    empty.hidden = wanted.length > 0 || !bookId || (chId !== null && unreadable.has(chId));
+    if (chId && unreadable.has(chId)) {
+      warn('This chapter\'s comments file could not be read, so it is left untouched and no comment can be added here. neo-errors.log names the file; mend or move it, then open the book again.');
+    }
     renderBlame();
   }
 
@@ -211,8 +236,7 @@ export function startMarks(neo: NeoApiV3) {
   // paragraph, at most every BLAME_EVERY_MS; never on a keystroke.
   const maybeBlame = (chId: string, switched: boolean) => {
     clearTimeout(blameTimer);
-    const known = blame.get(chId);
-    if (switched || !known) { fetchBlame(chId); return; }
+    if (switched || !blame.has(chId)) { fetchBlame(chId); return; }
     blameTimer = setTimeout(() => {
       if (Date.now() - (blame.get(chId)?.at ?? 0) >= BLAME_EVERY_MS) fetchBlame(chId);
     }, 2_000);
@@ -228,7 +252,20 @@ export function startMarks(neo: NeoApiV3) {
     render();
   };
 
-  const failed = (err: unknown) => say(`Not saved: ${err instanceof Error ? err.message : String(err)}`);
+  // After a refusal the file may hold what another device wrote: read it again.
+  const relist = async () => {
+    if (!bookId) return;
+    const forBook = bookId;
+    try {
+      const listed = await neo.invoke('marks.list', { bookId }) as Listed;
+      if (bookId !== forBook) return;
+      marks = listed.chapters;
+      unreadable = new Set(listed.unreadable);
+      redrawAll();
+    } catch (err) {
+      console.debug('hoard: marks.list', err);
+    }
+  };
 
   function goTo(id: string) {
     const span = here ? drawn.get(here.chId)?.found.get(id) : null;
@@ -239,28 +276,39 @@ export function startMarks(neo: NeoApiV3) {
 
   async function sendReply(id: string, box: HTMLTextAreaElement) {
     const body = box.value.trim();
-    if (!body || !bookId || !here || pending.has(id)) return;
+    if (!body || !bookId || !here || busy.has(id)) return;
     const chId = here.chId;
-    pending.add(id);
+    busy.add(id);
+    render();
     try {
       settle(chId, await neo.invoke('marks.reply', { bookId, chId, markId: id, body }) as { marks: Mark[] });
       box.value = '';
-      say('');
+      warn('');
+      tell('Reply added.');
     } catch (err) {
-      failed(err);
+      warn(`Your reply was not saved: ${message(err)}. It is still in the box; send it again.`);
+      relist();
     } finally {
-      pending.delete(id);
+      busy.delete(id);
+      render();
     }
   }
 
   async function changeState(id: string, state: MarkState) {
-    if (!bookId || !here) return;
+    if (!bookId || !here || busy.has(id)) return;
     const chId = here.chId;
+    busy.add(id);
+    render();
     try {
       settle(chId, await neo.invoke('marks.state', { bookId, chId, markId: id, state }) as { marks: Mark[] });
-      say('');
+      warn('');
+      tell(state === 'resolved' ? 'Comment resolved. Reopen brings it back.' : 'Comment reopened.');
     } catch (err) {
-      failed(err);
+      warn(`The comment was not changed: ${message(err)}. The list now shows it as the file holds it; try again if it still needs changing.`);
+      relist();
+    } finally {
+      busy.delete(id);
+      render();
     }
   }
 
@@ -273,39 +321,52 @@ export function startMarks(neo: NeoApiV3) {
   };
 
   function addComment() {
-    if (!bookId || !here) {
+    if (composing) {
+      // a second Add Comment keeps the open comment, its words and its passage
       pane.show();
-      say('Put the caret in a chapter, or select some words, then Add Comment.');
+      composerText.focus();
+      tell('Finish or cancel the open comment first.');
       return;
     }
-    const paragraphs = neo.chapter(here.chId)?.paragraphs;
-    const text = paragraphs?.[here.pIdx];
-    if (!paragraphs || !text) {
+    if (!bookId || !here) {
       pane.show();
-      say('There are no words here to comment on.');
+      warn('There is nothing to comment on yet. Put the caret in a chapter, or select some words, then choose Add Comment.');
+      return;
+    }
+    if (unreadable.has(here.chId)) { pane.show(); render(); return; }
+    const paragraphs = neo.chapter(here.chId)?.paragraphs;
+    if (!paragraphs?.[here.pIdx]) {
+      pane.show();
+      warn('This paragraph is empty. Put the caret in a paragraph with words, or select some, then choose Add Comment.');
       return;
     }
     const { commit: _commit, ...anchor } = anchorAt(paragraphs, here);
     composing = { place: { ...here }, anchor };
-    composerQuote.textContent = `“${clip(anchor.exact)}”`;
+    composerQuote.textContent = `On “${clip(anchor.exact)}”`;
     composer.hidden = false;
-    say('');
+    warn('');
     pane.show();
     composerText.focus();
   }
 
   async function submitComment() {
     const body = composerText.value.trim();
-    if (!composing || !bookId || !body) return;
+    if (!composing || !bookId || !body || submitting) return;
     const { place, anchor } = composing;
+    submitting = true;
+    composeAdd.disabled = true;
     try {
       const answer = await neo.invoke('marks.add', { bookId, chId: place.chId, kind: 'comment', anchor, body }) as { id: string; marks: Mark[] };
       active = answer.id;
       stopComposing(true);
       settle(place.chId, answer);
-      say('');
+      warn('');
+      tell('Comment added.');
     } catch (err) {
-      failed(err);
+      warn(`Your comment was not saved: ${message(err)}. It is still in the box; add it again.`);
+    } finally {
+      submitting = false;
+      composeAdd.disabled = false;
     }
   }
 
@@ -325,12 +386,14 @@ export function startMarks(neo: NeoApiV3) {
     unreadable = new Set();
     drawn.clear();
     blame.clear();
+    busy.clear();
     here = null;
     active = null;
     stopComposing(false);
     clearTimeout(redrawTimer);
     clearTimeout(blameTimer);
-    say('');
+    warn('');
+    tell('');
   };
 
   neo.on('book-open', async ({ bookId: opened }) => {
@@ -341,9 +404,8 @@ export function startMarks(neo: NeoApiV3) {
       if (bookId !== opened) return;
       marks = listed.chapters;
       unreadable = new Set(listed.unreadable);
-      if (listed.unreadable.length) console.warn('hoard: unreadable marks files', listed.unreadable);
     } catch (err) {
-      failed(err);
+      warn(`This book's comments could not be read: ${message(err)}. Open the book again to retry.`);
     }
     redrawAll();
   });
