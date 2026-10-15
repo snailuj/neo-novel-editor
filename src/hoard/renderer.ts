@@ -5,12 +5,14 @@
 //
 // For the library's history it tells the main half when the caret moves into another
 // chapter and when a book closes, so each asks for a commit once the last save lands,
-// and it runs Keep Library History from the Plugins menu.
+// and it runs Keep Library History from the Plugins menu. A librarian edit holds its
+// chapter and sits between two commits (git/librarian.ts); window.hoard.librarian runs one.
 //
 // The writer's comments are drawn on the page and listed in a Comments section beside
 // the manuscript (marks/window.ts), which needs API 3's side sections. The wiki
 // (wiki/window.ts) imports pages, opens the wiki book and follows links into it, which
 // needs API 4's open.
+import { startLibrarian } from './git/librarian.ts';
 import { startMarks } from './marks/window.ts';
 import { startWiki } from './wiki/window.ts';
 
@@ -44,6 +46,7 @@ NeoPlugins.register({
     const gitStatus = () => neo.invoke('git.status');
     const marks = startMarks(neo);
     const wiki = startWiki(neo);
-    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki }) });
+    const librarian = startLibrarian(neo);
+    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, librarian }) });
   },
 });
