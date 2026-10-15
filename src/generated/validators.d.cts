@@ -2,6 +2,7 @@
 import type { ErrorObject } from 'ajv';
 import type { HighlightV1 } from './highlight-v1.js';
 import type { HoardPingV1 } from './ipc/hoard-ping-v1.js';
+import type { ManifestRecordV1 } from './manifest-record-v1.js';
 import type { PlaceV1 } from './place-v1.js';
 import type { PluginManifestV1 } from './plugin-manifest-v1.js';
 
@@ -12,5 +13,6 @@ export interface Validator<T> {
 
 export const validateHighlightV1: Validator<HighlightV1>;
 export const validateHoardPingV1: Validator<HoardPingV1>;
+export const validateManifestRecordV1: Validator<ManifestRecordV1>;
 export const validatePlaceV1: Validator<PlaceV1>;
 export const validatePluginManifestV1: Validator<PluginManifestV1>;
