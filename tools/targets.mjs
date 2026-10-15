@@ -17,6 +17,13 @@ export const bundles = [
     options: { format: 'cjs', platform: 'node', target: 'es2024', external: ['electron'] },
   },
   {
+    name: 'search-worker',
+    entry: 'src/hoard/search/worker.ts',
+    outfile: 'hoard/search-worker.cjs',
+    // the main half starts it as a utility process on the first search (search/client.ts)
+    options: { format: 'cjs', platform: 'node', target: 'es2024', external: ['electron'] },
+  },
+  {
     name: 'textconv',
     entry: 'tools/git/neo-textconv.js',
     outfile: 'hoard/textconv.cjs',

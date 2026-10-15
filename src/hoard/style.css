@@ -107,3 +107,26 @@ body[data-hoard-wiki] .chapter-body p { text-indent: 0; text-align: start; hyphe
 }
 .hoard-wiki-missing { color: var(--muted); text-decoration: underline dotted; }
 .hoard-wiki-empty { font-size: 12px; color: var(--muted); }
+
+/* Search beside the book: a field, where to look, a line saying what was found, and the
+   results in a group per book, each a button with the words around the match. */
+.hoard-search { margin-inline: 12px; }
+.hoard-search-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.hoard-search-label { flex-basis: 100%; font-size: 11px; color: var(--muted); }
+.hoard-search-field { flex: 1 1 10em; min-block-size: 32px; font: inherit; font-size: 13px; }
+.hoard-search-scope { min-block-size: 32px; font: inherit; font-size: 12px; }
+.hoard-search .hoard-status { font-size: 12px; color: var(--muted); }
+.hoard-search-book { margin-block: 12px 4px; font-size: 12px; }
+.hoard-search-list { list-style: none; margin: 0; padding: 0; }
+.hoard-search-hit {
+  display: block; inline-size: 100%; min-block-size: 44px; padding: 6px 4px; text-align: start;
+  background: none; border: none; border-radius: 4px; color: inherit; font: inherit; font-size: 12px; cursor: pointer;
+}
+.hoard-search-hit:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.hoard-search-hit:focus-visible, .hoard-search-field:focus-visible, .hoard-search-scope:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.hoard-search-where { display: block; font-size: 11px; color: var(--muted); }
+.hoard-search-words { display: block; overflow-wrap: anywhere; }
+.hoard-search-words mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; }
+::highlight(hoard-wiki-found) { background-color: color-mix(in srgb, var(--accent) 35%, transparent); }
