@@ -4,7 +4,8 @@
 //   _meta/MANIFEST.jsonl, and hoard is found from any page that came from it;
 // - a page whose vault path and bytes hoard's manifest records is held by hoard, also
 //   when hoard recorded it under another path or as a git source; one whose path it
-//   records with other bytes is an older copy; any other page is not hoard's;
+//   records with other bytes is an older copy; any other page, and every page inside
+//   hoard itself, is not hoard's;
 // - a manifest that does not read is reported, and then nothing counts as hoard's.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -63,6 +64,7 @@ test('a page hoard recorded with the same bytes is held by hoard, with other byt
   assert.equal(index.verdict(at('Writing/_db/char_kell.md'), sha('kell')), 'through-hoard');
   assert.equal(index.verdict(at('Elsewhere/Renamed.md'), sha('moved bytes')), 'through-hoard');
   assert.equal(index.verdict(at('Writing/New.md'), sha('new')), null);
+  assert.equal(index.verdict(path.join(hoard, 'lore', 'Kell.md'), sha('kell')), null, 'hoard\'s own page is never hoard\'s source');
   assert.equal(index.verdict(path.join(path.parse(vault).root, 'no-vault-here', 'x.md'), sha('kell')), 'through-hoard');
   assert.equal(index.verdict(path.join(path.parse(vault).root, 'no-vault-here', 'y.md'), sha('y')), null);
 });

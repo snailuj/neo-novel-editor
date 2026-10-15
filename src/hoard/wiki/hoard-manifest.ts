@@ -37,6 +37,7 @@ export class HoardIndex {
   /** Hashes recorded for each vault-relative path. */
   readonly #byPath = new Map<string, Set<string>>();
   readonly #hashes = new Set<string>();
+  readonly #roots: string[] = [];
   /** Each manifest that did not read, with why. */
   readonly problems: string[] = [];
 
@@ -44,6 +45,7 @@ export class HoardIndex {
   static read(roots: Iterable<string>, log: (level: Level, message: string, data?: unknown) => void): HoardIndex {
     const index = new HoardIndex();
     for (const root of new Set(roots)) {
+      index.#roots.push(path.resolve(root));
       const file = path.join(root, '_meta', 'MANIFEST.jsonl');
       let records;
       try {
@@ -67,8 +69,13 @@ export class HoardIndex {
     return index;
   }
 
-  /** What hoard holds of this page of an old vault, given its bytes' SHA-256; null for nothing. */
+  /**
+   * What hoard holds of this page of an old vault, given its bytes' SHA-256; null for
+   * nothing, and always for hoard's own pages, whose bytes may be a source's.
+   */
   verdict(file: string, sha256: string): HoardVerdict | null {
+    const full = path.resolve(file);
+    if (this.#roots.some((root) => !path.relative(root, full).startsWith('..') && !path.isAbsolute(path.relative(root, full)))) return null;
     if (this.#hashes.has(sha256)) return 'through-hoard';
     const root = vaultRoot(file);
     if (root === null) return null;
