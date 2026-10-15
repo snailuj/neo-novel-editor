@@ -118,6 +118,7 @@ function startWiki(host: NeoMainHost, layer: GitLayer, marks: MarkStore): void {
     marks,
     head: () => layer.head(),
     wrote: (name) => layer.wrote(name),
+    commit: (part) => layer.commitNow(part === 'author' ? 'import-author' : 'import'),
     log: host.log.bind(host),
   });
   host.handle('wiki.pages', () => wiki.pages());
@@ -156,7 +157,6 @@ function startWiki(host: NeoMainHost, layer: GitLayer, marks: MarkStore): void {
       await messageBox({ type: 'warning', message: 'The import stopped.', detail: `${why}\n\nWhat was written stays, and importing the same files again finishes it.` });
       return { outcome: 'failed', message: why };
     }
-    await layer.commitNow('import');
     const n = applied.imported.length;
     const kept = applied.keptAsText ? ` ${applied.keptAsText} CriticMarkup mark${applied.keptAsText === 1 ? ' stays' : 's stay'} in the text as written, because ${applied.keptAsText === 1 ? 'it' : 'they'} cannot be a mark here.` : '';
     const done = await messageBox({

@@ -102,13 +102,15 @@ test('picked pages come into the wiki, open in NEO, and their links are followed
     const [harbour, tides] = wiki.order;
     expect([wiki.titles[harbour], wiki.titles[tides]]).toEqual(['Harbour', 'Tide Tables']);
     expect(wiki.kinds[harbour]).toBe('unnumbered');
-    expect(await page.evaluate((id) => [...document.querySelectorAll(`.chapter[data-id="${id}"] .chapter-body p`)].map((p) => p.textContent), tides))
-      .toEqual(['# Tide Tables', 'High water at the [[Harbour|harbour]].', '- [[Nowhere]]']);
+    // the page is NEO's HTML: each block a paragraph with its class and its own id
+    expect(await page.evaluate((id) => [...document.querySelectorAll(`.chapter[data-id="${id}"] .chapter-body p`)]
+      .map((p) => [p.className, p.textContent, /^[0-9a-f]{6}$/.test(p.dataset.block ?? '')]), tides))
+      .toEqual([['wiki-h1', 'Tide Tables', true], ['', 'High water at the [[Harbour|harbour]].', true], ['wiki-li', '[[Nowhere]]', true]]);
     expect(await page.evaluate(() => [document.body.hasAttribute('data-hoard-wiki'), document.body.classList.contains('no-dropcap')])).toEqual([true, true]);
 
-    // the comment came in on its words, and the import is one commit
+    // the comment came in on its words, and the import is the librarian's commit
     await expect.poll(() => drawnText(page, 'comment')).toEqual(['harbour wall']);
-    expect(git(library, 'log', '--format=%s')).toContain('Pages imported to the wiki');
+    expect(git(library, 'log', '--format=%s|%an')).toContain('Pages imported to the wiki|Librarian');
     const sidecar = JSON.parse(readFileSync(path.join(library, '.neo', wiki.id, 'chapters', `${harbour}.json`), 'utf8'));
     expect(sidecar.marks.map((m) => [m.kind, m.thread[0].body])).toEqual([['comment', 'Which side?']]);
 
@@ -128,7 +130,7 @@ test('picked pages come into the wiki, open in NEO, and their links are followed
 
     // leaving the wiki puts the drop cap back as it was; the wiki remembers the caret on
     // another page than the one followed to below
-    await caretIn(page, '- [[Nowhere]]');
+    await caretIn(page, '[[Nowhere]]');
     await page.evaluate(() => backToShelf());
     expect(await page.evaluate(() => [document.body.hasAttribute('data-hoard-wiki'), document.body.classList.contains('no-dropcap')])).toEqual([false, dropcapBefore]);
 

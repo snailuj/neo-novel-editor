@@ -7,7 +7,8 @@
 // accept, comment and resolve in the pane).
 //
 // The pane reads a page through the main half, from its chapter file, so it shows the
-// page as last saved. It never takes the focus from the manuscript: only a click or a
+// page as last saved, kept to its paragraphs, their wiki classes and NEO's inline
+// formatting (pageBlocks). It never takes the focus from the manuscript: only a click or a
 // key inside the pane moves the focus, and then it stays in the pane.
 import { PageHistory } from './history.ts';
 import { linksIn } from './links.ts';
@@ -28,11 +29,18 @@ const button = (className: string, text: string) => {
   return b;
 };
 
-// The text of each paragraph of a page's HTML, read inertly: nothing in it runs or loads.
-function paragraphsOf(html: string): string[] {
+// What the pane keeps of a page's HTML: the paragraphs with their wiki classes and
+// data, and NEO's own inline formatting. Anything else is left out for its text, so a
+// page read from disk can never put a script, a style or a live link in the window.
+const BLOCK_CLASS = /^(?:wiki-[a-z0-9-]+|scene-break)$/;
+const BLOCK_DATA = ['depth', 'n', 'task', 'callout', 'lang', 'head', 'block'];
+const INLINE = new Set(['B', 'I', 'U', 'S', 'EM', 'STRONG', 'CODE']);
+
+function pageBlocks(html: string): HTMLTemplateElement {
+  // read inertly: nothing in it runs or loads
   const inert = document.createElement('template');
   inert.innerHTML = html;
-  return [...inert.content.querySelectorAll('p')].map((p) => p.textContent ?? '');
+  return inert;
 }
 
 export function startWikiPane(neo: NeoApiV4, o: { resolve: () => Resolver; editInBook: (chId: string) => Promise<void> }) {
@@ -64,28 +72,58 @@ export function startWikiPane(neo: NeoApiV4, o: { resolve: () => Resolver; editI
     empty.hidden = !!history.current;
   };
 
+  // Text with its [[links]] as buttons to their pages, or marked missing.
+  const linked = (text: string, pages: Resolver): Node[] => {
+    const out: Node[] = [];
+    let at = 0;
+    for (const link of linksIn([text])) {
+      out.push(document.createTextNode(text.slice(at, link.off)));
+      const words = text.slice(link.off, link.off + link.len);
+      const chId = pages.get(link.target);
+      if (chId) {
+        const go = button('hoard-wiki-link', words);
+        go.addEventListener('click', () => { open(chId); });
+        out.push(go);
+      } else {
+        const gone = el('span', 'hoard-wiki-missing', words);
+        gone.title = `No wiki page is called “${link.target}”.`;
+        out.push(gone);
+      }
+      at = link.off + link.len;
+    }
+    out.push(document.createTextNode(text.slice(at)));
+    return out;
+  };
+
+  const copyInline = (from: Node, to: Node, pages: Resolver, inCode: boolean) => {
+    for (const child of from.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        const text = child.textContent ?? '';
+        if (inCode) to.appendChild(document.createTextNode(text));
+        else for (const node of linked(text, pages)) to.appendChild(node);
+      } else if (child instanceof Element) {
+        if (INLINE.has(child.tagName)) {
+          const kept = document.createElement(child.tagName.toLowerCase());
+          copyInline(child, kept, pages, inCode || child.tagName === 'CODE');
+          to.appendChild(kept);
+        } else {
+          copyInline(child, to, pages, inCode);
+        }
+      }
+    }
+  };
+
   const render = (page: PageRead) => {
     const pages = o.resolve();
     title.textContent = page.title;
-    body.replaceChildren(...paragraphsOf(page.html).map((text) => {
+    body.replaceChildren(...[...pageBlocks(page.html).content.querySelectorAll('p')].map((source) => {
       const line = el('p', 'hoard-wiki-line');
-      let at = 0;
-      for (const link of linksIn([text])) {
-        line.append(text.slice(at, link.off));
-        const words = text.slice(link.off, link.off + link.len);
-        const chId = pages.get(link.target);
-        if (chId) {
-          const go = button('hoard-wiki-link', words);
-          go.addEventListener('click', () => { open(chId); });
-          line.append(go);
-        } else {
-          const gone = el('span', 'hoard-wiki-missing', words);
-          gone.title = `No wiki page is called “${link.target}”.`;
-          line.append(gone);
-        }
-        at = link.off + link.len;
+      for (const name of source.classList) if (BLOCK_CLASS.test(name)) line.classList.add(name);
+      for (const key of BLOCK_DATA) {
+        const value = source.getAttribute(`data-${key}`);
+        if (value !== null) line.setAttribute(`data-${key}`, value);
       }
-      line.append(text.slice(at));
+      copyInline(source, line, pages, line.classList.contains('wiki-code'));
       return line;
     }));
   };
