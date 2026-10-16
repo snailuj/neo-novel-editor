@@ -67,6 +67,16 @@ async function select(page, words) {
   }, words);
 }
 
+// The side pane slides in (a CSS transition on #side-pane), and a click aimed while it
+// moves lands outside the window, so a test clicks in it only once it stands still.
+async function paneSettled(page) {
+  await expect(page.locator('#side-pane')).toHaveClass(/\bopen\b/);
+  await page.waitForFunction(() => {
+    const pane = document.getElementById('side-pane');
+    return pane.getAnimations().length === 0 && pane.getBoundingClientRect().right <= innerWidth + 0.5;
+  });
+}
+
 async function ready(page) {
   await page.waitForFunction(() => !!window.hoard);
   await expect.poll(() => page.evaluate(() => window.hoard.gitStatus().then((s) => s.state))).toBe('tracked');
@@ -175,6 +185,7 @@ test('a comment made in the Wiki pane is drawn there and is the wiki book\'s own
       getSelection().removeAllRanges();
       getSelection().addRange(range);
     });
+    await paneSettled(page);
     await page.locator('.hoard-pane-add').click({ force: true });
     await page.locator('#hoard-pane-compose-text').fill('Why west?');
     await page.locator('#hoard-pane-compose-text').press('Control+Enter');
@@ -188,6 +199,7 @@ test('a comment made in the Wiki pane is drawn there and is the wiki book\'s own
     await cardIn.locator('textarea').fill('Because of the sunset.');
     await cardIn.locator('textarea').press('Control+Enter');
     await expect.poll(() => readMarks(library, wikiId)[0].thread.map((e) => e.body)).toEqual(['Why west?', 'Because of the sunset.']);
+    await paneSettled(page);
     await page.locator(`.hoard-pane-marks .hoard-mark[data-mark="${made.id}"] button[data-action="Resolve"]`).click({ force: true });
     await expect.poll(() => readMarks(library, wikiId)[0].state).toBe('resolved');
     await expect.poll(() => page.evaluate(() => CSS.highlights.has('hoard-pane-comment'))).toBe(false);
