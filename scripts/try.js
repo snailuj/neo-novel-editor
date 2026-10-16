@@ -11,6 +11,9 @@
 // side by side. Quit the trial when you're done. Happy with it: npm run bundle.
 // Stops with a plain sentence (and changes nothing) when something isn't right.
 
+// room for files iCloud never hands over: each holds a thread (see copy)
+process.env.UV_THREADPOOL_SIZE = '64';
+
 const { execFileSync, spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -97,41 +100,58 @@ try { settings = JSON.parse(fs.readFileSync(path.join(userData, 'settings.json')
 const realLibrary = settings.libraryDir || path.join(os.homedir(), 'Documents', 'NEO Library');
 const library = path.join(home, 'NEO Library');
 
-// a copy of the books, read only from the real library; the daily backups
-// stay behind, and a file that won't copy (one still in iCloud) is skipped
+// a copy of the books, read only from the real library. The backups, past
+// exports and sync leftovers stay behind. A file still in iCloud, or one
+// iCloud or Syncthing is holding, can keep a read waiting for good: one that
+// isn't on this Mac is skipped, and one that hasn't copied in a few seconds
+// is given up on.
+const LEFT_BEHIND = new Set(['Backups', 'Exports', '_duplicates']);
+const leftover = (name) => /\.sync-conflict-|^\.|\.icloud$|\.tmp$/.test(name);
 let skipped = 0;
-function copy(from, to) {
+function copyFile(a, b) {
+  const st = fs.statSync(a);
+  if (st.size > 0 && st.blocks === 0) return Promise.reject(new Error('in iCloud'));
+  let timer;
+  return Promise.race([
+    fs.promises.copyFile(a, b),
+    new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error('waiting')), 8000); })
+  ]).finally(() => clearTimeout(timer));
+}
+async function copy(from, to) {
   fs.mkdirSync(to, { recursive: true });
+  const jobs = [];
   for (const e of fs.readdirSync(from, { withFileTypes: true })) {
-    if (e.name === 'Backups' && from === realLibrary) continue;
+    if ((from === realLibrary && LEFT_BEHIND.has(e.name)) || leftover(e.name)) continue;
     const a = path.join(from, e.name);
     const b = path.join(to, e.name);
-    try {
-      if (e.isDirectory()) copy(a, b);
-      else if (e.isFile()) fs.copyFileSync(a, b);
-    } catch { skipped++; }
+    if (e.isDirectory()) jobs.push(copy(a, b));
+    else if (e.isFile()) jobs.push(copyFile(a, b).catch(() => { skipped++; }));
   }
+  await Promise.all(jobs);
 }
-if (fresh) {
-  say('Starting from an empty library, as a new writer would.');
-  fs.mkdirSync(library, { recursive: true });
-} else if (fs.existsSync(path.join(realLibrary, 'library.json'))) {
-  say('Copying your library for the trial (your real books aren\'t changed)…');
-  copy(realLibrary, library);
-  if (skipped) say(`${skipped} file${skipped === 1 ? '' : 's'} couldn't be copied (still in iCloud?) and were left out of the trial.`);
-} else {
-  say('No library found to copy, so the trial starts empty.');
-  fs.mkdirSync(library, { recursive: true });
-}
+(async () => {
+  if (fresh) {
+    say('Starting from an empty library, as a new writer would.');
+    fs.mkdirSync(library, { recursive: true });
+  } else if (fs.existsSync(path.join(realLibrary, 'library.json'))) {
+    say('Copying your library for the trial (your real books aren\'t changed)…');
+    await copy(realLibrary, library);
+    if (skipped) say(skipped === 1 ? '1 file couldn\'t be copied (still in iCloud?) and was left out of the trial.' : `${skipped} files couldn't be copied (still in iCloud?) and were left out of the trial.`);
+  } else {
+    say('No library found to copy, so the trial starts empty.');
+    fs.mkdirSync(library, { recursive: true });
+  }
 
-// the trial's own settings: yours (language, page color), pointed at the copy
-fs.mkdirSync(path.join(home, 'settings'), { recursive: true });
-fs.writeFileSync(path.join(home, 'settings', 'settings.json'), JSON.stringify({ ...settings, libraryDir: library }, null, 2));
+  // the trial's own settings: yours (language, page color), pointed at the copy
+  fs.mkdirSync(path.join(home, 'settings'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'settings', 'settings.json'), JSON.stringify({ ...settings, libraryDir: library }, null, 2));
 
-say('Opening the trial. Its window bar says "(trial copy)". Quit it when you\'re done.');
-const electron = require(path.join(appDir, 'node_modules', 'electron'));
-const child = spawn(electron, ['.'], { cwd: appDir, stdio: 'inherit', env: { ...process.env, NEO_TRY_DIR: home } });
-child.on('exit', () => {
-  console.log('\n✅ Trial closed. Your real NEO and books weren\'t touched, and nothing was sent to GitHub.');
-  console.log('   Happy with it?  npm run bundle   Want another look?  npm run try\n');
-});
+  say('Opening the trial. Its window bar says "(trial copy)". Quit it when you\'re done.');
+  const electron = require(path.join(appDir, 'node_modules', 'electron'));
+  const child = spawn(electron, ['.'], { cwd: appDir, stdio: 'inherit', env: { ...process.env, NEO_TRY_DIR: home } });
+  child.on('exit', () => {
+    console.log('\n✅ Trial closed. Your real NEO and books weren\'t touched, and nothing was sent to GitHub.');
+    console.log('   Happy with it?  npm run bundle   Want another look?  npm run try\n');
+    process.exit(0); // (a read iCloud never answered would keep this waiting)
+  });
+})();
