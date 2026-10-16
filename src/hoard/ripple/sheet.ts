@@ -134,8 +134,9 @@ export function buildSheet(cases: SheetCase[], seen?: Map<string, Set<string>>):
 
 /**
  * Adds, per case, the roster's list joined with the first `extra` pages of each other
- * single-method list that the roster lacks. Every page in a union was on the sheet, so
- * the ticks already score it. Its packet is estimated pro rata from the roster's.
+ * single-method list that the roster lacks, and with each pair of them. Every page in a
+ * union was on the sheet, so the ticks already score it. Its packet is estimated pro
+ * rata from the roster's.
  */
 export function withUnions(key: Key, extra: number): Key {
   return {
@@ -143,16 +144,20 @@ export function withUnions(key: Key, extra: number): Key {
     cases: key.cases.map((c) => {
       const roster = c.lists.find((l) => l.method === 'roster');
       if (!roster) return c;
-      const unions = c.lists.filter((l) => l !== roster && !l.method.startsWith('blend')).map((l): KeyList => {
-        const pages = [...roster.pages, ...l.pages.filter((p) => !roster.pages.includes(p)).slice(0, extra)];
+      const singles = c.lists.filter((l) => l !== roster && !l.method.startsWith('blend'));
+      const join = (fills: KeyList[]): KeyList => {
+        const pages = [...roster.pages];
+        for (const fill of fills) pages.push(...fill.pages.filter((p) => !pages.includes(p)).slice(0, extra));
         return {
-          method: `roster + ${extra} ${l.method}`,
+          method: `roster + ${extra} ${fills.map((f) => f.method).join(' + ')}`,
           pages,
           packetChars: Math.round(roster.packetChars * pages.length / (roster.pages.length || 1)),
           pastCaught: 0,
         };
-      });
-      return { ...c, lists: [...c.lists, ...unions] };
+      };
+      // each model alone, then each pair, the second taking its N after the first's
+      const pairs = singles.flatMap((a, i) => singles.slice(i + 1).map((b) => [a, b]));
+      return { ...c, lists: [...c.lists, ...singles.map((l) => join([l])), ...pairs.map(join)] };
     }),
   };
 }

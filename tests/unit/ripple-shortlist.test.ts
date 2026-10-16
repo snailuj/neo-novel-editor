@@ -253,6 +253,10 @@ test('a union adds another list\'s first pages the roster lacks, and leaves blen
   const union = lists.find((l) => l.method === 'roster + 2 embedding m')!;
   assert.deepEqual(union.pages, ['a.md', 'b.md', 'c.md', 'd.md']);
   assert.equal(union.packetChars, 2000);
+  const pair = withUnions({ note: '', cases: [{ ...key.cases[0]!, lists: [...key.cases[0]!.lists,
+    { method: 'lexical', pages: ['c.md', 'f.md', 'g.md'], packetChars: 1000, pastCaught: 0 }] }] }, 2).cases[0]!.lists
+    .find((l) => l.method === 'roster + 2 embedding m + lexical')!;
+  assert.deepEqual(pair.pages, ['a.md', 'b.md', 'c.md', 'd.md', 'f.md', 'g.md'], 'the second list takes its 2 after the first');
   assert.ok(!lists.some((l) => l.method.includes('blend m') && l.method.startsWith('roster +')));
   assert.equal(key.cases[0]!.lists.length, 3, 'the key itself is unchanged');
 });
