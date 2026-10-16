@@ -3,6 +3,7 @@
 // through NEO's own import as one chapter per day with every word kept; a block that
 // changed since review is never written; a re-run replaces what the last run wrote.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -10,7 +11,7 @@ import path from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
-import { applySheet, bookText } from '../../../src/librarian/blocks/apply.ts';
+import { applySheet, blockPicks, bookText } from '../../../src/librarian/blocks/apply.ts';
 import type { Judged } from '../../../src/librarian/blocks/judge.ts';
 import { type Row, rowsFor } from '../../../src/librarian/blocks/sheet.ts';
 import { splitBlocks } from '../../../src/librarian/blocks/split.ts';
@@ -143,6 +144,23 @@ test('a wiki_page that is not one path segment is refused', () => {
   const rows = sheet();
   for (const r of rows) if (r.label === 'writing') r.wiki_page = '../escape';
   assert.throws(() => applySheet(vault(), rows, tempDir(), {}), /wiki_page/);
+});
+
+test('picks name each included block by lines under the whole file\'s hash, once per home', () => {
+  const dir = vault();
+  const { picks, missing } = blockPicks(dir, sheet());
+  assert.deepEqual(missing, []);
+  const sha = createHash('sha256').update(readFileSync(path.join(dir, 'Daily', '2026-01-02 Week 1.md'))).digest('hex');
+  const day1 = picks.filter((p) => p.path === 'Daily/2026-01-02 Week 1.md');
+  assert.ok(day1.every((p) => p.src_sha256 === sha));
+  assert.deepEqual(day1.map((p) => [p.start, p.end, p.kind, p.target]), [
+    [7, 7, 'morning-pages', '2026-01-02'],
+    [9, 10, 'morning-pages', '2026-01-02'],
+    [13, 13, 'writing', '2026-01-02-Week-1-Later-(snippets)'],
+    [13, 13, 'morning-pages', '2026-01-02'],
+    [15, 17, 'morning-pages', '2026-01-02'],
+  ]);
+  assert.ok(day1.every((p) => p.why.length > 0));
 });
 
 test('bookText strips links, comments and inline embeds but keeps every word', () => {

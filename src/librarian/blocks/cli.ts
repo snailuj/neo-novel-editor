@@ -2,11 +2,12 @@
 //
 //   npm run blocks -- classify --vault DIR --out SHEET.csv [--already LIST] [--judge CMD]
 //                     [--votes N] [--jobs N] [--pages FILE] [PAGE...]
-//   npm run blocks -- apply --vault DIR --sheet SHEET.csv --out DIR [--path-prefix P]
+//   npm run blocks -- apply --vault DIR --sheet SHEET.csv --out DIR [--path-prefix P] [--picks FILE]
 //
 // classify splits each page into blocks and writes the review sheet, after every page so
 // a stopped run loses nothing; a re-run judges only blocks the sheet lacks. apply writes
-// the wiki pages, the Morning Pages book and the import list from the reviewed sheet.
+// the wiki pages, the Morning Pages book and the import list from the reviewed sheet, and
+// with --picks a JSONL file of line-range picks for the old vault's import to cut itself.
 // Summaries go to stdout, log records to stderr as JSON lines. Exit: 0 done, 1 apply
 // found blocks that changed since review, 2 usage, 3 error.
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -14,7 +15,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { pathToFileURL } from 'node:url';
 import { getLogger, setLogSink } from '../log.ts';
-import { applySheet } from './apply.ts';
+import { applySheet, blockPicks } from './apply.ts';
 import { commandJudge, judgePage, type JudgeFn } from './judge.ts';
 import { ruleLabel } from './rules.ts';
 import { type Already, mergeRows, parseAlready, readSheet, type Row, rowsFor, writeSheet } from './sheet.ts';
@@ -31,11 +32,11 @@ export interface Io {
 class UsageError extends Error {}
 
 const USAGE = 'usage: blocks classify --vault DIR --out SHEET [--already LIST] [--judge CMD] [--votes N] [--jobs N] [--pages FILE] [PAGE...]\n'
-  + '       blocks apply --vault DIR --sheet SHEET --out DIR [--path-prefix P]';
+  + '       blocks apply --vault DIR --sheet SHEET --out DIR [--path-prefix P] [--picks FILE]';
 
 const VALUES: Record<string, string[]> = {
   classify: ['--vault', '--out', '--already', '--judge', '--votes', '--jobs', '--pages'],
-  apply: ['--vault', '--sheet', '--out', '--path-prefix'],
+  apply: ['--vault', '--sheet', '--out', '--path-prefix', '--picks'],
 };
 const REQUIRED: Record<string, string[]> = { classify: ['--vault', '--out'], apply: ['--vault', '--sheet', '--out'] };
 
@@ -136,6 +137,12 @@ function apply(values: Map<string, string>, io: Io): number {
   const rows = readSheet(readFileSync(at(values.get('--sheet')!), 'utf8'));
   const prefix = values.get('--path-prefix');
   const result = applySheet(at(values.get('--vault')!), rows, at(values.get('--out')!), prefix === undefined ? {} : { pathPrefix: prefix });
+  const picksFile = values.get('--picks');
+  if (picksFile !== undefined) {
+    const { picks } = blockPicks(at(values.get('--vault')!), rows);
+    writeAtomic(at(picksFile), picks.map((p) => JSON.stringify(p)).join('\n') + (picks.length ? '\n' : ''));
+    io.stdout(`Wrote ${picks.length} picks to ${picksFile}.\n`);
+  }
   io.stdout(`Wrote ${result.written.length} files. ${result.unresolved} rows still marked check for the wiki.\n`);
   for (const m of result.missing) io.stdout(`changed since review: ${m.page} lines ${m.lines} (block ${m.block})\n`);
   return result.missing.length ? 1 : 0;

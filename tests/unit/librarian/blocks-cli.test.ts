@@ -81,8 +81,11 @@ test('classify, review, re-run, apply', async () => {
   assert.equal(rows[3]!.wiki_page, 'Otter-Notes');
 
   const out = path.join(dir, 'out');
-  const applied = await run(['apply', '--vault', vault, '--sheet', sheet, '--out', out, '--path-prefix', 'E:\\Private\\out'], dir);
+  const applied = await run(['apply', '--vault', vault, '--sheet', sheet, '--out', out, '--path-prefix', 'E:\\Private\\out', '--picks', 'picks.jsonl'], dir);
   assert.equal(applied.code, 0, applied.stderr);
+  const picks = readFileSync(path.join(dir, 'picks.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { kind: string; target: string });
+  assert.deepEqual(picks.map((p) => p.kind).sort(), ['morning-pages', 'morning-pages', 'writing', 'writing', 'writing']);
+  assert.ok(picks.some((p) => p.target === 'Otter-Notes'));
   assert.ok(existsSync(path.join(out, 'wiki', 'Otter-Notes.md')));
   assert.ok(existsSync(path.join(out, 'Morning Pages.md')));
   assert.match(readFileSync(path.join(out, 'import-list.txt'), 'utf8'), /^E:\\Private\\out\\wiki\\/);

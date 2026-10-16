@@ -2,6 +2,7 @@
 // Wiki, and the included Morning Pages one Markdown book for NEO's own Import (a `# date`
 // heading per day makes a chapter each). The vault is only read. A block whose text no
 // longer matches its id (the page changed since review) is not written.
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { getLogger } from '../log.ts';
@@ -23,6 +24,50 @@ export interface ApplyResult {
 }
 
 const RECORD = '.blocks-apply.json';
+
+/** One block for the old vault's import to cut by line range, guarded by the file's hash. */
+export interface Pick {
+  path: string;
+  src_sha256: string;
+  start: number;
+  end: number;
+  kind: 'writing' | 'morning-pages';
+  /** The wiki page, or for morning-pages the book's chapter. */
+  target: string;
+  why: string;
+}
+
+/**
+ * The sheet's decisions as line-range picks, in sheet order: a block bound for the wiki
+ * and the book gives one pick for each. A block no longer in its page gives none and is
+ * named in `missing`.
+ */
+export function blockPicks(vault: string, rows: readonly Row[]): { picks: Pick[]; missing: ApplyResult['missing'] } {
+  const pages = new Map<string, { sha: string; blocks: Map<string, Block> } | null>();
+  const picks: Pick[] = [];
+  const missing: ApplyResult['missing'] = [];
+  for (const row of rows) {
+    if (row.wiki !== 'yes' && !row.book) continue;
+    if (!pages.has(row.page)) {
+      const file = path.join(vault, row.page);
+      const bytes = existsSync(file) ? readFileSync(file) : null;
+      pages.set(row.page, bytes && {
+        sha: createHash('sha256').update(bytes).digest('hex'),
+        blocks: new Map(splitBlocks(bytes.toString('utf8')).map((b) => [b.id, b])),
+      });
+    }
+    const page = pages.get(row.page);
+    const block = page?.blocks.get(row.block);
+    if (!page || !block) {
+      missing.push({ page: row.page, block: row.block, lines: row.lines });
+      continue;
+    }
+    const base = { path: row.page, src_sha256: page.sha, start: block.start, end: block.end, why: row.reason || row.label };
+    if (row.wiki === 'yes') picks.push({ ...base, kind: 'writing', target: row.wiki_page || defaultDest(row.page, row.heading) });
+    if (row.book) picks.push({ ...base, kind: 'morning-pages', target: row.book });
+  }
+  return { picks, missing };
+}
 const ONE_SEGMENT = /^(?!\.\.?$)[^\\/\0]+$/;
 
 /** A Morning Pages line as prose: links become their text; comments and embeds' marks go. */
