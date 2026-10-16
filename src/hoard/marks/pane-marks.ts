@@ -10,6 +10,7 @@
 // plugin's own (hoard-pane-*), not the host's, which mark the open book only. Nothing
 // here moves the focus out of the manuscript: only a click or a key in the pane does.
 import type { Mark, MarkState } from '../../generated/hoard-marks-v1.js';
+import { claim, submitKey } from '../keys.ts';
 import { anchorAt } from './anchor.ts';
 import { isSuggestion } from './model.ts';
 import { drawChapter, label, NAMES, orderForList, type Drawn } from './view.ts';
@@ -41,10 +42,6 @@ const when = (at: string) => new Date(at).toLocaleString(undefined, { day: 'nume
 const who = (w: string) => (w === 'librarian' ? 'Librarian' : 'You');
 const clip = (text: string, n = 140) => (text.length > n ? `${text.slice(0, n - 1)}…` : text);
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
-const submitKey = (e: KeyboardEvent) => e.key === 'Enter' && (e.ctrlKey || e.metaKey);
-// A Ctrl+Enter a box sends with goes no further: NEO toggles fullscreen on one that
-// reaches the document, whether or not something took it first.
-const keep = (e: KeyboardEvent) => { e.preventDefault(); e.stopPropagation(); };
 
 /** The range of a line's text from off to off + len, counted as textContent counts. */
 export function rangeIn(line: Element, off: number, len: number): Range | null {
@@ -146,7 +143,7 @@ export function startPaneMarks(neo: NeoApiV4, pane: Pane) {
       return neo.invoke('marks.reply', { bookId, chId, markId: mark.id, body });
     }, 'Reply added.', 'Your reply was not saved');
     replyButton.addEventListener('click', send);
-    reply.addEventListener('keydown', (e) => { if (submitKey(e)) { keep(e); send(); } });
+    reply.addEventListener('keydown', (e) => { if (submitKey(e)) { claim(e); send(); } });
     actions.append(replyButton);
     const stateTo = (state: MarkState, text: string, done: string) => {
       const b = button('', text);
@@ -271,7 +268,7 @@ export function startPaneMarks(neo: NeoApiV4, pane: Pane) {
   addButton.addEventListener('click', commentOnSelection);
   composeAdd.addEventListener('click', () => { submit(); });
   composeCancel.addEventListener('click', stopComposing);
-  composerText.addEventListener('keydown', (e) => { if (submitKey(e)) { keep(e); submit(); } });
+  composerText.addEventListener('keydown', (e) => { if (submitKey(e)) { claim(e); submit(); } });
   // NEO takes an Esc from a side pane before the box sees it (capture on the document)
   // and puts the writer back on the page; seen first, from the window, it also stops
   // composing, and NEO still goes back to the page

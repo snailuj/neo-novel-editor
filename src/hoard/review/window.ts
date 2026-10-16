@@ -16,6 +16,7 @@ import type { Mark } from '../../generated/hoard-marks-v1.js';
 import { anchorAt, anchorPoint } from '../marks/anchor.ts';
 import { isSuggestion } from '../marks/model.ts';
 import type { startLibrarian } from '../git/librarian.ts';
+import { claim, submitKey } from '../keys.ts';
 import type { CardAction, startMarks } from '../marks/window.ts';
 import { reviewSuggestion } from './rules.ts';
 
@@ -314,9 +315,8 @@ export function startReview(neo: NeoApiV4, marks: Marks, o: { pages: () => Pages
   composeCancel.addEventListener('click', () => stopComposing(true));
   for (const box of [text, note]) {
     box.addEventListener('keydown', (e) => {
-      // Enter sends from the words, Ctrl+Enter from the note, and the key goes no further:
-      // NEO toggles fullscreen on a Ctrl+Enter that reaches the document
-      if (e.key === 'Enter' && (box === text ? !e.shiftKey : (e.ctrlKey || e.metaKey))) { e.preventDefault(); e.stopPropagation(); submit(); }
+      // Enter sends from the words, Ctrl+Enter from the note
+      if (e.key === 'Enter' && (box === text ? !e.shiftKey : submitKey(e))) { claim(e); submit(); }
     });
   }
   // NEO takes an Esc from a side pane before the boxes see it (capture on the document)
