@@ -1,8 +1,8 @@
 // npm run ripple:shortlist -- --vault <hoard> --out <folder> [--source <relpath> ...]
 //   [--pick N --rulings <RIPPLE.jsonl>] [--git] [--k 30] [--embed <model> ...]
 // Writes sheet.md (each candidate once, to tick by hand) and key.json to --out, never
-// inside the vault. `--score <folder>` then reads the ticks back into score.md. A spike
-// for choosing ripple's shortlist method; not part of the app.
+// inside the vault. `--score <folder> [--ticks <sheet.md>]` then reads the ticks back into
+// score.md. A spike for choosing ripple's shortlist method; not part of the app.
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -123,6 +123,7 @@ async function main(argv: string[]): Promise<void> {
       k: { type: 'string', default: '30' },
       embed: { type: 'string', multiple: true },
       score: { type: 'string' },
+      ticks: { type: 'string' },
       pooling: { type: 'string', default: 'mean' },
       dtype: { type: 'string', default: 'q8' },
       device: { type: 'string' },
@@ -132,7 +133,9 @@ async function main(argv: string[]): Promise<void> {
   if (values.score) {
     const dir = path.resolve(values.score);
     const key = JSON.parse(readFileSync(path.join(dir, 'key.json'), 'utf8')) as Key;
-    const score = scoreSheet(readFileSync(path.join(dir, 'sheet.md'), 'utf8'), key);
+    // --ticks scores this run's lists against a sheet ticked for an earlier run.
+    const ticks = values.ticks ? path.resolve(values.ticks) : path.join(dir, 'sheet.md');
+    const score = scoreSheet(readFileSync(ticks, 'utf8'), key);
     writeFileSync(path.join(dir, 'score.md'), renderScore(score));
     for (const t of score.totals) log(`${t.method}: caught ${t.caught} of ${t.ticked} ticked, ${t.size} listed`);
     log(`wrote ${path.join(dir, 'score.md')}`);

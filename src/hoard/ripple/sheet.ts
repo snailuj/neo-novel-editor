@@ -132,7 +132,10 @@ export interface ListScore {
   /** Ticked pages the list held. */
   caught: number;
   ticked: number;
+  /** Pages of the list the sheet never showed, as when a later run is scored on older ticks. */
+  unrated: number;
   recall: number;
+  /** Over the pages the sheet showed. */
   precision: number;
   packetChars: number;
 }
@@ -142,30 +145,44 @@ export interface Score {
   totals: ListScore[];
 }
 
-const ROW = /^- \[([ xX])\] \[\[[^\]]*\]\] \(([^)]*)\)/;
+// A row ends its path with "): " and the gloss follows, so a path holding brackets, as
+// hoard's `Era-(project).md` hubs do, still reads whole.
+const ROW = /^- \[([ xX])\] \[\[[^\]]*\]\] \((.+?)\): /;
+const CASE = /^## Case \d+: (.*)$/;
 
-/** The author's ticks against each list: recall over ticked pages, precision over the list. */
+/**
+ * The author's ticks against each list: recall over ticked pages, precision over the
+ * pages shown. Cases pair by source, so a sheet ticked for one run scores another's key.
+ */
 export function scoreSheet(sheet: string, key: Key): Score {
-  const ticks: Set<string>[] = [];
+  const sections = new Map<string, { shown: Set<string>; ticked: Set<string> }>();
+  let current: { shown: Set<string>; ticked: Set<string> } | null = null;
   for (const line of sheet.split('\n')) {
-    if (/^## Case \d+:/.test(line)) ticks.push(new Set());
+    const heading = CASE.exec(line);
+    if (heading) {
+      current = { shown: new Set(), ticked: new Set() };
+      sections.set(heading[1]!.trim(), current);
+      continue;
+    }
     const m = ROW.exec(line);
-    if (m && m[1] !== ' ' && ticks.length) ticks.at(-1)!.add(m[2]!);
-  }
-  if (ticks.length !== key.cases.length) {
-    throw new Error(`the sheet has ${ticks.length} case sections and the key ${key.cases.length}`);
+    if (!m || !current) continue;
+    current.shown.add(m[2]!);
+    if (m[1] !== ' ') current.ticked.add(m[2]!);
   }
   const rate = (a: number, b: number): number => (b ? a / b : 0);
-  const cases = key.cases.map((c, i) => {
-    const ticked = ticks[i]!;
+  const cases = key.cases.map((c) => {
+    const section = sections.get(c.source);
+    if (!section) throw new Error(`the sheet has no case for ${c.source} (its cases: ${[...sections.keys()].join(", ") || "none"})`);
+    const { shown, ticked } = section;
     return {
       source: c.source,
       ticked: ticked.size,
       lists: c.lists.map((l): ListScore => {
         const caught = l.pages.filter((p) => ticked.has(p)).length;
+        const unrated = l.pages.filter((p) => !shown.has(p)).length;
         return {
-          method: l.method, size: l.pages.length, caught, ticked: ticked.size,
-          recall: rate(caught, ticked.size), precision: rate(caught, l.pages.length), packetChars: l.packetChars,
+          method: l.method, size: l.pages.length, caught, ticked: ticked.size, unrated,
+          recall: rate(caught, ticked.size), precision: rate(caught, l.pages.length - unrated), packetChars: l.packetChars,
         };
       }),
     };
@@ -175,8 +192,9 @@ export function scoreSheet(sheet: string, key: Key): Score {
     const ls = cases.flatMap((c) => c.lists.filter((l) => l.method === method));
     const sum = (f: (l: ListScore) => number): number => ls.reduce((s, l) => s + f(l), 0);
     return {
-      method, size: sum((l) => l.size), caught: sum((l) => l.caught), ticked: sum((l) => l.ticked),
-      recall: rate(sum((l) => l.caught), sum((l) => l.ticked)), precision: rate(sum((l) => l.caught), sum((l) => l.size)),
+      method, size: sum((l) => l.size), caught: sum((l) => l.caught), ticked: sum((l) => l.ticked), unrated: sum((l) => l.unrated),
+      recall: rate(sum((l) => l.caught), sum((l) => l.ticked)),
+      precision: rate(sum((l) => l.caught), sum((l) => l.size - l.unrated)),
       packetChars: Math.round(rate(sum((l) => l.packetChars), ls.length)),
     };
   });
@@ -186,9 +204,9 @@ export function scoreSheet(sheet: string, key: Key): Score {
 function table(rows: ListScore[]): string[] {
   const pct = (x: number): string => `${Math.round(x * 100)}%`;
   return [
-    '| Method | Ticked pages caught | Recall | Precision | Packet chars |',
-    '| --- | --- | --- | --- | --- |',
-    ...rows.map((l) => `| ${l.method} | ${l.caught} of ${l.ticked} | ${pct(l.recall)} | ${pct(l.precision)} | ${l.packetChars} |`),
+    '| Method | Ticked pages caught | Recall | Precision | Not on the sheet | Packet chars |',
+    '| --- | --- | --- | --- | --- | --- |',
+    ...rows.map((l) => `| ${l.method} | ${l.caught} of ${l.ticked} | ${pct(l.recall)} | ${pct(l.precision)} | ${l.unrated} | ${l.packetChars} |`),
   ];
 }
 

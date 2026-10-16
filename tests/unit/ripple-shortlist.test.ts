@@ -10,7 +10,7 @@ import {
   blend, buildCorpus, card, chunks, embeddingRank, inRoster, lexicalRank, packetChars, rosterChars, rosterRank,
   type Embed, type Source,
 } from '../../src/hoard/ripple/shortlist.ts';
-import { buildSheet, pastTargets, pickSources, scoreSheet } from '../../src/hoard/ripple/sheet.ts';
+import { buildSheet, pastTargets, pickSources, scoreSheet, type Key } from '../../src/hoard/ripple/sheet.ts';
 import { readSnapshot } from '../../src/hoard/ripple/snapshot.ts';
 import { isolateGitConfig, tempDir } from './git-support.ts';
 
@@ -182,6 +182,20 @@ test('scoring reads the ticks back against each list', () => {
   assert.equal(by['roster']!.precision, 0.25);
   assert.equal(score.totals.find((t) => t.method === 'roster')!.caught, 1);
   assert.throws(() => scoreSheet('# nothing\n', key), /case/);
+});
+
+// Rule: a tick counts for the page on its row whatever characters the page's path holds,
+// and a list scored against another run's sheet says how many of its pages were never read.
+test('scoring reads a path with brackets, aligns cases by source, and counts pages the sheet never showed', () => {
+  const key: Key = { note: '', cases: [{
+    source: sourceRel, pastTargets: [], wholeRosterPacketChars: 1,
+    lists: [{ method: 'm', pages: ['projects/Saltmere-(era).md', 'lore/Wren-Calder.md', 'lore/Unshown.md'], packetChars: 1, pastCaught: 0 }],
+  }] };
+  const sheet = `## Case 1: ${sourceRel}\n\n- [x] [[Saltmere-(era)]] (projects/Saltmere-(era).md): An era (the first).\n- [x] [[Wren-Calder]] (lore/Wren-Calder.md): \n`;
+  const l = scoreSheet(sheet, key).cases[0]!.lists[0]!;
+  assert.equal(l.caught, 2);
+  assert.equal(l.unrated, 1);
+  assert.throws(() => scoreSheet('## Case 1: sources/Other.md\n', key), /sources\/Other\.md/);
 });
 
 // Rule: a case is read as the vault stood before its source came in, so a link the
