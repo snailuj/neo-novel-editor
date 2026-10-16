@@ -12,6 +12,10 @@ import { isolateGitConfig, log, tempDir, tempLibrary } from './git-support.ts';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 
+// What close commits is the rule under test, not its time limit: git on a busy Windows
+// machine can take over a second for the four calls a commit makes.
+const CLOSE_WAIT = 30_000;
+
 function counting(git: Git) {
   const calls: string[] = [];
   return {
@@ -50,7 +54,11 @@ function layerFor(t: { after(fn: () => void): void }, git: Git, library: string)
     textconv: { command: `"${process.execPath}" "${path.join(root, 'tools', 'git', 'neo-textconv.js')}"` },
     log: (level, message, data) => lines.push({ level, message, data }),
   });
-  t.after(() => layer.stop());
+  // A commit still running when the test ends would hold files in the folder being removed.
+  t.after(async () => {
+    layer.stop();
+    await layer.drained();
+  });
   return { layer, lines };
 }
 
@@ -91,13 +99,13 @@ test('an untracked library gets no commits from saves until Keep Library History
   assert.equal((await layer.open()).state, 'untracked');
   layer.wrote();
   layer.request('book-close');
-  await layer.close(1000);
+  await layer.close(CLOSE_WAIT);
   assert.equal((await lib.git.run(lib.library, ['status'], {}).catch(() => null)), null, 'still no repository');
   const started = await layer.keepHistory();
   assert.equal(started.started, true);
   assert.equal(layer.status().state, 'tracked');
   lib.write('book-fox-1/chapters/c1.html', '<p>One.</p><p>Two.</p><p>Three.</p>');
-  await layer.close(1000);
+  await layer.close(CLOSE_WAIT);
   assert.deepEqual(await log(lib.git, lib.library, '%(trailers:key=Neo-Checkpoint,valueonly)'), ['close', 'start']);
 });
 
@@ -108,7 +116,7 @@ test('a failing commit is logged once, not on every pause', async (t) => {
   const { layer, lines } = layerFor(t, lib.git, lib.library);
   await layer.open();
   await layer.drained();
-  await layer.close(1000);
+  await layer.close(CLOSE_WAIT);
   const failures = lines.filter((l) => l.message === 'git.checkpoint.failed');
   assert.equal(failures.length, 1);
   assert.equal(failures[0].level, 'error');
