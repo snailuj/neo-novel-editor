@@ -114,7 +114,8 @@ Built 15 October 2026 (roadmap step 8, Suggest-And-Review); the plan is `port-pl
 - Edit Directly lets the caret's page go until the book closes; the next open is in suggest mode again.
 - Insertions are drawn on the letter beside their point. A closed mark is never stale.
 - The Wiki pane draws the shown page's open marks on its own lines (CSS highlights `hoard-pane-*`, since the host's mark only the open book) and lists them under the page (`marks/pane-marks.ts`). From the pane the writer comments on selected words, replies, resolves and reopens, and withdraws a waiting suggestion; each writes only the page's marks sidecar, which the wiki book then shows too.
-- Not built yet: suggesting and accepting from the pane, which need the pane to write a closed book's page, and editing in the pane. The plan sequences them on HTML pages.
+- From the pane, on the librarian's pages, Suggest change goes to the same review (`review/flow.ts`, shared with the book), and the cards offer Accept Anyway, Ask the Librarian, Accept and Withdraw as they do in the book. A change the pane makes is worked out on a copy of the page (`wiki/edit.ts`: the browser's parser, the host's paragraph and offset counting, only the changed paragraph's bytes replaced) and written whole by the main half (`wiki.edit`, `wiki/write.ts`) only while the file still holds what the pane read. The librarian's change runs inside `GitLayer.around`, and one the library check refuses leaves the page as it was. The pane writes nothing while the wiki book is the open book, whose window owns its files.
+- Not built yet: editing in the pane. The plan has it within paragraphs, on HTML pages.
 
 ## Librarian watcher as built
 

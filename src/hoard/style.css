@@ -137,12 +137,12 @@ body[data-hoard-wiki] .chapter-body p { text-indent: 0; text-align: start; hyphe
 .hoard-pane-marks { margin-block-start: 12px; }
 .hoard-pane-marks-head { display: flex; align-items: center; gap: 8px; margin-inline: 12px; }
 .hoard-pane-marks-title { flex: 1; margin: 0; font-size: 11px; font-weight: normal; color: var(--muted); }
-.hoard-pane-add {
+.hoard-pane-add, .hoard-pane-suggest {
   background: none; border: none; color: var(--muted); font-size: 11px;
   min-block-size: 44px; min-inline-size: 44px; opacity: 0;
 }
-.hoard-wiki-pane:hover .hoard-pane-add, .hoard-pane-add:focus-visible { opacity: 1; }
-.hoard-pane-add:hover { color: var(--accent); }
+.hoard-wiki-pane:hover :is(.hoard-pane-add, .hoard-pane-suggest), .hoard-pane-add:focus-visible, .hoard-pane-suggest:focus-visible { opacity: 1; }
+.hoard-pane-add:hover, .hoard-pane-suggest:hover { color: var(--accent); }
 .hoard-pane-composer { cursor: default; }
 .hoard-pane-marks textarea:focus-visible, .hoard-pane-marks button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .hoard-pane-marks .s-actions button { min-block-size: 44px; min-inline-size: 44px; }

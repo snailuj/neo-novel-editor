@@ -55,7 +55,7 @@ NeoPlugins.register({
     const wiki = startWiki(neo);
     const librarian = startLibrarian(neo);
     const review = startReview(neo, marks, { pages: wiki.index, librarian });
-    const paneMarks = startPaneMarks(neo, wiki.pane);
+    const paneMarks = startPaneMarks(neo, wiki.pane, { pages: wiki.index });
     const search = startSearch(neo, {
       bookId: () => wiki.pages()?.bookId ?? null,
       show: (chId, at) => wiki.pane.open(chId, at ?? undefined),
