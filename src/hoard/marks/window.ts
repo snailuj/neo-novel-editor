@@ -14,6 +14,7 @@
 import type { Mark, MarkState } from '../../generated/hoard-marks-v1.js';
 import { alignBlame } from '../git/align.ts';
 import type { BlameLine } from '../git/blame.ts';
+import { linksIn } from '../wiki/links.ts';
 import { anchorAt } from './anchor.ts';
 import { drawChapter, label, markAt, NAMES, orderForList, type Drawn, type Place } from './view.ts';
 
@@ -54,7 +55,23 @@ const clip = (text: string, n = 140) => (text.length > n ? `${text.slice(0, n - 
 const submitKey = (e: KeyboardEvent) => e.key === 'Enter' && (e.ctrlKey || e.metaKey);
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
-export function startMarks(neo: NeoApiV3) {
+// A comment's words, each [[link]] in them a button that shows its page.
+function linkedWords(text: string, follow?: (target: string) => void): Node[] {
+  if (!follow) return [document.createTextNode(text)];
+  const out: Node[] = [];
+  let at = 0;
+  for (const link of linksIn([text])) {
+    out.push(document.createTextNode(text.slice(at, link.off)));
+    const go = button('hoard-wiki-link', text.slice(link.off, link.off + link.len));
+    go.addEventListener('click', () => follow(link.target));
+    out.push(go);
+    at = link.off + link.len;
+  }
+  out.push(document.createTextNode(text.slice(at)));
+  return out;
+}
+
+export function startMarks(neo: NeoApiV3, o: { follow?: (target: string) => void } = {}) {
   const pane = neo.addPane({ id: 'comments', title: 'Comments', side: true });
   let bookId: string | null = null;
   let marks: Record<string, Mark[]> = {};
@@ -172,7 +189,9 @@ export function startMarks(neo: NeoApiV3) {
     if (shown !== item.shown) {
       item.thread.replaceChildren(...mark.thread.map((entry) => {
         const p = el('p', 'hoard-entry');
-        p.append(el('span', 'hoard-who', `${who(entry.who)} · ${when(entry.at)}`), el('span', 'hoard-body', entry.body));
+        const body = el('span', 'hoard-body');
+        body.append(...linkedWords(entry.body, o.follow));
+        p.append(el('span', 'hoard-who', `${who(entry.who)} · ${when(entry.at)}`), body);
         return p;
       }));
       item.shown = shown;
@@ -438,6 +457,8 @@ export function startMarks(neo: NeoApiV3) {
   return {
     addComment,
     show: () => pane.show(),
+    /** The marks read again from their files, after another part of the plugin added some. */
+    relist: () => relist(),
     /** For tests and the console: what the window holds and draws now. */
     state: () => structuredClone({
       bookId, marks, active, here,

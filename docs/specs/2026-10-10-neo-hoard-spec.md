@@ -110,6 +110,19 @@ Built 15 October 2026 (roadmap step 6, Librarian-Can-Search); the plan is `port-
 - The first search logs the worker's numbers (books, chapters, paragraphs, units held, files read, ms) at info, later ones at debug, so a slow library shows before a persistent index is built.
 - Not built yet: tags, backlinks and frontmatter fields as kinds of search; Notes pages, the Outline, Darlings and snapshots; an index on disk.
 
+## Librarian watcher as built
+
+Built 16 October 2026 (roadmap step 7, Librarian-Watches-Edits, the half beside the commit pair); the plan is `port-plan/plans/librarian-watches-edits.md` in the project files. It is hoard's companion (delta, extract, note, suppress) under `src/hoard/companion/`, driven by `chapter-saved` instead of polling files.
+
+- The window keeps each saved chapter of any book but the wiki as it was at its first save there and as last saved, and hands both to the main half once the writer has left it: the caret moved into another chapter, or the book closed. Nothing is read while the writer is still in the chapter, so no comment appears under the words being written.
+- A paragraph is new writing when its words, white space folded, were not in the chapter before, each copy counted (`delta.ts`): a moved or reformatted paragraph is not new.
+- In those paragraphs a wiki page is found by its title or an alias from its frontmatter, as a whole phrase in any case, hyphens and spaces alike, three letters at least, the longest match winning (`mentions.ts`). A typed `[[link]]` and inline code are left out. A curly apostrophe matches a straight one and a no-break space a space, since NEO types both.
+- Each page found gets one librarian comment on its first mention, in hoard's words (`finding.ts`): "[[Kraken]]: matched as a bare name in your prose (a guess, not a link you typed)." A page whose frontmatter says `draft_status: pantsing` is "an offering from the pantsing shelf" first. No advice and no continuity.
+- The chapter's own findings, open or resolved, are what it has been told about, so a page is flagged once per chapter. Nothing else is stored for that.
+- Stop Flagging This Page (Plugins menu), on the librarian's comment at the caret or picked in the Comments section, resolves it and quiets its page in every book; Flag This Page Again undoes that. Quiet pages are kept in `.neo/companion.json` by the page's chapter id (`schemas/hoard-companion-v1.json`). A quiet file or a marks file that does not read is reported and never taken for empty or written over.
+- A `[[link]]` in any comment's words is a button that shows its page in the Wiki section.
+- Not built yet: continuity findings (hoard's canon lists candidate pairs only, for a person or a semantic reviewer); watching the wiki's own pages; a button for Stop Flagging on the comment's card (step 8's card actions); committing the librarian's comments under its own name (they ride the next checkpoint, each mark saying who made it, until the commit pair is in).
+
 ## Suggestion and review model
 
 The author's requirement, in their words (10 October 2026):

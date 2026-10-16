@@ -10,7 +10,9 @@
     { "id": "import-wiki-list", "title": "Import List to Wiki…" },
     { "id": "open-wiki", "title": "Edit Wiki as a Book" },
     { "id": "follow-link", "title": "Follow Link" },
-    { "id": "search-library", "title": "Search Library…" }
+    { "id": "search-library", "title": "Search Library…" },
+    { "id": "stop-flagging", "title": "Stop Flagging This Page" },
+    { "id": "flag-again", "title": "Flag This Page Again" }
   ],
   "style": "style.css"
 }

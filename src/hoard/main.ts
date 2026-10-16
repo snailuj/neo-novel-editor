@@ -3,7 +3,8 @@
 // landed write feeds the checkpoints, the window asks for one on a chapter switch or a
 // book closing, and quitting makes one last commit. It keeps the writer's marks in
 // sidecars under .neo/, which the history commits with the chapters, brings hoard's
-// Markdown pages into the wiki book, and searches the library's files. The library's
+// Markdown pages into the wiki book, searches the library's files, and reads each
+// chapter the writer leaves for wiki pages it names (companion/). The library's
 // repository is looked at after activate returns, so NEO's start never waits on git.
 import { app, BrowserWindow, dialog, utilityProcess } from 'electron';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -14,6 +15,7 @@ import {
   validateHoardMarksReplyV1, validateHoardMarksStateV1, validateHoardPingV1, validateHoardSearchQueryV1,
 } from '../generated/validators.cjs';
 import { checked } from './checked.ts';
+import { startCompanion } from './companion/main.ts';
 import { textconvCommand } from './git/blame.ts';
 import { GitLayer, resolveSettings } from './git/layer.ts';
 import { createGit } from './git/runner.ts';
@@ -135,7 +137,8 @@ export function activate(host: NeoMainHost): void {
   host.handle('ping', ping);
   const layer = startHistory(host);
   const marks = startMarks(host, layer);
-  startWiki(host, layer, marks);
+  const wiki = startWiki(host, layer, marks);
+  startCompanion(host, layer, marks, wiki);
   startSearch(host);
   layer.open().catch((err: unknown) => host.log('error', 'git.open failed', String(err)));
 }

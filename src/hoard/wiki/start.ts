@@ -106,7 +106,7 @@ async function runImport(host: NeoMainHost, wiki: WikiStore, from: 'pages' | 'li
   return { outcome: 'imported', bookId: applied.bookId, imported: applied.imported, open: done.response === 0 };
 }
 
-export function startWiki(host: NeoMainHost, layer: GitLayer, marks: MarkStore): void {
+export function startWiki(host: NeoMainHost, layer: GitLayer, marks: MarkStore): WikiStore {
   const wiki = new WikiStore({
     library: () => host.paths.library(),
     marks,
@@ -121,4 +121,5 @@ export function startWiki(host: NeoMainHost, layer: GitLayer, marks: MarkStore):
     const { openBookId, from = 'pages' } = checked('wiki.import', validateHoardWikiImportV1, payload);
     return runImport(host, wiki, from, openBookId);
   });
+  return wiki;
 }
