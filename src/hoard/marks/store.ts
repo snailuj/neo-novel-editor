@@ -89,6 +89,12 @@ export class MarkStore {
     return out;
   }
 
+  /** One chapter's marks, after any write to it queued before; throws MarkFileError for a file that does not read. */
+  async chapter(bookId: string, chId: string): Promise<Mark[]> {
+    const file = sidecarPath(this.#o.library(), bookId, chId);
+    return this.#queued(file, async () => this.#read(file).marks);
+  }
+
   async add(req: AddRequest, who: MarkWho): Promise<{ id: string; marks: Mark[] }> {
     const file = sidecarPath(this.#o.library(), req.bookId, req.chId);
     return this.#queued(file, async () => {

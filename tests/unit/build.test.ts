@@ -99,13 +99,13 @@ test('packaging builds first', () => {
 test('clean build', () => {
   const dir = sandbox();
   const log = build(dir);
-  for (const file of ['renderer.js', 'main.cjs', 'plugin.json', 'textconv.cjs', 'style.css']) {
+  for (const file of ['renderer.js', 'main.cjs', 'plugin.json', 'search-worker.cjs', 'textconv.cjs', 'style.css']) {
     assert.ok(statSync(path.join(dir, 'plugins', 'hoard', file)).size > 0, `${file} is written`);
   }
   const events = log.trim().split('\n').map((line) => JSON.parse(line));
   assert.deepEqual(
     events.map((e) => e.name).sort(),
-    ['main', 'manifest', 'renderer', 'style', 'textconv'],
+    ['main', 'manifest', 'renderer', 'search-worker', 'style', 'textconv'],
   );
   // The bundled textconv, which blame runs in the packaged app, lines a chapter as tools/git's does.
   const chapter = path.join(dir, 'chapter.html');
