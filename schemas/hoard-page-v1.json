@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "One wiki page's provenance, version 1, kept at .neo/<bookId>/pages/<chId>.json in the library: the Markdown file it was imported from, that file's SHA-256 when it came in, and its frontmatter as read. The page's words are the chapter's; NEO never shows the frontmatter.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "source", "frontmatter", "imported"],
+  "properties": {
+    "version": { "const": 1 },
+    "source": {
+      "title": "PageSource",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "name", "sha256"],
+      "properties": {
+        "path": { "description": "The file as it was picked, an absolute path on the machine that imported it.", "type": "string", "minLength": 1 },
+        "name": { "description": "The file's name without .md: the page's title when it came in.", "type": "string", "minLength": 1 },
+        "sha256": { "description": "SHA-256 of the file's bytes, in hex.", "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "frontmatter": { "description": "The frontmatter as read, dates as written; null for a page with none.", "oneOf": [{ "type": "object" }, { "type": "null" }] },
+    "imported": { "description": "An ISO 8601 time in UTC.", "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" }
+  }
+}

@@ -167,19 +167,19 @@ describe('plugin discovery', { concurrency: 1 }, () => {
   // manifest is not judged
   test('a manifest for a newer plugin API than this NEO knows is refused with a reason that names both versions', () => {
     const app = appFolder({
-      'plugins/ahead': plugin('ahead', { apiVersion: 4 }),
+      'plugins/ahead': plugin('ahead', { apiVersion: 5 }),
       'plugins/far-ahead': plugin('far-ahead', { apiVersion: 12, newKey: true }),
       'plugins/zero': plugin('zero', { apiVersion: 0 }),
       'plugins/fraction': plugin('fraction', { apiVersion: 2.5 }),
       'plugins/text': plugin('text', { apiVersion: '4' }),
-      'plugins/current': plugin('current', { apiVersion: 3 })
+      'plugins/current': plugin('current', { apiVersion: 4 })
     });
     const { logs } = wire({ appRoot: app });
     assert.deepEqual(ids(), ['current']);
     assert.equal(logs.length, 5, logs.join('\n'));
     const line = (name) => logs.find((l) => l.includes(path.join(app, 'plugins', name))) || `nothing logged for ${name}`;
-    assert.match(line('ahead'), /needs plugin API 4\b.*\bthis NEO knows up to 3\b/);
-    assert.match(line('far-ahead'), /needs plugin API 12\b.*\bthis NEO knows up to 3\b/);
+    assert.match(line('ahead'), /needs plugin API 5\b.*\bthis NEO knows up to 4\b/);
+    assert.match(line('far-ahead'), /needs plugin API 12\b.*\bthis NEO knows up to 4\b/);
     for (const name of ['zero', 'fraction', 'text']) assert.match(line(name), /does not match the manifest format/, name);
   });
 
@@ -1334,14 +1334,14 @@ describe('the window half', () => {
   });
 
   test('a listed plugin written for an API this NEO does not know is refused', () => {
-    const host = windowHalf([{ id: 'ahead', apiVersion: 4, rendererUrl: 'plugins/ahead/renderer.js', styleUrl: null }]);
+    const host = windowHalf([{ id: 'ahead', apiVersion: 5, rendererUrl: 'plugins/ahead/renderer.js', styleUrl: null }]);
     host.attach();
     assert.deepEqual(host.added.map((el) => [el.tag, el.src]), [['script', 'plugins/ahead/renderer.js']]);
     let activated = false;
-    host.NeoPlugins.register({ id: 'ahead', apiVersion: 4, activate() { activated = true; } });
+    host.NeoPlugins.register({ id: 'ahead', apiVersion: 5, activate() { activated = true; } });
     assert.equal(activated, false);
     assert.equal(host.logged.length, 1);
-    assert.match(host.logged[0], /^plugin ahead: apiVersion 4\b.*knows 1\b.*not activated/);
+    assert.match(host.logged[0], /^plugin ahead: apiVersion 5\b.*knows 1\b.*not activated/);
   });
 
   test('invoke reaches the calling plugin\'s own main half, and a plugin that failed to activate invokes nothing', async () => {
@@ -1844,7 +1844,7 @@ describe('the window half', () => {
 
   test('API 2 adds where, go, replace and highlight; a plugin written for API 1 is handed none of them', () => {
     const { NeoPlugins, neo } = bothApis();
-    assert.deepEqual([...NeoPlugins.apiVersions], [1, 2, 3]);
+    assert.deepEqual([...NeoPlugins.apiVersions], [1, 2, 3, 4]);
     assert.deepEqual(Object.keys(neo.api2).filter((name) => !(name in neo.api1)), ['where', 'go', 'replace', 'highlight']);
     assert.equal(neo.api1.where, undefined);
     assert.equal(neo.api1.go, undefined);
@@ -1863,6 +1863,27 @@ describe('the window half', () => {
     host.NeoPlugins.register({ id: 'three', apiVersion: 3, activate(api) { neo.api3 = api; } });
     assert.deepEqual(Object.keys(neo.api3).filter((name) => !(name in neo.api2)), ['hold']);
     assert.equal(neo.api2.hold, undefined);
+  });
+
+  test('API 4 adds open; a plugin written for API 3 is handed none of it, and a failed plugin opens nothing', async () => {
+    const opened = [];
+    const host = windowHalf([
+      { id: 'three', apiVersion: 3, rendererUrl: 'plugins/three/renderer.js', styleUrl: null },
+      { id: 'four', apiVersion: 4, rendererUrl: 'plugins/four/renderer.js', styleUrl: null },
+      { id: 'gone', apiVersion: 4, rendererUrl: 'plugins/gone/renderer.js', styleUrl: null }
+    ], { openBook: async (id) => { opened.push(id); return id === 'book-there-1'; } });
+    host.attach();
+    const neo = {};
+    host.NeoPlugins.register({ id: 'three', apiVersion: 3, activate(api) { neo.api3 = api; } });
+    host.NeoPlugins.register({ id: 'four', apiVersion: 4, activate(api) { neo.api4 = api; } });
+    host.NeoPlugins.register({ id: 'gone', apiVersion: 4, activate(api) { neo.gone = api; throw new Error('activate fails on purpose'); } });
+    assert.deepEqual(Object.keys(neo.api4).filter((name) => !(name in neo.api3)), ['open']);
+    assert.equal(neo.api3.open, undefined);
+    assert.equal(await neo.api4.open('book-there-1'), true);
+    assert.equal(await neo.api4.open('book-gone-1'), false);
+    assert.equal(await neo.gone.open('book-there-1'), false);
+    assert.deepEqual(opened, ['book-there-1', 'book-gone-1']);
+    for (const bad of [undefined, '', 7, {}]) assert.throws(() => neo.api4.open(bad), { name: 'TypeError' }, String(bad));
   });
 
   test('highlight throws for a name, a list or a place that is not one', () => {

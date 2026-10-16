@@ -1,4 +1,4 @@
-// The plugin API, versions 1 to 3, as types. plugins.js implements the window half
+// The plugin API, versions 1 to 4, as types. plugins.js implements the window half
 // (what activate(neo) receives) and plugins-main.js the main half (what a manifest's
 // `main` entry's activate(host) receives); this file follows them.
 
@@ -216,6 +216,18 @@ interface NeoApiV3 extends Omit<NeoApiV2, 'addPane'> {
   addPane(pane: { id: string; title: string; side?: boolean }): NeoPaneV3;
 }
 
+/** What activate(neo) receives for API 4: API 3, plus open. */
+interface NeoApiV4 extends NeoApiV3 {
+  /**
+   * Opens a book of the library, on a shelf or not, by the shelf's own path: back to the
+   * shelf, which saves and closes the open book (book-close), then the book (book-open).
+   * Resolves true once it is the open book, at once when it already is; false when it
+   * did not open (its book.json does not read, or the plugin failed to activate), which
+   * leaves the writer on the shelf. Throws TypeError for anything but a non-empty string.
+   */
+  open(bookId: string): Promise<boolean>;
+}
+
 interface NeoPluginBase {
   /** The id in the plugin's plugin.json. */
   id: string;
@@ -248,10 +260,15 @@ interface NeoPluginV3 extends NeoPluginBase {
   activate(neo: NeoApiV3): void | Promise<void>;
 }
 
-type NeoPlugin = NeoPluginV1 | NeoPluginV2 | NeoPluginV3;
+interface NeoPluginV4 extends NeoPluginBase {
+  apiVersion: 4;
+  activate(neo: NeoApiV4): void | Promise<void>;
+}
+
+type NeoPlugin = NeoPluginV1 | NeoPluginV2 | NeoPluginV3 | NeoPluginV4;
 
 declare const NeoPlugins: {
-  readonly apiVersions: readonly (1 | 2 | 3)[];
+  readonly apiVersions: readonly (1 | 2 | 3 | 4)[];
   register(plugin: NeoPlugin): void;
   /**
    * true when a value is a place: an object with chId a non-empty string, pIdx, off and

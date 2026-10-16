@@ -721,7 +721,7 @@ test('bad input', async () => {
 
 test('old API', async () => {
   assert.equal(await js('window.__oldApi.activated'), true);
-  assert.deepEqual(await js('[...NeoPlugins.apiVersions]'), [1, 2, 3]);
+  assert.deepEqual(await js('[...NeoPlugins.apiVersions]'), [1, 2, 3, 4]);
   assert.deepEqual(await js('[typeof window.__oldApi.neo.where, typeof window.__oldApi.neo.go, typeof window.__oldApi.neo.replace, typeof window.__oldApi.neo.highlight]'), ['undefined', 'undefined', 'undefined', 'undefined']);
 });
 
@@ -1105,6 +1105,34 @@ test('hold takes a list of chapter ids', async () => {
   const refused = await js(`[undefined, 'ch', [''], [7], {}]
     .map((v) => { try { window.__probe.neo.hold(v); return 'held'; } catch (err) { return err.name; } })`);
   assert.deepEqual(refused, ['TypeError', 'TypeError', 'TypeError', 'TypeError', 'TypeError']);
+});
+
+// API 4: open takes the writer to another book by the shelf's own path: the
+// open book is saved and closed first, so words typed just before are on
+// disk, and a book on no shelf opens as well as one on a shelf.
+test('open saves the open book and opens another, on a shelf or not', async () => {
+  const [one] = book.chapters;
+  const other = await js(`(async () => {
+    const meta = await window.neo.createBook({ title: 'Off the Shelf' });
+    await window.neo.writeChapter(meta.id, 'ch-off-1', '<p>Not on any shelf.</p>');
+    meta.chapterOrder = ['ch-off-1'];
+    await window.neo.writeBookMeta(meta.id, meta);
+    return meta.id;
+  })()`);
+  assert.equal(await js(`library.shelves.some((s) => s.bookIds.includes(${str(other)}))`), false);
+  await js(`(() => { chapterHTML[${str(one)}] = '<p>Typed just before leaving.</p>'; })()`);
+  await forget();
+  assert.equal(await js(`window.__probe.neo.open(${str(other)})`), true);
+  assert.equal(await js('book.id'), other);
+  assert.deepEqual(await heard('book-close'), [{ bookId: book.id }]);
+  await until(() => chapterFile(one) === '<p>Typed just before leaving.</p>', 'the left book\'s words on disk');
+  await forget();
+  assert.equal(await js(`window.__probe.neo.open(${str(other)})`), true, 'the open book is already open');
+  assert.deepEqual(await heard('book-close'), [], 'and is not closed for it');
+  assert.equal(await js(`window.__probe.neo.open('book-not-there-1')`), false);
+  assert.deepEqual(await js(`[7, '', null].map((v) => { try { window.__probe.neo.open(v); return 'opened'; } catch (err) { return err.name; } })`), ['TypeError', 'TypeError', 'TypeError']);
+  assert.equal(await js(`window.__probe.neo.open(${str(book.id)})`), true);
+  assert.equal(await js('book.id'), book.id);
 });
 
 /* ---------- runner ---------- */

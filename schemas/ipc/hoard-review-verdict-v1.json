@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The librarian's verdict on the writer's suggestion, version 1: accepted once the change is applied, or flagged with the reason it gives as its comment.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "bookId",
+    "chId",
+    "markId",
+    "state"
+  ],
+  "properties": {
+    "bookId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "chId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "markId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "state": {
+      "enum": [
+        "accepted",
+        "flagged"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000
+    }
+  },
+  "if": {
+    "properties": {
+      "state": {
+        "const": "flagged"
+      }
+    }
+  },
+  "then": {
+    "properties": {
+      "reason": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "reason"
+    ]
+  }
+}

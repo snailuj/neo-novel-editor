@@ -12,7 +12,7 @@
     "apiVersion": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 3
+      "maximum": 4
     },
     "renderer": { "$ref": "#/definitions/fileName" },
     "main": { "$ref": "#/definitions/fileName" },

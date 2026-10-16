@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "hoard's own object in NEO's settings.json, version 1. git holds the library history's settings; every field is optional and has a default.",
+  "type": "object",
+  "properties": {
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": { "description": "The git binary; git on the PATH when absent.", "type": "string", "minLength": 1 },
+        "author": { "description": "The author's commit identity; git config's when absent.", "$ref": "#/definitions/identity" },
+        "librarian": { "description": "The librarian's commit identity; Librarian <librarian@neo-hoard.invalid> when absent.", "$ref": "#/definitions/identity" },
+        "idleSeconds": { "description": "Seconds without a save before a commit; 60 when absent.", "type": "number", "minimum": 1 }
+      }
+    }
+  },
+  "definitions": {
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "email"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "email": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

@@ -157,6 +157,33 @@ function guardWrites(profile, onRefuse = () => {}) {
 // Every window event that matters is recorded in globalThis.neoTestWindowEvents, and appended as
 // JSON lines to the file NEO_TEST_WINDOW_LOG names, when it is set: a run can be checked for a
 // window that flashed up without anyone watching the screen.
+// git runs for the hoard plugin's library history, and only as git: by name, with its
+// working folder inside the profile, and with no argument that points it at another
+// folder. It reads a config of the run's own and none of the system's. What it cannot
+// stop: a program git starts itself, such as the chapter textconv the plugin names.
+const GIT_ELSEWHERE = /^(?:-C|--git-dir|--work-tree|--exec-path|--namespace)(?:=|$)/;
+function allowGit(profile, realExecFile) {
+  const roots = [...new Set([path.resolve(profile), fs.realpathSync(profile)])];
+  const insideProfile = (dir) => {
+    if (typeof dir !== 'string') return false;
+    let real;
+    try { real = fs.realpathSync(dir); } catch { return false; }
+    return roots.some((root) => {
+      const rel = path.relative(root, real);
+      return !path.isAbsolute(rel) && rel !== '..' && !rel.startsWith('..' + path.sep);
+    });
+  };
+  const isGit = (file, args, options) => typeof file === 'string' && /^git(?:\.exe)?$/i.test(file)
+    && Array.isArray(args) && !args.some((arg) => typeof arg !== 'string' || GIT_ELSEWHERE.test(arg))
+    && !!options && typeof options === 'object' && insideProfile(options.cwd);
+  const refused = childProcess.execFile;
+  childProcess.execFile = stubbed(function (file, args, options) {
+    return (isGit(file, args, options) ? realExecFile : refused).apply(this, arguments);
+  });
+  process.env.GIT_CONFIG_GLOBAL = path.join(profile, '.gitconfig');
+  process.env.GIT_CONFIG_NOSYSTEM = '1';
+}
+
 function hideWindows() {
   const electron = require('electron');
   const { app } = electron;
@@ -249,25 +276,33 @@ function isolate(profile, {
   // macOS: main.js sets the app's user defaults at every launch, which would write to the
   // developer's own. Nothing is written.
   systemPreferences.setUserDefault = stubbed(() => {});
-  // macOS: email:draft runs osascript. No program starts during a test, by this route.
+  // macOS: email:draft runs osascript. No program starts during a test, by this route,
+  // except git for the hoard plugin's library history (allowGit).
+  const realExecFile = childProcess.execFile;
   refuse(childProcess, 'child_process', {
     names: ['exec', 'execFile', 'spawn', 'fork', 'execSync', 'execFileSync', 'spawnSync'],
     answersAtOnce: () => true
   });
+  allowGit(profile, realExecFile);
   // A worker thread has an fs of its own, which no patch to this one reaches.
   refuse(workerThreads, 'worker_threads', { names: ['Worker'], answersAtOnce: () => true });
 
-  // main.js forks one utility process, the spell worker. No other process starts, by this
-  // route either; that one is the only module the fork is let through for.
+  // main.js forks one utility process, the spell worker, and the hoard plugin one, its
+  // search worker, which reads only the library folder the main half hands it (inside
+  // the profile). No other process starts, by this route either; those two are the only
+  // modules the fork is let through for.
   const fork = utilityProcess.fork;
-  const spellWorker = path.resolve(__dirname, '..', 'spell-worker.js');
-  const isSpellWorker = (modulePath) => {
-    if (path.resolve(String(modulePath)) === spellWorker) return true;
-    try { return fs.realpathSync.native(modulePath) === fs.realpathSync.native(spellWorker); } catch { return false; }
-  };
+  const allowedWorkers = [
+    path.resolve(__dirname, '..', 'spell-worker.js'),
+    path.resolve(__dirname, '..', 'plugins', 'hoard', 'search-worker.cjs'),
+  ];
+  const isAllowedWorker = (modulePath) => allowedWorkers.some((worker) => {
+    if (path.resolve(String(modulePath)) === worker) return true;
+    try { return fs.realpathSync.native(modulePath) === fs.realpathSync.native(worker); } catch { return false; }
+  });
   utilityProcess.fork = stubbed(function (modulePath, ...args) {
-    if (!isSpellWorker(modulePath)) {
-      throw new Error('utilityProcess.fork is disabled in tests, except for spell-worker.js: ' + modulePath);
+    if (!isAllowedWorker(modulePath)) {
+      throw new Error('utilityProcess.fork is disabled in tests, except for spell-worker.js and the hoard search worker: ' + modulePath);
     }
     return fork.call(utilityProcess, modulePath, ...args);
   });

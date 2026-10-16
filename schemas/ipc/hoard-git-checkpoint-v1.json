@@ -1,0 +1,10 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "A checkpoint the window half asks for, version 1: the writer moved to another chapter or closed the book. The window cannot ask for a librarian commit.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reason"],
+  "properties": {
+    "reason": { "enum": ["chapter-switch", "book-close"] }
+  }
+}
