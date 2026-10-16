@@ -719,6 +719,26 @@ test('side sections and tabs share ids, and API 3 takes only the keys it knows',
   assert.equal(await js(`document.querySelectorAll('.plugin-side[data-plugin="probe"]').length`), 1);
 });
 
+test('wide widens the right-hand pane while on, and the page pinned beside it moves over', async () => {
+  const width = () => js(`document.getElementById('side-pane').getBoundingClientRect().width`);
+  const left = () => js(`document.getElementById('paper-scroll').getBoundingClientRect().left`);
+  const narrow = await width();
+  try {
+    await js(`window.__probe.side.wide(true)`);
+    assert.equal(await js(`document.getElementById('side-pane').classList.contains('wide')`), true);
+    assert.ok(await width() > narrow + 100, `${await width()} against ${narrow}`);
+    await js(`document.getElementById('side-pin').click()`);
+    const pinnedWide = await left();
+    await js(`window.__probe.side.wide(false)`);
+    assert.ok(pinnedWide < await left() - 50, `the page moves over further for the pinned wide pane: ${pinnedWide} against ${await left()}`);
+    await js(`document.getElementById('side-pin').click()`);
+    assert.equal(await width(), narrow);
+    assert.equal(await js(`(() => { try { window.__probe.pane.wide(true); return 'widened'; } catch (err) { return err.name; } })()`), 'TypeError');
+  } finally {
+    await js(`window.__probe.side.wide(false)`);
+  }
+});
+
 test('an API 1 plugin asking for a side section gets a tab, as before', async () => {
   try {
     const got = await js(`(() => { const p = window.__oldSide = window.__oldApi.neo.addPane({ id: 'old-side', title: 'Old Side', side: true }); return { keys: Object.keys(p), parent: p.element.parentElement.id }; })()`);
