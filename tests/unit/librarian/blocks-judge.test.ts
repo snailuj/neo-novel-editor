@@ -29,11 +29,18 @@ test('rules label only what is plainly structure', () => {
   assert.deepEqual(got, ['other', null, 'other', 'other', 'other', null, null]);
 });
 
+test('an HTML comment alone is structure', () => {
+  assert.equal(ruleLabel(splitBlocks('<!-- summary-start -->')[0]!)?.label, 'other');
+  assert.equal(ruleLabel(splitBlocks('<!-- a --> but words')[0]!), null);
+});
+
 test('the fallback guess reads the heading and the checkbox', () => {
   const blocks = splitBlocks(PAGE);
   assert.equal(fallbackGuess(blocks[1]!), 'tasks');
   assert.equal(fallbackGuess(blocks[5]!), 'morning-pages');
   assert.equal(fallbackGuess(splitBlocks('Words here.')[0]!), 'other');
+  assert.equal(fallbackGuess(splitBlocks('### 1. Morning Pages\nWords.')[0]!), 'morning-pages');
+  assert.equal(fallbackGuess(splitBlocks('#### 2025-12-30 (from Dec 18 Morning Pages)\nWords.')[0]!), 'other', 'a heading quoting them is not the section');
 });
 
 const reply = (items: [number, string, boolean?][]) =>

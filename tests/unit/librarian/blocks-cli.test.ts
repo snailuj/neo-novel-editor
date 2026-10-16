@@ -59,8 +59,8 @@ test('classify, review, re-run, apply', async () => {
   assert.equal(first.code, 0, first.stderr);
   assert.equal(readFileSync(path.join(dir, 'calls.txt'), 'utf8').length, 4, 'two pages, two votes');
   let rows = readSheet(readFileSync(sheet, 'utf8'));
-  assert.deepEqual(rows.map((r) => [r.page, r.label, r.include]), [
-    ['Daily/2026-01-01.md', 'morning-pages', 'yes'],
+  assert.deepEqual(rows.map((r) => [r.page, r.label, r.wiki]), [
+    ['Daily/2026-01-01.md', 'morning-pages', 'no'],
     ['Daily/2026-01-01.md', 'writing', 'yes'],
     ['Daily/2026-01-01.md', 'tasks', 'no'],
     ['Scratch.md', 'writing', 'yes'],
@@ -70,7 +70,7 @@ test('classify, review, re-run, apply', async () => {
   assert.match(first.stderr, /"logger":"librarian\.blocks\.cli".*Scratch\.md/);
 
   // The author renames a dest; the page gains a block; a re-run judges only that one.
-  rows[3]!.dest = 'Fox-Notes';
+  rows[3]!.wiki_page = 'Fox-Notes';
   writeFileSync(sheet, writeSheet(rows));
   writeFileSync(path.join(vault, 'Scratch.md'), 'The fox again.\n\n- [ ] Shop\n\nA second fox.');
   const second = await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, '--pages', 'pages.txt', 'Scratch.md'], dir);
@@ -78,7 +78,7 @@ test('classify, review, re-run, apply', async () => {
   assert.equal(readFileSync(path.join(dir, 'calls.txt'), 'utf8').length, 5, 'one more call, for the new block only');
   rows = readSheet(readFileSync(sheet, 'utf8'));
   assert.equal(rows.length, 6);
-  assert.equal(rows[3]!.dest, 'Fox-Notes');
+  assert.equal(rows[3]!.wiki_page, 'Fox-Notes');
 
   const out = path.join(dir, 'out');
   const applied = await run(['apply', '--vault', vault, '--sheet', sheet, '--out', out, '--path-prefix', 'E:\\Private\\out'], dir);
@@ -101,7 +101,7 @@ test('with no judge every unruled block is marked to check', async () => {
   const sheet = path.join(dir, 'sheet.csv');
   const r = await run(['classify', '--vault', vault, '--out', sheet, 'Scratch.md'], dir);
   assert.equal(r.code, 0);
-  assert.deepEqual(readSheet(readFileSync(sheet, 'utf8')).map((x) => [x.label, x.include, x.by]), [['other', 'check', 'no-judge'], ['tasks', 'check', 'no-judge']]);
+  assert.deepEqual(readSheet(readFileSync(sheet, 'utf8')).map((x) => [x.label, x.wiki, x.by]), [['other', 'check', 'no-judge'], ['tasks', 'check', 'no-judge']]);
 });
 
 test('apply exits 1 and names a block that changed since review', async () => {

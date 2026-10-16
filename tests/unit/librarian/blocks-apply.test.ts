@@ -81,7 +81,7 @@ test('included writing becomes wiki pages with their sources; nothing else does'
 
 test('rows of several sections joined in one dest keep their order under their headings', () => {
   const rows = sheet();
-  for (const r of rows) if (r.label === 'writing') r.dest = 'Fox-Ideas';
+  for (const r of rows) if (r.label === 'writing') r.wiki_page = 'Fox-Ideas';
   const out = tempDir();
   applySheet(vault(), rows, out, {});
   const text = readFileSync(path.join(out, 'wiki', 'Fox-Ideas.md'), 'utf8');
@@ -123,7 +123,7 @@ test('a block that changed since review is not written, and is named', () => {
 test('rows to check are not written, and are counted', () => {
   const rows = sheet();
   const idea = rows.find((r) => r.preview.startsWith('An idea'))!;
-  idea.include = 'check';
+  idea.wiki = 'check';
   const out = tempDir();
   const result = applySheet(vault(), rows, out, {});
   assert.equal(result.unresolved, 1);
@@ -134,15 +134,15 @@ test('a re-run removes the pages the last run wrote and this one does not', () =
   const out = tempDir();
   const rows = sheet();
   applySheet(vault(), rows, out, {});
-  for (const r of rows) if (r.preview.startsWith('The gull')) r.include = 'no';
+  for (const r of rows) if (r.preview.startsWith('The gull')) r.wiki = 'no';
   applySheet(vault(), rows, out, {});
   assert.deepEqual(readdirSync(path.join(out, 'wiki')), ['2026-01-02-Week-1-Later-(snippets).md']);
 });
 
-test('a dest that is not one path segment is refused', () => {
+test('a wiki_page that is not one path segment is refused', () => {
   const rows = sheet();
-  for (const r of rows) if (r.label === 'writing') r.dest = '../escape';
-  assert.throws(() => applySheet(vault(), rows, tempDir(), {}), /dest/);
+  for (const r of rows) if (r.label === 'writing') r.wiki_page = '../escape';
+  assert.throws(() => applySheet(vault(), rows, tempDir(), {}), /wiki_page/);
 });
 
 test('bookText strips links, comments and inline embeds but keeps every word', () => {

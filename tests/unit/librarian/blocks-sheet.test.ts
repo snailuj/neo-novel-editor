@@ -25,11 +25,12 @@ const judged = (blocks: ReturnType<typeof splitBlocks>, items: [string, boolean?
     return [b.id, { label, pasted: pasted ?? false, reason: `why ${i}`, by: by ?? 'judge', votes: [label] } as Judged];
   }));
 
-test('rows carry the proposal and sensible defaults for include, dest and book', () => {
+test('rows carry the proposal and sensible defaults for wiki, wiki_page and book', () => {
   const blocks = splitBlocks(PAGE);
   const rows = rowsFor(PATH, blocks, judged(blocks, [['morning-pages'], ['writing'], ['tasks'], ['writing', true]]), []);
-  assert.deepEqual(rows.map((r) => [r.proposed, r.label, r.include, r.dest, r.book, r.by]), [
-    ['morning-pages', 'morning-pages', 'yes', '', '2026-01-02', 'judge'],
+  assert.deepEqual(rows.map((r) => [r.proposed, r.label, r.wiki, r.wiki_page, r.book, r.by]), [
+    ['morning-pages', 'morning-pages', 'no', '', '2026-01-02', 'judge'],
+    // writing in Morning Pages goes both ways
     ['writing', 'writing', 'yes', '2026-01-02-Week-1-Morning-Pages-(snippets)', '2026-01-02', 'judge'],
     ['tasks', 'tasks', 'no', '', '', 'judge'],
     // pasted writing is left out by default
@@ -40,18 +41,36 @@ test('rows carry the proposal and sensible defaults for include, dest and book',
   assert.equal(rows[3]!.pasted, 'yes');
 });
 
+test('a Morning Pages section goes to the book whole, whatever its blocks are labelled', () => {
+  const blocks = splitBlocks('## Morning Pages\nRanting.\n\n- [ ] buy milk\n\nTopics:: [[X]]');
+  const rows = rowsFor(PATH, blocks, judged(blocks.slice(0, 2), [['morning-pages'], ['tasks']]), []);
+  assert.deepEqual(rows.map((r) => [r.label, r.wiki, r.book]), [
+    ['morning-pages', 'no', '2026-01-02'],
+    ['tasks', 'no', '2026-01-02'],
+    ['other', 'no', ''], // structure stays out
+  ]);
+});
+
+test('a vote for morning-pages outside the section suggests the book; a vote for writing asks', () => {
+  const blocks = splitBlocks('Free writing here.');
+  const v = new Map([[blocks[0]!.id, { label: 'other', pasted: false, reason: 'r', by: 'votes-differ', votes: ['other', 'morning-pages'] } as Judged]]);
+  assert.deepEqual(rowsFor(PATH, blocks, v, []).map((r) => [r.wiki, r.book]), [['no', '2026-01-02']]);
+  v.set(blocks[0]!.id, { ...v.get(blocks[0]!.id)!, votes: ['other', 'writing'] });
+  assert.deepEqual(rowsFor(PATH, blocks, v, []).map((r) => [r.wiki, r.book, r.wiki_page]), [['check', '', '2026-01-02-Week-1-(snippets)']]);
+});
+
 test('votes that differ, a failed judge and no judge all ask the author', () => {
   const blocks = splitBlocks(PAGE);
   const verdicts = judged(blocks, [['writing', false, 'votes-differ'], ['writing', false, 'judge-failed'], ['tasks'], ['other']]);
   verdicts.delete(blocks[3]!.id);
   const rows = rowsFor(PATH, blocks, verdicts, []);
-  assert.deepEqual(rows.map((r) => [r.include, r.by]), [['check', 'votes-differ'], ['check', 'judge-failed'], ['no', 'judge'], ['check', 'no-judge']]);
+  assert.deepEqual(rows.map((r) => [r.wiki, r.by]), [['check', 'votes-differ'], ['check', 'judge-failed'], ['no', 'judge'], ['check', 'no-judge']]);
 });
 
 test('ruled blocks say so and are never included', () => {
   const blocks = splitBlocks('---\nid: 1\n---\n![[Groceries]]');
   const rows = rowsFor(PATH, blocks, new Map(), []);
-  assert.deepEqual(rows.map((r) => [r.label, r.include, r.by, r.reason]), [['other', 'no', 'rule', 'frontmatter'], ['other', 'no', 'rule', 'embed']]);
+  assert.deepEqual(rows.map((r) => [r.label, r.wiki, r.by, r.reason]), [['other', 'no', 'rule', 'frontmatter'], ['other', 'no', 'rule', 'embed']]);
 });
 
 test('a page or section already on an import list is not proposed again', () => {
@@ -63,12 +82,13 @@ test('a page or section already on an import list is not proposed again', () => 
   ].join('\n'));
   const blocks = splitBlocks(PAGE);
   const rows = rowsFor(PATH, blocks, judged(blocks, [['morning-pages'], ['writing'], ['tasks'], ['writing']]), already);
-  assert.deepEqual(rows.map((r) => r.include), ['yes', 'yes', 'no', 'no']);
+  assert.deepEqual(rows.map((r) => r.wiki), ['no', 'yes', 'no', 'no']);
   assert.match(rows[3]!.reason, /already imported as Story-\(memoir\)/);
   const whole = rowsFor('Other.md', splitBlocks('Words.'), new Map(), already);
-  assert.equal(whole[0]!.include, 'no');
+  assert.equal(whole[0]!.wiki, 'no');
+  assert.equal(rows[3]!.wiki_page, 'Story-(memoir)', 'names the page it is already in');
   assert.match(whole[0]!.reason, /already imported/);
-  assert.equal(rowsFor('Not/Other.md', splitBlocks('Words.'), new Map(), already)[0]!.include, 'check', 'a path matches whole segments only');
+  assert.equal(rowsFor('Not/Other.md', splitBlocks('Words.'), new Map(), already)[0]!.wiki, 'check', 'a path matches whole segments only');
 });
 
 test('a sheet reads back as written, quotes, commas, newlines and all', () => {
@@ -86,14 +106,14 @@ test('a re-run keeps every reviewed row and adds new blocks', () => {
   const blocks = splitBlocks(PAGE);
   const old = rowsFor(PATH, blocks, judged(blocks, [['morning-pages'], ['writing'], ['tasks'], ['writing']]), []);
   old[2]!.label = 'writing';
-  old[2]!.include = 'yes';
-  old[2]!.dest = 'My-Page';
+  old[2]!.wiki = 'yes';
+  old[2]!.wiki_page = 'My-Page';
   const page2 = `${PAGE}\n\nA new line.`;
   const blocks2 = splitBlocks(page2);
   const fresh = rowsFor(PATH, blocks2, judged(blocks2, [['other'], ['other'], ['other'], ['other'], ['writing']]), []);
   const merged = mergeRows(old, fresh);
   assert.equal(merged.length, 5);
-  assert.deepEqual([merged[2]!.label, merged[2]!.include, merged[2]!.dest], ['writing', 'yes', 'My-Page']);
+  assert.deepEqual([merged[2]!.label, merged[2]!.wiki, merged[2]!.wiki_page], ['writing', 'yes', 'My-Page']);
   assert.equal(merged[0]!.proposed, 'morning-pages', 'the old proposal stays too');
   assert.equal(merged[4]!.proposed, 'writing');
 });

@@ -11,13 +11,15 @@ export const isLabel = (value: string): value is Label => (LABELS as readonly st
 const EMBED = /^\s*!\[\[[^\]]+\]\]\s*$/;
 const FIELD = /^\s*[\w][\w ./-]*::\s*.*$/;
 const CHECKBOX = /^\s*(?:[-*+]|\d+[.)])\s+\[.\]/;
-export const MORNING_PAGES = /morning pages/i;
+// A heading that is Morning Pages ("## Morning Pages", "### 1. Morning Pages"), not one quoting it.
+export const MORNING_PAGES = /^(?:\d+[.)]\s*)?morning pages\b/i;
 
 export function ruleLabel(block: Block): { label: Label; reason: string } | null {
   if (block.kind === 'frontmatter') return { label: 'other', reason: 'frontmatter' };
   if (block.kind === 'comment') return { label: 'other', reason: 'comment' };
   const lines = block.text.split('\n').filter((l) => l.trim() !== '');
   if (lines.every((l) => EMBED.test(l))) return { label: 'other', reason: 'embed' };
+  if (/^\s*(?:<!--[\s\S]*?-->\s*)+$/.test(block.text)) return { label: 'other', reason: 'comment' };
   if (block.kind === 'paragraph' && lines.every((l) => FIELD.test(l) || EMBED.test(l))) return { label: 'other', reason: 'metadata field' };
   return null;
 }

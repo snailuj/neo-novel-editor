@@ -5,7 +5,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { getLogger } from '../log.ts';
-import { defaultBook, defaultDest, type Row } from './sheet.ts';
+import { defaultDest, type Row } from './sheet.ts';
 import { type Block, splitBlocks } from './split.ts';
 
 const log = getLogger('librarian.blocks.apply');
@@ -18,7 +18,7 @@ export interface ApplyOptions {
 export interface ApplyResult {
   written: string[];
   missing: { page: string; block: string; lines: string }[];
-  /** Rows still marked `check`. */
+  /** Rows whose `wiki` is still `check`. */
   unresolved: number;
 }
 
@@ -43,8 +43,8 @@ function bookParagraphs(block: Block): string[] {
 }
 
 export function applySheet(vault: string, rows: readonly Row[], out: string, opts: ApplyOptions): ApplyResult {
-  const result: ApplyResult = { written: [], missing: [], unresolved: rows.filter((r) => r.include === 'check').length };
-  const included = rows.filter((r) => r.include === 'yes');
+  const result: ApplyResult = { written: [], missing: [], unresolved: rows.filter((r) => r.wiki === 'check').length };
+  const included = rows.filter((r) => r.wiki === 'yes' || r.book !== '');
   const blocks = new Map<string, Map<string, Block>>();
   const blockOf = (r: Row) => {
     if (!blocks.has(r.page)) {
@@ -61,15 +61,12 @@ export function applySheet(vault: string, rows: readonly Row[], out: string, opt
   for (const row of included) {
     const block = blockOf(row);
     if (!block) continue;
-    if (row.label === 'writing') {
-      const dest = row.dest || defaultDest(row.page, row.heading);
-      if (!ONE_SEGMENT.test(dest)) throw new Error(`dest '${dest}' (${row.page} lines ${row.lines}) must be one file name`);
+    if (row.wiki === 'yes') {
+      const dest = row.wiki_page || defaultDest(row.page, row.heading);
+      if (!ONE_SEGMENT.test(dest)) throw new Error(`wiki_page '${dest}' (${row.page} lines ${row.lines}) must be one file name`);
       wiki.set(dest, [...(wiki.get(dest) ?? []), { row, block }]);
     }
-    if (row.label === 'morning-pages' || (row.label === 'writing' && row.book)) {
-      const chapter = row.book || defaultBook(row.page, row.heading);
-      book.set(chapter, [...(book.get(chapter) ?? []), { row, block }]);
-    }
+    if (row.book) book.set(row.book, [...(book.get(row.book) ?? []), { row, block }]);
   }
   for (const m of result.missing) log.warning(`${m.page}: block ${m.block} (lines ${m.lines}) is not in the page any more; not written`);
 

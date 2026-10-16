@@ -125,9 +125,9 @@ async function classify(values: Map<string, string>, positional: string[], io: I
   save();
 
   const rows = order.flatMap((p) => byPage.get(p) ?? []);
-  const tally = (key: 'label' | 'include') => [...rows.reduce((m, r) => m.set(r[key], (m.get(r[key]) ?? 0) + 1), new Map<string, number>())]
+  const tally = (key: 'label' | 'wiki') => [...rows.reduce((m, r) => m.set(r[key], (m.get(r[key]) ?? 0) + 1), new Map<string, number>())]
     .map(([k, n]) => `${k} ${n}`).join(', ');
-  io.stdout(`${rows.length} blocks in ${order.length} pages. Labels: ${tally('label')}. Include: ${tally('include')}.\n`);
+  io.stdout(`${rows.length} blocks in ${order.length} pages. Labels: ${tally('label')}. Wiki: ${tally('wiki')}. Book: ${rows.filter((r) => r.book).length}.\n`);
   return failed ? 3 : 0;
 }
 
@@ -136,7 +136,7 @@ function apply(values: Map<string, string>, io: Io): number {
   const rows = readSheet(readFileSync(at(values.get('--sheet')!), 'utf8'));
   const prefix = values.get('--path-prefix');
   const result = applySheet(at(values.get('--vault')!), rows, at(values.get('--out')!), prefix === undefined ? {} : { pathPrefix: prefix });
-  io.stdout(`Wrote ${result.written.length} files. ${result.unresolved} rows still marked check.\n`);
+  io.stdout(`Wrote ${result.written.length} files. ${result.unresolved} rows still marked check for the wiki.\n`);
   for (const m of result.missing) io.stdout(`changed since review: ${m.page} lines ${m.lines} (block ${m.block})\n`);
   return result.missing.length ? 1 : 0;
 }

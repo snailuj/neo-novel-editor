@@ -1,13 +1,16 @@
 // The review sheet: one CSV row per block, so the author can correct the classifier
 // before anything is imported. `proposed` is the classifier's label and stays as it was;
-// `label`, `include`, `dest` and `book` are the author's to edit. A re-run keeps every
+// the rest is the author's to edit. A block has two possible homes: `wiki` (yes, no or
+// check) sends it to the wiki page `wiki_page`; a `book` value sends it to that chapter
+// of the Morning Pages book. A Morning Pages section goes to the book whole, whatever its
+// blocks' labels, so the journal keeps each day as written. A re-run keeps every
 // row it already has (matched by page and block id) and only adds new blocks.
 import path from 'node:path';
 import type { Judged } from './judge.ts';
 import { fallbackGuess, type Label, MORNING_PAGES, ruleLabel } from './rules.ts';
 import type { Block } from './split.ts';
 
-export const COLUMNS = ['page', 'block', 'lines', 'heading', 'proposed', 'label', 'include', 'dest', 'book', 'pasted', 'by', 'reason', 'preview'] as const;
+export const COLUMNS = ['page', 'block', 'lines', 'heading', 'proposed', 'label', 'wiki', 'wiki_page', 'book', 'pasted', 'by', 'reason', 'preview'] as const;
 export type Row = Record<(typeof COLUMNS)[number], string>;
 
 export interface Already {
@@ -75,21 +78,24 @@ export function rowsFor(page: string, blocks: readonly Block[], judged: Readonly
     const by = ruled ? 'rule' : j?.by ?? 'no-judge';
     const pasted = !ruled && j?.pasted === true;
     let reason = ruled?.reason ?? j?.reason ?? 'not judged';
-    let include = ruled ? 'no'
-      : by !== 'judge' ? 'check'
-      : label === 'morning-pages' || (label === 'writing' && !pasted) ? 'yes' : 'no';
+    const said = (l: Label) => label === l || (j?.votes ?? []).includes(l);
+    // Unsure means the author decides: no judge, a failed one, or votes of which one says writing.
+    let wiki = ruled ? 'no'
+      : by === 'judge' ? (label === 'writing' && !pasted ? 'yes' : 'no')
+      : by === 'votes-differ' ? (said('writing') ? 'check' : 'no')
+      : 'check';
     const inMorningPages = b.heading.some((h) => MORNING_PAGES.test(h));
-    let dest = label === 'writing' ? defaultDest(page, heading) : '';
-    const book = label === 'morning-pages' || (label === 'writing' && inMorningPages) ? defaultBook(page, heading) : '';
+    let wikiPage = wiki !== 'no' || label === 'writing' ? defaultDest(page, heading) : '';
+    const book = !ruled && (inMorningPages || said('morning-pages')) ? defaultBook(page, heading) : '';
     const done = alreadyFor(page, b, already);
     if (done && !ruled) {
-      include = 'no';
+      wiki = 'no';
       reason = `already imported as ${done.name ?? stemOf(done.path)}; ${reason}`;
-      if (label === 'writing') dest = done.name ?? stemOf(done.path);
+      if (label === 'writing') wikiPage = done.name ?? stemOf(done.path);
     }
     return {
       page, block: b.id, lines: `${b.start}-${b.end}`, heading,
-      proposed: label, label, include, dest, book,
+      proposed: label, label, wiki, wiki_page: wikiPage, book,
       pasted: pasted ? 'yes' : 'no', by, reason, preview: preview(b.text),
     };
   });
