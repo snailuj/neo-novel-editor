@@ -86,7 +86,7 @@ test('classify, review, re-run, apply', async () => {
   const picks = readFileSync(path.join(dir, 'picks.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { kind: string; target: string });
   assert.deepEqual(picks.map((p) => p.kind).sort(), ['morning-pages', 'morning-pages', 'writing', 'writing', 'writing']);
   assert.ok(picks.some((p) => p.target === 'Otter-Notes'));
-  await run(['apply', '--vault', vault, '--sheet', sheet, '--out', out, '--picks', 'wiki.jsonl', '--picks-kinds', 'writing'], dir);
+  await run(['apply', '--vault', vault, '--sheet', sheet, '--out', out, '--path-prefix', 'E:\\Private\\out', '--picks', 'wiki.jsonl', '--picks-kinds', 'writing'], dir);
   const wikiOnly = readFileSync(path.join(dir, 'wiki.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { kind: string });
   assert.deepEqual(wikiOnly.map((p) => p.kind), ['writing', 'writing', 'writing']);
   assert.equal((await run(['apply', '--vault', vault, '--sheet', sheet, '--out', out, '--picks', 'x.jsonl', '--picks-kinds', 'poems'], dir)).code, 2);

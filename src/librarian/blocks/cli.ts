@@ -134,13 +134,14 @@ async function classify(values: Map<string, string>, positional: string[], io: I
 
 function apply(values: Map<string, string>, io: Io): number {
   const at = (p: string) => path.resolve(io.cwd, p);
+  // Checked before anything is written, so a usage error writes nothing.
+  const kinds = (values.get('--picks-kinds') ?? 'writing,morning-pages').split(',').map((k) => k.trim());
+  for (const k of kinds) if (k !== 'writing' && k !== 'morning-pages') throw new UsageError(`--picks-kinds: unknown kind '${k}'`);
   const rows = readSheet(readFileSync(at(values.get('--sheet')!), 'utf8'));
   const prefix = values.get('--path-prefix');
   const result = applySheet(at(values.get('--vault')!), rows, at(values.get('--out')!), prefix === undefined ? {} : { pathPrefix: prefix });
   const picksFile = values.get('--picks');
   if (picksFile !== undefined) {
-    const kinds = (values.get('--picks-kinds') ?? 'writing,morning-pages').split(',').map((k) => k.trim());
-    for (const k of kinds) if (k !== 'writing' && k !== 'morning-pages') throw new UsageError(`--picks-kinds: unknown kind '${k}'`);
     const picks = blockPicks(at(values.get('--vault')!), rows).picks.filter((p) => kinds.includes(p.kind));
     writeAtomic(at(picksFile), picks.map((p) => JSON.stringify(p)).join('\n') + (picks.length ? '\n' : ''));
     io.stdout(`Wrote ${picks.length} picks to ${picksFile}.\n`);
