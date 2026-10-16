@@ -9,10 +9,11 @@ window.__brokenFixed = 0;
 
 NeoPlugins.register({
   id: 'broken',
-  apiVersion: 1,
+  apiVersion: 3,
   activate(neo) {
     neo.on('chapter-saved', () => { window.__brokenHeard++; });
     neo.addPane({ id: 'pane', title: 'Broken Pane' });
+    neo.addPane({ id: 'side', title: 'Broken Side', side: true });
     neo.addCommand('fix', () => { window.__brokenFixed++; });
     neo.status('Broken');
     throw new Error('broken on purpose');

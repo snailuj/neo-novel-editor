@@ -1,4 +1,4 @@
-// The plugin API, versions 1 and 2, as types. plugins.js implements the window half
+// The plugin API, versions 1 to 3, as types. plugins.js implements the window half
 // (what activate(neo) receives) and plugins-main.js the main half (what a manifest's
 // `main` entry's activate(host) receives); this file follows them.
 
@@ -32,7 +32,13 @@ interface NeoEvents {
   'book-close': { readonly bookId: string };
   /** At most once a frame for each chapter that changed. */
   'chapter-change': { readonly bookId: string; readonly chId: string };
-  'chapter-saved': { readonly bookId: string; readonly chId: string };
+  /**
+   * After each write of a chapter lands. html is the text the write put in the file;
+   * previous is what the file held just before it, as this window knew it (read when the
+   * book opened, written by it, or handed back by another device's change), and null
+   * when it never knew, as for a chapter it has just made.
+   */
+  'chapter-saved': { readonly bookId: string; readonly chId: string; readonly html: string; readonly previous: string | null };
   /** At most once a frame; place is null off the manuscript. */
   selection: { readonly place: Readonly<NeoPlace> | null };
   /** The chapters were drawn anew; the host has already rebuilt every highlight. */
@@ -108,9 +114,10 @@ interface NeoApi {
  * - missing: the place is not on the page, by the rules go uses.
  * - stale: the text at the place is not expectedText.
  * - blocked: the plugin failed to activate; the place is on a ghost line (an outline
- *   note) or in a chapter the writer cannot type in; a beforeinput listener cancelled
- *   the edit, or the editor would not make it; or the paragraph came out other than
- *   asked, in which case an edit the editor made is undone.
+ *   note) or in a chapter the writer cannot type in that no plugin holds; a
+ *   beforeinput listener cancelled the edit, or the editor would not make it; or the
+ *   paragraph came out other than asked, in which case an edit the editor made is
+ *   undone.
  */
 type NeoReplaceRefusal = 'busy' | 'hidden' | 'missing' | 'stale' | 'blocked';
 
@@ -169,6 +176,46 @@ interface NeoApiV2 extends NeoApi {
   highlight(name: string, places: readonly NeoPlace[]): void;
 }
 
+/** A pane as API 3 makes it: its element, and a way to bring it in front of the writer. */
+interface NeoPaneV3 {
+  readonly element: HTMLDivElement;
+  /**
+   * Brings the pane in front of the writer, in answer to their own action (a click on a
+   * highlight, a command). A tab is switched to. A side section opens the right-hand pane
+   * and scrolls into view; on the Notes, Outline and Darlings tabs, where the section is
+   * hidden, nothing moves. false with no book open, where nothing moved, or once the
+   * plugin failed to activate.
+   */
+  show(): boolean;
+}
+
+/** What activate(neo) receives for API 3: API 2, with side sections and holds. */
+interface NeoApiV3 extends Omit<NeoApiV2, 'addPane'> {
+  /**
+   * Holds chapters of the open book, in place of those this plugin held before; [] lets
+   * them go. A held chapter can be read, selected and copied but not typed in: no key,
+   * paste, cut, drop or input method changes it. Its body is not editable, as NEO's
+   * contents page is not, its .chapter section carries data-held for the plugin's
+   * stylesheet, and the host moves and draws the caret there (the neo-held-caret
+   * highlight). Only typing stops: Find and Replace, moving outline cards and a chapter
+   * from another device still change it. A chapter is held while any plugin holds it.
+   * Holds go when the book closes, with nothing kept while no book is open, and when the
+   * plugin fails to activate. replace still edits a held chapter, outside the writer's
+   * undo: the writer's Ctrl+Z (⌘Z) does not take that edit back. Throws TypeError for
+   * anything but an array of non-empty strings.
+   */
+  hold(chIds: readonly string[]): void;
+  /**
+   * As API 1's addPane, and with side: true a section of the right-hand pane instead of
+   * a tab: the title as its heading and the element under it, after NEO's own lists. It
+   * shows wherever the pane shows Notes & Comments, so beside the manuscript and not on
+   * the Notes, Outline or Darlings tabs. Tabs and sections share one set of ids. Throws
+   * TypeError as API 1's does, and for a key other than id, title and side, or a side
+   * that is not a boolean.
+   */
+  addPane(pane: { id: string; title: string; side?: boolean }): NeoPaneV3;
+}
+
 interface NeoPluginBase {
   /** The id in the plugin's plugin.json. */
   id: string;
@@ -196,10 +243,15 @@ interface NeoPluginV2 extends NeoPluginBase {
   activate(neo: NeoApiV2): void | Promise<void>;
 }
 
-type NeoPlugin = NeoPluginV1 | NeoPluginV2;
+interface NeoPluginV3 extends NeoPluginBase {
+  apiVersion: 3;
+  activate(neo: NeoApiV3): void | Promise<void>;
+}
+
+type NeoPlugin = NeoPluginV1 | NeoPluginV2 | NeoPluginV3;
 
 declare const NeoPlugins: {
-  readonly apiVersions: readonly (1 | 2)[];
+  readonly apiVersions: readonly (1 | 2 | 3)[];
   register(plugin: NeoPlugin): void;
   /**
    * true when a value is a place: an object with chId a non-empty string, pIdx, off and
