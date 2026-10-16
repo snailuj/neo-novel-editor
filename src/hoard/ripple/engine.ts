@@ -385,7 +385,7 @@ export class Ripple {
     const minted = await this.#o.layer.around([wiki.bookId, `.neo/${wiki.bookId}/pages`, this.#rulingsRel], async () => {
       const result = this.#o.wiki.mint({
         title: made.title, paragraphs: made.paragraphs, origin: made.origin,
-        frontmatter: { type: 'lore', ripple: { from: p.source.title, proposal: p.id } },
+        frontmatter: { type: 'lore', tags: ['needs-gathering'], ripple: { from: p.source.title, proposal: p.id } },
       }, openBookId);
       const html = this.#read(chapterRel(result.bookId, result.chId)) ?? '';
       const job = next(this.#rulings.read(), { bookId: result.bookId, chId: result.chId, title: made.title }, html, await this.#o.layer.head());

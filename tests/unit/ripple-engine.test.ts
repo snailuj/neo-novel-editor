@@ -133,6 +133,7 @@ test('ripple carries an imported page through the wiki, on the author\'s word', 
   assert.match(readFileSync(stone.file, 'utf8'), /<p data-block="[^"]+">The harbour wall, rebuilt in stone\.<\/p>/);
   const sidecar = JSON.parse(readFileSync(path.join(library, '.neo', stone.bookId, 'pages', `${stone.chId}.json`), 'utf8'));
   assert.equal(sidecar.frontmatter.type, 'lore', 'a minted page is the librarian\'s');
+  assert.deepEqual(sidecar.frontmatter.tags, ['needs-gathering']);
   assert.equal(sidecar.source.path, `ripple:${mint!.id}`);
   assert.deepEqual(arounds[1], [stone.bookId, `.neo/${stone.bookId}/pages`, '.neo/ripple/rulings.jsonl']);
   assert.deepEqual(ripple.overview().jobs.map((j) => [j.title, j.hop]), [['Harbour', 1], ['Stone Wall', 1]]);
