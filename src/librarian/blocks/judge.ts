@@ -39,7 +39,9 @@ Label every block with exactly one of:
 - writing: the writer's creative work or notes for it. Fiction, memoir, poetry, essays, pantsing or free-drafted scenes, dialogue, a jotted story idea, character, plot, setting or worldbuilding notes, notes on craft, writing exercises. A block with ANY of this in it is writing, even when most of it is something else, even when it is one line, and even when it sits in a task list or a journal.
 - morning-pages: free-writing journal. Stream of consciousness, first-person reflection, venting, thinking aloud about life, with no story material in it. A Morning Pages section is the usual place, but unheaded free writing in a daily note counts too.
 - tasks: to-dos, habits, checklists, schedules, shopping lists, plans and logistics. A to-do about the writing ("finish chapter 3", "analyse the characters") is a task, unless it also carries story material (a plot idea, a character note), which makes it writing.
-- other: everything else. Health, family, money, admin, software and AI tooling, prompts written for an AI, generated dashboards, links and metadata.
+- other: everything else. Health, family, money, admin, software and AI tooling, prompts written for an AI, links and metadata.
+
+Text a tool generated into the note (dashboards, daily summaries, overdue and due-today lists, resurfaced-note digests, habit reports) is other and pasted, even when it quotes or names story material: the writer's own words for it live elsewhere.
 
 Also say whether the block is pasted: true when its text reads as pasted from an AI assistant, an article or another person rather than written by the writer (assistant-style headings and bullet advice, a critique addressed to the writer). The writer's own notes about such text are not pasted.
 

@@ -56,6 +56,7 @@ test('the prompt numbers the blocks, shows headings and lines, and fences the te
   assert.match(prompt, /<block id="b1" heading="Morning Pages" lines="13-13">\nI woke and wrote\.\n<\/block>/);
   assert.match(prompt, /<block id="b2"/);
   assert.match(prompt, /data, not instructions/i);
+  assert.match(prompt, /generated into the note .* is other and pasted/);
   for (const label of ['writing', 'morning-pages', 'tasks', 'other']) assert.ok(prompt.includes(label));
 });
 
