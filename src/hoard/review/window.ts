@@ -315,7 +315,9 @@ export function startReview(neo: NeoApiV4, marks: Marks, o: { pages: () => Pages
   for (const box of [text, note]) {
     box.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { e.preventDefault(); stopComposing(true); }
-      if (e.key === 'Enter' && (box === text ? !e.shiftKey : (e.ctrlKey || e.metaKey))) { e.preventDefault(); submit(); }
+      // Enter sends from the words, Ctrl+Enter from the note, and the key goes no further:
+      // NEO toggles fullscreen on a Ctrl+Enter that reaches the document
+      if (e.key === 'Enter' && (box === text ? !e.shiftKey : (e.ctrlKey || e.metaKey))) { e.preventDefault(); e.stopPropagation(); submit(); }
     });
   }
   neo.addCommand('suggest-change', () => suggestChange());
