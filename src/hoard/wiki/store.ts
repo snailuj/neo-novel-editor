@@ -25,6 +25,12 @@
 // its own, or sections of a page joined into one (a split). A page an old vault gave
 // hoard, by hoard's own manifest, comes in with hoard's pages instead, so it is not
 // imported twice. A page's images and PDFs are copied into the wiki book.
+//
+// The same store makes and fills another book, by title (Morning Pages, say), when an
+// import list sends pages there: such a book is named in .neo/books/<slug>.json instead,
+// and is on no shelf either. A list's line range (`L12-L40`) cuts those lines of the
+// whole file, counted from 1, and is refused when the file no longer has the hash the
+// list was made against.
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -43,6 +49,7 @@ import type { MarkStore } from '../marks/store.ts';
 import { AttachmentFinder, attachmentsIn, copyAttachment } from './attachments.ts';
 import { convertPage, pageHtml, type ConvertedPage } from './convert.ts';
 import { HoardIndex, hoardRoot, vaultRoot } from './hoard-manifest.ts';
+import { lineRange } from './import-list.ts';
 import { section } from './sections.ts';
 
 type Level = 'error' | 'warn' | 'info' | 'debug';
@@ -59,12 +66,17 @@ export interface WikiStoreOptions {
   /** Commits the library as it stands, as the author's or the librarian's; resolves once it has landed. */
   commit?: (part: 'author' | 'librarian') => Promise<void>;
   log: (level: Level, message: string, data?: unknown) => void;
+  /** The book this store fills, by title; the wiki when not given. */
+  book?: string;
 }
 
-/** A file to import, or an import list's entry: a name of its own, or one section of it. */
-export interface Pick { path: string; name?: string | null; section?: string | null }
+/**
+ * A file to import, or an import list's entry: a name of its own, or one section of it
+ * (a heading, or a line range with the start of the hash the file had then).
+ */
+export interface Pick { path: string; name?: string | null; section?: string | null; sha?: string | null }
 
-interface Picked { path: string; name: string; sections: string[] }
+interface Picked { path: string; name: string; sections: string[]; sha: string | null }
 /** An attachment a page names, and the file found for it. */
 export interface Found { target: string; file: string }
 interface Converted { sha256: string; page: ConvertedPage; attachments: Found[]; missing: string[] }
@@ -113,6 +125,13 @@ const byName = (a: Picked, b: Picked) => {
   return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
 };
 
+/** A book title as a folder name's part: `Morning Pages` is `morning-pages`. */
+export function bookSlug(title: string): string {
+  const slug = title.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '');
+  return slug || 'book';
+}
+
 function randomChapterId(): string {
   return `ch-${Date.now().toString(36)}-${randomBytes(3).toString('hex').slice(0, 4)}`;
 }
@@ -129,8 +148,15 @@ export class WikiStore {
     return this.#o.library();
   }
 
+  /** The book's title: Wiki, or the one an import list sends pages to. */
+  get title(): string {
+    return this.#o.book ?? 'Wiki';
+  }
+
+  // The file that names the book: wiki.json for the wiki, else one in .neo/books.
   #wikiFile(): string {
-    return path.join(this.#library, '.neo', 'wiki.json');
+    if (this.#o.book === undefined) return path.join(this.#library, '.neo', 'wiki.json');
+    return path.join(this.#library, '.neo', 'books', `${bookSlug(this.#o.book)}.json`);
   }
 
   #bookFile(bookId: string): string {
@@ -247,28 +273,39 @@ export class WikiStore {
         const into = parts.get(k);
         if (into) {
           if (!into.sections.includes(pick.section)) into.sections.push(pick.section);
+          into.sha ??= pick.sha ?? null;
           continue;
         }
-        const p = { path: pick.path, name, sections: [pick.section] };
+        const p = { path: pick.path, name, sections: [pick.section], sha: pick.sha ?? null };
         parts.set(k, p);
         picked.push(p);
         continue;
       }
       if (whole.has(samePath(pick.path))) continue;
       whole.add(samePath(pick.path));
-      picked.push({ path: pick.path, name, sections: [] });
+      picked.push({ path: pick.path, name, sections: [], sha: null });
     }
     return picked.sort(byName);
   }
 
-  // The Markdown a pick brings in: the page, or its sections joined, without the
-  // frontmatter of the page they were cut from.
+  // The Markdown a pick brings in: the page, or its sections or line ranges joined,
+  // without the frontmatter of the page they were cut from.
   #converted(p: Picked, bytes: Buffer, finders: Map<string, AttachmentFinder>): Converted | { why: string } {
     let text = bytes.toString('utf8');
+    if (p.sha && !sha256(bytes).startsWith(p.sha)) return { why: 'it changed after the list was made, so its lines may have moved' };
     if (p.sections.length) {
-      const { body } = split(text.replace(/^\ufeff/, '').replace(/\r\n?/g, '\n'));
+      const whole = text.replace(/^\ufeff/, '').replace(/\r\n?/g, '\n');
+      // a file's last newline ends its last line and starts none
+      const lines = whole.replace(/\n$/, '').split('\n');
+      const { body } = split(whole);
       const cut: string[] = [];
       for (const heading of p.sections) {
+        const range = lineRange(heading);
+        if (range) {
+          if (range.end > lines.length) return { why: `it has only ${lines.length} lines, not ${range.end}` };
+          cut.push(lines.slice(range.start - 1, range.end).join('\n').replace(/\s+$/, ''));
+          continue;
+        }
         const part = section(body, heading);
         if (part === null) return { why: `it has no heading \u201c${heading}\u201d` };
         cut.push(part);
@@ -355,7 +392,7 @@ export class WikiStore {
     const applied: Applied = { bookId, imported: [], updated: [], marks: 0, keptAsText: 0, attachments: 0, missing: [] };
     if (pages.length === 0) return applied;
     if (bookId !== null && bookId === openBookId) {
-      throw new Error('The wiki is open, so nothing was imported. Go back to the shelf and import again.');
+      throw new Error(`${this.title === 'Wiki' ? 'The wiki' : this.title} is open, so nothing was imported. Go back to the shelf and import again.`);
     }
     const neo = path.join(this.#library, '.neo');
     const manifestFile = path.join(neo, 'manifest.jsonl');
@@ -452,14 +489,15 @@ export class WikiStore {
     return applied;
   }
 
-  // The wiki book, made as NEO's own book:create makes a book, and named in wiki.json.
+  // The book, made as NEO's own book:create makes a book, and named in wiki.json (or its
+  // file in .neo/books).
   #makeWiki(): string {
     const now = this.#o.now?.() ?? new Date();
-    const bookId = `book-wiki-${now.getTime().toString(36)}-${randomBytes(4).toString('hex').slice(0, 5)}`;
+    const bookId = `book-${bookSlug(this.title)}-${now.getTime().toString(36)}-${randomBytes(4).toString('hex').slice(0, 5)}`;
     const dir = path.join(this.#library, bookId);
     const at = now.toISOString();
     writeJson(path.join(dir, 'book.json'), {
-      id: bookId, title: 'Wiki', subtitle: '', series: '', author: this.#authorName(), wordGoal: 0,
+      id: bookId, title: this.title, subtitle: '', series: '', author: this.#authorName(), wordGoal: 0,
       created: at, modified: at, chapterOrder: [], tabNames: { notes: 'Notes', outline: 'Outline' },
     });
     writeWhole(path.join(dir, 'notes.html'), '');
@@ -468,7 +506,7 @@ export class WikiStore {
     writeJson(path.join(dir, 'stickies.json'), []);
     const wiki: HoardWikiV1 = { version: 1, bookId };
     writeWhole(this.#wikiFile(), `${JSON.stringify(wiki, null, 2)}\n`);
-    this.#o.log('info', 'wiki.made', { bookId });
+    this.#o.log('info', 'wiki.made', { bookId, title: this.title });
     return bookId;
   }
 

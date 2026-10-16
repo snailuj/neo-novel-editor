@@ -4,6 +4,10 @@
 //   the next page, and later imports follow that newest page;
 // - a list entry may name the page, and may take one or more sections of a source,
 //   which become one page recorded as a split, without the source's frontmatter;
+// - a line range takes those lines of the whole file, and is refused once the file no
+//   longer has the hash the list read it against, or is too short for it;
+// - a store for another book (Morning Pages) makes that book, named in .neo/books, and
+//   leaves the wiki alone;
 // - a page hoard already holds (by hoard's own manifest) is not imported again, an
 //   older hoard copy is named, and hoard's own pages are never taken for either;
 // - a page's images and PDFs are copied into the wiki book once, recorded verbatim
@@ -17,7 +21,7 @@ import { test } from 'node:test';
 import { validateHoardChangeV1, validateHoardPageV1 } from '../../src/generated/validators.cjs';
 import { paragraphTexts } from '../../src/hoard/html.ts';
 import { MarkStore } from '../../src/hoard/marks/store.ts';
-import { WikiStore } from '../../src/hoard/wiki/store.ts';
+import { bookSlug, WikiStore } from '../../src/hoard/wiki/store.ts';
 import { parseManifest } from '../../src/librarian/manifest.ts';
 import { tempDir } from './git-support.ts';
 
@@ -33,6 +37,7 @@ function setup(t: T) {
   const log = () => {};
   const marks = new MarkStore({ library: () => library, now, newId, log });
   const wiki = new WikiStore({ library: () => library, now, newId, marks, log });
+  const other = (book: string) => new WikiStore({ library: () => library, now, newId, marks, log, book });
   const put = (rel: string, data: string | Buffer) => {
     const file = path.join(root, ...rel.split('/'));
     mkdirSync(path.dirname(file), { recursive: true });
@@ -46,7 +51,7 @@ function setup(t: T) {
   const manifest = () => parseManifest(readFileSync(path.join(library, '.neo', 'manifest.jsonl'), 'utf8'));
   const changes = () => readFileSync(path.join(library, '.neo', 'changes.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   const kinds = (sorted: { verdicts: { kind: string; name: string }[] }) => sorted.verdicts.map((v) => [v.kind, v.name]);
-  return { library, root, wiki, marks, put, json, book, titles, text, manifest, changes, kinds };
+  return { library, root, wiki, other, marks, put, json, book, titles, text, manifest, changes, kinds };
 }
 
 const sha = (data: string | Buffer) => createHash('sha256').update(data).digest('hex');
@@ -135,6 +140,55 @@ test('a list entry names its page, and sections of a source become one page reco
   ]);
   assert.deepEqual(s.kinds(s.wiki.sort([{ path: hub, section: 'Overview', name: 'tide-(era)' }, { path: hub, section: 'Peoples', name: 'tide-(era)' }])),
     [['same', 'tide-(era)']]);
+});
+
+test('a line range takes those lines of the file, joined into one page, while the file keeps its hash', async (t) => {
+  const s = setup(t);
+  const daily = s.put('vault/Daily/2026-01-23.md', [
+    '---', 'day: 23', '---', '## Morning Pages', '- [ ] a task', 'Woke early.', '', 'The sea again.', '## Habits', '- [x] walk', '',
+  ].join('\n'));
+  const hash = sha(readFileSync(daily)).slice(0, 12);
+  const sorted = s.wiki.sort([
+    { path: daily, section: 'L4-L4', name: '2026-01-23', sha: hash },
+    { path: daily, section: 'L6-L8', name: '2026-01-23' },
+    { path: daily, section: 'L6-L80', name: 'too-long' },
+    { path: daily, section: 'L6-L8', name: 'moved', sha: 'deadbeef00' },
+  ]);
+  assert.deepEqual(s.kinds(sorted), [['new', '2026-01-23'], ['unreadable', 'moved'], ['unreadable', 'too-long']]);
+  assert.match((sorted.verdicts[1] as { why: string }).why, /changed after the list was made/);
+  assert.match((sorted.verdicts[2] as { why: string }).why, /only 10 lines, not 80/);
+  await s.wiki.apply(sorted, null);
+  const chId = s.book().chapterOrder[0];
+  assert.deepEqual(s.text(chId), ['Morning Pages', 'Woke early.', 'The sea again.']);
+  assert.deepEqual(s.json(`.neo/${s.wiki.wikiId()}/pages/${chId}.json`).source.sections, ['L4-L4', 'L6-L8']);
+  writeFileSync(daily, `${readFileSync(daily, 'utf8')}More.\n`);
+  const again = s.wiki.sort([{ path: daily, section: 'L4-L4', name: '2026-01-23', sha: hash }, { path: daily, section: 'L6-L8', name: '2026-01-23' }]);
+  assert.deepEqual(s.kinds(again), [['unreadable', '2026-01-23']]);
+});
+
+test('a store for another book makes that book beside the wiki, named in .neo/books', async (t) => {
+  const s = setup(t);
+  const day = s.put('vault/Daily/2025-12-15.md', '# Day\n## Morning Pages\nRain on the roof.\n## Tasks\n- [ ] call\n');
+  const lore = s.put('vault/Harbour.md', 'The harbour.\n');
+  await s.wiki.apply(s.wiki.sort([lore]), null);
+  const pages = s.other('Morning Pages');
+  assert.equal(pages.title, 'Morning Pages');
+  assert.equal(pages.wikiId(), null);
+  const sorted = pages.sort([{ path: day, section: 'Morning Pages', name: '2025-12-15' }]);
+  assert.deepEqual(s.kinds(sorted), [['new', '2025-12-15']]);
+  await assert.rejects(async () => {
+    await pages.apply(sorted, null);
+    await pages.apply(pages.sort([{ path: lore, name: 'x' }]), pages.wikiId());
+  }, /Morning Pages is open/);
+  const bookId = pages.wikiId()!;
+  assert.match(bookId, /^book-morning-pages-/);
+  assert.deepEqual(s.json('.neo/books/morning-pages.json'), { version: 1, bookId });
+  const book = s.json(`${bookId}/book.json`);
+  assert.equal(book.title, 'Morning Pages');
+  assert.deepEqual(book.chapterOrder.map((id: string) => book.chapterTitles[id]), ['2025-12-15']);
+  assert.deepEqual(s.titles(), ['Harbour'], 'the wiki keeps only its own page');
+  assert.notEqual(s.wiki.wikiId(), bookId);
+  assert.deepEqual([bookSlug('Morning Pages'), bookSlug('Café / Notes!'), bookSlug('***')], ['morning-pages', 'cafe-notes', 'book']);
 });
 
 test('a page hoard already holds is not imported again, an older hoard copy is named, and hoard\'s own pages come in', async (t) => {

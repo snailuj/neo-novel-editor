@@ -1,5 +1,6 @@
 // Rule: before an import the writer is told, in words, what will come in and what will
-// not and why, naming the pages; a long list names the first few and counts the rest.
+// not and why, naming the pages and the book they go into; a long list names the first
+// few and counts the rest.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { describeSort } from '../../src/hoard/wiki/summary.ts';
@@ -37,6 +38,8 @@ test('the summary counts what comes in and names what does not, with why', () =>
 test('with nothing new the summary says so, and one page is one page', () => {
   assert.equal(describeSort({ verdicts: [v('same', 'Fox')] }).message, 'Every page picked is already in the wiki, or cannot come in.');
   assert.equal(describeSort({ verdicts: [fresh('One')] }).message, 'Import 1 page into the wiki?');
+  assert.equal(describeSort({ verdicts: [fresh('2025-12-15')] }, 'Morning Pages').message, 'Import 1 page into Morning Pages?');
+  assert.equal(describeSort({ verdicts: [v('same', 'Fox')] }, 'Morning Pages').detail, 'Already in Morning Pages: Fox.');
 });
 
 test('a long list names twelve and counts the rest', () => {

@@ -1,9 +1,13 @@
 // An import list: which Markdown pages come into the wiki, from anywhere on the disk, so
 // one import can cross the folders an OS picker cannot, and leave out the pages that are
 // not writing. A text list names one page a line; `# ` lines are comments. After the
-// path, `#Heading` takes only that section (a split), and ` -> Name` names the page in
-// the wiki. A .csv list is a keep/move list: the rows of its `path` column whose
-// `verdict` is Move.
+// path, `#Heading` takes only that section (a split), `#L12-L40` only those lines (with
+// `@` and the start of the file's SHA-256 after it, so lines that moved are refused),
+// and ` -> Name` names the page in the wiki. A `book: Title` line sends the entries
+// after it into the book of that title instead of the wiki, until the next one;
+// `book: Wiki` comes back. A .csv list is a keep/move list: the rows of its `path`
+// column whose `verdict` is Move, named by a `name` column and sent to a `book` column's
+// book where it has them.
 //
 // Pure: the list's text is handed in, and nothing is read from the disk.
 import path from 'node:path';
@@ -16,6 +20,10 @@ export interface ListEntry {
   section: string | null;
   /** The page's name in the wiki, or null for the file's own. */
   name: string | null;
+  /** The book the page goes into, by title, or null for the wiki. */
+  book: string | null;
+  /** The start of the file's SHA-256 that a line range was read against, or null. */
+  sha: string | null;
 }
 
 export interface ImportList {
@@ -30,26 +38,56 @@ export class ListError extends Error {
 }
 
 const PAGE = /^(.*?\.md)(?:#(.*))?$/i;
+const LINES = /^L(\d+)-L(\d+)(?:@([0-9a-f]{8,64}))?$/i;
+const BOOK = /^book:(.*)$/i;
 
-function entry(line: number, text: string, dir: string): ListEntry {
+/** True for a section that names a line range, `L12-L40`, rather than a heading. */
+export function lineRange(section: string): { start: number; end: number } | null {
+  const m = /^L(\d+)-L(\d+)$/.exec(section);
+  return m ? { start: Number(m[1]), end: Number(m[2]) } : null;
+}
+
+function oneTitle(line: number, what: string, title: string): string {
+  if (title === '' || /[/\\\0]/.test(title) || title === '.' || title === '..') {
+    throw new ListError(`line ${line}: the ${what} must be one name, with no slash`);
+  }
+  return title;
+}
+
+// The wiki by its own name, or another book's title.
+function bookOf(line: number, title: string): string | null {
+  const t = title.trim();
+  return t === '' || t.toLowerCase() === 'wiki' ? null : oneTitle(line, 'book after book:', t);
+}
+
+function entry(line: number, text: string, dir: string, book: string | null = null): ListEntry {
   const arrow = text.indexOf('->');
   const target = (arrow < 0 ? text : text.slice(0, arrow)).trim();
   const name = arrow < 0 ? null : text.slice(arrow + 2).trim();
-  if (name !== null && (name === '' || /[/\\\0]/.test(name) || name === '.' || name === '..')) {
-    throw new ListError(`line ${line}: the name after -> must be one name, with no slash`);
-  }
+  if (name !== null) oneTitle(line, 'name after ->', name);
   const page = PAGE.exec(target);
   if (!page) throw new ListError(`line ${line}: a page in the list is a .md file`);
-  const section = page[2]?.trim() || null;
-  return { line, path: path.resolve(dir, page[1]!), section, name };
+  let section = page[2]?.trim() || null;
+  let sha: string | null = null;
+  const lines = section ? LINES.exec(section) : null;
+  if (lines) {
+    const [start, end] = [Number(lines[1]), Number(lines[2])];
+    if (start < 1 || end < start) throw new ListError(`line ${line}: lines L${start}-L${end} run backwards or from before line 1`);
+    section = `L${start}-L${end}`;
+    sha = lines[3]?.toLowerCase() ?? null;
+  }
+  return { line, path: path.resolve(dir, page[1]!), section, name, book, sha };
 }
 
 function readText(text: string, dir: string): ImportList {
   const entries: ListEntry[] = [];
+  let book: string | null = null;
   text.split(/\r\n?|\n/).forEach((raw, i) => {
     const line = raw.trim();
     if (line === '' || line.startsWith('#')) return;
-    entries.push(entry(i + 1, line, dir));
+    const into = BOOK.exec(line);
+    if (into) book = bookOf(i + 1, into[1]!);
+    else entries.push(entry(i + 1, line, dir, book));
   });
   return { entries, left: [] };
 }
@@ -85,14 +123,19 @@ function csvRows(text: string): { line: number; cells: string[] }[] {
 function readCsv(text: string, dir: string): ImportList {
   const [head, ...rows] = csvRows(text);
   const columns = (head?.cells ?? []).map((c) => c.trim().toLowerCase());
-  const at = { path: columns.indexOf('path'), verdict: columns.indexOf('verdict') };
+  const at = { path: columns.indexOf('path'), verdict: columns.indexOf('verdict'), name: columns.indexOf('name'), book: columns.indexOf('book') };
   if (at.path < 0 || at.verdict < 0) throw new ListError('line 1: a keep/move list needs a path column and a verdict column');
   const list: ImportList = { entries: [], left: [] };
   for (const { line, cells } of rows) {
     const file = (cells[at.path] ?? '').trim();
     const verdict = (cells[at.verdict] ?? '').trim();
     if (file === '') continue;
-    if (verdict.toLowerCase() === 'move') list.entries.push(entry(line, file, dir));
+    if (verdict.toLowerCase() === 'move') {
+      const name = at.name < 0 ? '' : (cells[at.name] ?? '').trim();
+      const book = at.book < 0 ? null : bookOf(line, cells[at.book] ?? '');
+      const made = entry(line, file, dir, book);
+      list.entries.push(name ? { ...made, name: oneTitle(line, 'name', name) } : made);
+    }
     else if (verdict.toLowerCase() === 'split') list.left.push({ line, path: file, why: 'its verdict is Split: name its sections in a text list' });
     else if (verdict.toLowerCase() !== 'keep') list.left.push({ line, path: file, why: `its verdict is ${verdict || 'empty'}` });
   }

@@ -16,7 +16,8 @@ export interface Summary {
   detail: string;
 }
 
-export function describeSort(sorted: Sorted): Summary {
+/** `where` names the book: the wiki, or another book's title. */
+export function describeSort(sorted: Sorted, where = 'the wiki'): Summary {
   const of = (kind: Verdict['kind']) => sorted.verdicts.filter((v) => v.kind === kind);
   const fresh = of('new');
   const moving = sorted.verdicts.filter((v) => v.kind === 'new' || v.kind === 'update' || v.kind === 'beside');
@@ -30,21 +31,21 @@ export function describeSort(sorted: Sorted): Summary {
     parts.push(`Coming in beside its page, because the source and the page in NEO have both changed: ${names(of('beside'))}.`);
   }
   if (marks) parts.push(`${marks} CriticMarkup mark${marks === 1 ? ' becomes a comment or suggestion' : 's become comments and suggestions'}.`);
-  if (files.size) parts.push(`${files.size} image${files.size === 1 ? '' : 's'} or PDF${files.size === 1 ? '' : 's'} the pages show ${files.size === 1 ? 'is' : 'are'} copied into the wiki.`);
+  if (files.size) parts.push(`${files.size} image${files.size === 1 ? '' : 's'} or PDF${files.size === 1 ? '' : 's'} the pages show ${files.size === 1 ? 'is' : 'are'} copied into ${where}.`);
   if (missing.length) parts.push(`Not found beside the pages, so not copied: ${missing.slice(0, SHOWN).join(', ')}${missing.length > SHOWN ? ` and ${missing.length - SHOWN} more` : ''}.`);
-  if (of('same').length) parts.push(`Already in the wiki: ${names(of('same'))}.`);
+  if (of('same').length) parts.push(`Already in ${where}: ${names(of('same'))}.`);
   if (of('through-hoard').length) parts.push(`Already in hoard, so they come in with hoard's pages: ${names(of('through-hoard'))}.`);
   if (of('hoard-older').length) {
     parts.push(`Not imported, because hoard holds an older copy, which comes in with hoard's pages: ${names(of('hoard-older'))}.`);
   }
-  if (of('clash').length) parts.push(`Not imported, because a page of that name is already in the wiki or earlier in the list: ${names(of('clash'))}.`);
+  if (of('clash').length) parts.push(`Not imported, because a page of that name is already in ${where} or earlier in the list: ${names(of('clash'))}.`);
   if (of('unreadable').length) {
     parts.push(`Not read: ${names(of('unreadable'), (v) => `${v.name} (${v.kind === 'unreadable' ? v.why : ''})`)}.`);
   }
   const n = moving.length;
   return {
     count: n,
-    message: n ? `Import ${n} page${n === 1 ? '' : 's'} into the wiki?` : 'Every page picked is already in the wiki, or cannot come in.',
+    message: n ? `Import ${n} page${n === 1 ? '' : 's'} into ${where}?` : `Every page picked is already in ${where}, or cannot come in.`,
     detail: parts.join('\n\n'),
   };
 }

@@ -25,7 +25,7 @@ export interface PageSource {
    */
   name: string;
   /**
-   * For a page cut from part of the file (a split), the headings whose sections it holds, in order.
+   * For a page cut from part of the file (a split), the headings whose sections it holds, or the line ranges (L12-L40) it holds, in order.
    *
    * @minItems 1
    */

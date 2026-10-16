@@ -11,7 +11,9 @@ import { launchProfile } from '../support/electron-profile.mjs';
 // disk into the wiki, under the names it gives and with the sections it cuts out of a
 // page; a page hoard already holds stays out, and the writer is told why; a page's
 // image is copied into the wiki book; a changed source updates a page NEO has not
-// changed; and each import is committed.
+// changed; and each import is committed. A list's `book:` line sends the pages after it
+// into a book of that title (Morning Pages), made beside the wiki and opened from the
+// result or from Open Imported Book…; a line range takes those lines of a page.
 
 const sha = (text) => createHash('sha256').update(text).digest('hex');
 const HUB = '---\ntype: project\n---\n# Tide\n## Overview\nThe era of tides.\n## Tasks\n- [ ] a task\n';
@@ -58,7 +60,8 @@ async function menu(app, label) {
 }
 
 // The file picker answers with `files`; every message box with its first button, or
-// with Close where it has one and `close` is set; each box written down for the test.
+// with Close (or the `close` button named) where it has one and `close` is set; each box
+// written down for the test.
 async function answer(app, files, close = false) {
   await app.evaluate(({ dialog }, { files, close }) => {
     globalThis.__boxes = [];
@@ -66,7 +69,7 @@ async function answer(app, files, close = false) {
     dialog.showMessageBox = async (...args) => {
       const o = args.length > 1 ? args[1] : args[0];
       globalThis.__boxes.push({ message: o.message, detail: o.detail ?? '', buttons: o.buttons ?? [] });
-      const at = close ? (o.buttons ?? []).indexOf('Close') : -1;
+      const at = close ? (o.buttons ?? []).indexOf(close === true ? 'Close' : close) : -1;
       return { response: at < 0 ? 0 : at, checkboxChecked: false };
     };
   }, { files, close });
@@ -123,6 +126,46 @@ test('an import list brings pages from an old vault and from hoard into the wiki
     const quay = readFileSync(path.join(library, wiki.id, 'chapters', `${wiki.order[1]}.html`), 'utf8');
     expect(quay).toContain('The quay, rebuilt:');
     expect(existsSync(path.join(library, wiki.id, 'attachments', 'Quay Map (2).png'))).toBe(false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('a book line sends the pages after it into a book of their own, beside the wiki', async () => {
+  const { profile, old } = await profileWithVaults();
+  await mkdir(path.join(old, 'Daily'), { recursive: true });
+  await writeFile(path.join(old, 'Daily', '2026-01-23.md'), '## Morning Pages\nWoke early.\n- [ ] a task\nThe sea again.\n## Habits\n- [x] walk\n');
+  const list = path.join(profile, 'pages.txt');
+  await writeFile(list, [
+    'old vault/20_Atoms/Quay.md -> Quay-(place)',
+    'book: Morning Pages',
+    'old vault/Daily/2026-01-23.md#L1-L2 -> 2026-01-23',
+    'old vault/Daily/2026-01-23.md#L4-L4 -> 2026-01-23',
+  ].join('\n'));
+  const fixture = await launchProfile(profile);
+  try {
+    const { app, page } = fixture;
+    await page.waitForFunction(() => !!window.hoard);
+    await answer(app, [list], 'Open Morning Pages');
+    await menu(app, 'Import List to Wiki…');
+    await expect.poll(() => boxes(app).then((b) => b.length)).toBe(2);
+    const [asked, done] = await boxes(app);
+    expect(asked.message).toBe('Import 2 pages into the wiki and Morning Pages?');
+    expect(asked.detail).toContain('Into Morning Pages:\n\nComing in: 2026-01-23.');
+    expect(done.message).toBe('2 pages are in the wiki and Morning Pages.');
+    expect(done.buttons).toEqual(['Open Wiki Book', 'Open Morning Pages', 'Close']);
+
+    await expect.poll(() => page.evaluate(() => book && book.title)).toBe('Morning Pages');
+    const pages = await page.evaluate(() => ({ titles: book.chapterOrder.map((id) => book.chapterTitles[id]), first: book.chapterOrder[0] }));
+    expect(pages.titles).toEqual(['2026-01-23']);
+    expect(await page.evaluate((id) => [...document.querySelectorAll(`.chapter[data-id="${id}"] .chapter-body p`)].map((p) => p.textContent), pages.first))
+      .toEqual(['Morning Pages', 'Woke early.', 'The sea again.']);
+
+    // it is on no shelf, so the plugin opens it again
+    await page.evaluate(() => backToShelf());
+    await expect.poll(() => page.evaluate(() => book && book.title)).toBe(null);
+    await menu(app, 'Open Imported Book…');
+    await expect.poll(() => page.evaluate(() => book && book.title)).toBe('Morning Pages');
   } finally {
     await fixture.close();
   }
