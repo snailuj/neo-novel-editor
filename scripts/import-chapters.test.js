@@ -172,6 +172,7 @@ describe('File → Import Chapters…', () => {
   };
 
   test('is there and waits for a book, and a script takes none', () => {
+    on.get('more:state')(null, true); // (it's one of Show More Features' items)
     on.get('script:state')(null, { book: true, on: false });
     assert.equal(item().enabled, true);
     on.get('script:state')(null, { book: false, on: false });
@@ -185,5 +186,10 @@ describe('File → Import Chapters…', () => {
     assert.deepEqual(plain(dialogOpts.filters[0].extensions), ['docx', 'txt', 'md']);
     await handlers.get('import:pick')(null);
     assert.ok(dialogOpts.filters[0].extensions.includes('fountain'));
+    // simple NEO: scripts are behind Show More Features
+    on.get('more:state')(null, false);
+    await handlers.get('import:pick')(null);
+    assert.deepEqual(plain(dialogOpts.filters[0].extensions), ['docx', 'txt', 'md']);
+    assert.equal(item(), undefined);
   });
 });

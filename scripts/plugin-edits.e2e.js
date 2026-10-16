@@ -32,7 +32,7 @@ const LIBRARY = path.join(tmp, 'NEO Library');
 isolate(tmp, { userData: path.join(tmp, 'app'), documents: tmp });
 fs.mkdirSync(LIBRARY);
 fs.writeFileSync(path.join(LIBRARY, 'library.json'), JSON.stringify({
-  authorName: '', penNames: [], firstRunDone: true, pageTheme: 'night', hintShown: true,
+  authorName: '', penNames: [], firstRunDone: true, moreFeatures: true, pageTheme: 'night', hintShown: true,
   shelves: [{ id: 'shelf-1', name: 'Works in Progress', bookIds: [] }]
 }));
 // a covered window gets no animation frames on Windows (see plugins.e2e.js)
