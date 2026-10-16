@@ -98,14 +98,15 @@ test('no checkpoint commits inside the pair, and the one that fired runs after i
   let fired = 0;
   await layer.around([C1], async () => {
     write(C1, '<p>One.</p><p>Two, amended.</p>');
-    layer.wrote('c1');
+    // the writer saves another chapter meanwhile, so the checkpoint has work after the pair
+    write('book-fox-1/chapters/c2.html', '<p>Meanwhile.</p>');
+    layer.wrote('c2');
     time.fire();
     layer.request('chapter-switch');
     time.fire();
     fired = (await history(git, library)).length;
   });
   assert.equal(fired, 1, 'only the recovered commit existed while the edit ran');
-  write('book-fox-1/chapters/c2.html', '<p>Later.</p>');
   await layer.drained();
   assert.deepEqual(await history(git, library), ['Ada|chapter-switch', 'Librarian|librarian-after', 'Ada|recovered']);
 });
