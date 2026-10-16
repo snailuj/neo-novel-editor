@@ -6,10 +6,12 @@ import { launchProfile } from '../support/electron-profile.mjs';
 
 // Step 7, Librarian-Watches-Edits: "the librarian flags a forgotten reference in a
 // chapter". Rules: a wiki page named in new writing gets one librarian comment on the
-// name once the writer has left the chapter, never while they are still in it; its link
-// shows the page in the Wiki section; the same page named again in that chapter gets no
-// second comment; a typed [[link]] is not a forgotten reference; and Stop Flagging This
-// Page resolves the comment and quiets the page in every chapter.
+// name at the next save, once the word is finished (not while the caret is still at its
+// end); Show or Hide Comments (Ctrl+Shift+M) keeps every comment off the page, a new one
+// included, until shown again; the comment's link shows the page in the Wiki section; the
+// same page named again in that chapter gets no second comment; a typed [[link]] is not a
+// forgotten reference; and Stop Flagging This Page resolves the comment and quiets the
+// page in every chapter.
 
 async function profileWithVault() {
   const profile = await mkdtemp(path.join(tmpdir(), 'neo-test-'));
@@ -62,7 +64,9 @@ async function twoChapters(page) {
   });
 }
 
-test('a page named in new writing is flagged once the writer leaves the chapter, once, and not after Stop Flagging', async () => {
+const drawn = (page, name) => page.evaluate((key) => [...(CSS.highlights.get(key) ?? [])].map((r) => r.toString()), `plugin-hoard-${name}`);
+
+test('a page named in new writing is flagged at the next save, once, hidden on request, and not after Stop Flagging', async () => {
   const { profile, library, files } = await profileWithVault();
   const fixture = await launchProfile(profile);
   try {
@@ -87,16 +91,27 @@ test('a page named in new writing is flagged once the writer leaves the chapter,
       await window.hoard.companion.settled();
     });
 
-    // nothing while the writer is still in the chapter
-    await write(0, ' Then the kraken rose.');
+    // not while the caret is still at the end of the name: the word may go on
+    await write(0, ' Then the kraken');
     await settled();
     expect(await librarians('c1')).toEqual([]);
 
-    // leaving it: one comment, on the name, linking the page
-    await page.locator('.chapter-body p').nth(1).click();
-    await expect.poll(() => librarians('c1')).toEqual([
+    // the word finished, the next save: one comment, on the name, linking the page
+    await page.keyboard.insertText(' rose.');
+    await expect.poll(() => librarians('c1'), { timeout: 10_000 }).toEqual([
       ['kraken', 'open', '[[kraken]]: matched as a bare name in your prose (a guess, not a link you typed).'],
     ]);
+    await expect.poll(() => drawn(page, 'comment')).toEqual(['kraken']);
+
+    // hidden, comments stay off the page, a new one included, until shown again
+    await page.keyboard.press('ControlOrMeta+Shift+KeyM');
+    await expect.poll(() => drawn(page, 'comment')).toEqual([]);
+    await write(1, ' The harbour wall.');
+    await page.locator('.chapter-body p').nth(0).click();
+    await expect.poll(() => librarians('c2').then((l) => l.length)).toBe(1);
+    expect(await drawn(page, 'comment')).toEqual([]);
+    await page.keyboard.press('ControlOrMeta+Shift+KeyM');
+    await expect.poll(() => drawn(page, 'comment').then((d) => d.sort())).toEqual(['harbour', 'kraken']);
     const sidecar = JSON.parse(await readFile(path.join(library, '.neo', bookId, 'chapters', 'c1.json'), 'utf8'));
     expect(sidecar.marks.map((m) => m.created.who)).toEqual(['librarian']);
 
@@ -111,11 +126,11 @@ test('a page named in new writing is flagged once the writer leaves the chapter,
 
     // the same page again in that chapter, and a typed link in the other: nothing new
     await write(0, ' The Deep One sank.');
-    await write(1, ' Rain over [[Harbour]].');
+    await write(1, ' Rain over [[Kraken]].');
     await page.locator('.chapter-body p').nth(0).click();
     await settled();
     expect((await librarians('c1')).length).toBe(1);
-    expect(await librarians('c2')).toEqual([]);
+    expect((await librarians('c2')).length).toBe(1);
 
     // Stop Flagging This Page, on the comment picked in the Comments section
     await page.evaluate(() => window.hoard.marks.show());
@@ -127,7 +142,7 @@ test('a page named in new writing is flagged once the writer leaves the chapter,
     await write(1, ' The kraken, again.');
     await page.locator('.chapter-body p').nth(0).click();
     await settled();
-    expect(await librarians('c2')).toEqual([]);
+    expect((await librarians('c2')).map(([exact]) => exact)).toEqual(['harbour']);
   } finally {
     await fixture.close();
   }
