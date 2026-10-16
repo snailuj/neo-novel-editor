@@ -10,7 +10,7 @@ import {
   blend, buildCorpus, card, chunks, embeddingRank, inRoster, lexicalRank, packetChars, rosterChars, rosterRank,
   type Embed, type Source,
 } from '../../src/hoard/ripple/shortlist.ts';
-import { buildSheet, pastTargets, pickSources, scoreSheet, type Key } from '../../src/hoard/ripple/sheet.ts';
+import { buildSheet, pastTargets, pickSources, scoreSheet, withUnions, type Key } from '../../src/hoard/ripple/sheet.ts';
 import { readSnapshot } from '../../src/hoard/ripple/snapshot.ts';
 import { isolateGitConfig, tempDir } from './git-support.ts';
 
@@ -215,6 +215,25 @@ test('scoring reads a path with brackets, aligns cases by source, and counts pag
   const renamed = sheet.replace(`## Case 1: ${sourceRel}`, '## Case 1: [[Tide-Ledger]]');
   assert.notEqual(renamed, sheet, 'baseline: the heading changed');
   assert.equal(scoreSheet(renamed, key).cases[0]!.lists[0]!.caught, 2, 'a heading may name the source as a link');
+});
+
+// Rule: a union keeps the whole roster list and adds the first pages of another list
+// it lacks, so its score needs no ticks beyond the sheet's: every page was shown.
+test('a union adds another list\'s first pages the roster lacks, and leaves blends alone', () => {
+  const key: Key = { note: '', cases: [{
+    source: sourceRel, pastTargets: [], wholeRosterPacketChars: 1,
+    lists: [
+      { method: 'roster', pages: ['a.md', 'b.md'], packetChars: 1000, pastCaught: 0 },
+      { method: 'embedding m', pages: ['b.md', 'c.md', 'd.md', 'e.md'], packetChars: 1000, pastCaught: 0 },
+      { method: 'blend m', pages: ['a.md', 'c.md'], packetChars: 1000, pastCaught: 0 },
+    ],
+  }] };
+  const lists = withUnions(key, 2).cases[0]!.lists;
+  const union = lists.find((l) => l.method === 'roster + 2 embedding m')!;
+  assert.deepEqual(union.pages, ['a.md', 'b.md', 'c.md', 'd.md']);
+  assert.equal(union.packetChars, 2000);
+  assert.ok(!lists.some((l) => l.method.includes('blend m') && l.method.startsWith('roster +')));
+  assert.equal(key.cases[0]!.lists.length, 3, 'the key itself is unchanged');
 });
 
 // Rule: a case is read as the vault stood before its source came in, so a link the

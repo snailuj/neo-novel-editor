@@ -128,6 +128,31 @@ export function buildSheet(cases: SheetCase[]): { sheet: string; key: Key } {
   return { sheet: `${out.join('\n')}\n`, key };
 }
 
+/**
+ * Adds, per case, the roster's list joined with the first `extra` pages of each other
+ * single-method list that the roster lacks. Every page in a union was on the sheet, so
+ * the ticks already score it. Its packet is estimated pro rata from the roster's.
+ */
+export function withUnions(key: Key, extra: number): Key {
+  return {
+    ...key,
+    cases: key.cases.map((c) => {
+      const roster = c.lists.find((l) => l.method === 'roster');
+      if (!roster) return c;
+      const unions = c.lists.filter((l) => l !== roster && !l.method.startsWith('blend')).map((l): KeyList => {
+        const pages = [...roster.pages, ...l.pages.filter((p) => !roster.pages.includes(p)).slice(0, extra)];
+        return {
+          method: `roster + ${extra} ${l.method}`,
+          pages,
+          packetChars: Math.round(roster.packetChars * pages.length / (roster.pages.length || 1)),
+          pastCaught: 0,
+        };
+      });
+      return { ...c, lists: [...c.lists, ...unions] };
+    }),
+  };
+}
+
 export interface ListScore {
   method: string;
   size: number;
