@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The start of a librarian edit, version 1: the book folder and chapter id, each one name inside the library, and the chapter's HTML as the window holds it once held, which the disk must hold before the author's commit.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["bookId", "chId", "html"],
+  "properties": {
+    "bookId": { "type": "string", "minLength": 1 },
+    "chId": { "type": "string", "minLength": 1 },
+    "html": { "type": "string" }
+  }
+}

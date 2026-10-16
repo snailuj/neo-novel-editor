@@ -161,3 +161,55 @@ test('a failed commit is reported and the next trigger still runs', async () => 
   assert.equal(calls, 2);
   assert.equal(errors.length, 1);
 });
+
+// Rule: while the checkpoints are paused no commit starts, whatever fires; what fired
+// is committed once after the pause, and a pause waits for the commit in flight.
+test('a pause holds every trigger and runs the last one once after it', async () => {
+  const s = setup(3_000);
+  s.checkpoints.now('recovered');
+  let paused = false;
+  const pausing = s.checkpoints.pause().then(() => { paused = true; });
+  await s.advance(1_000);
+  assert.equal(paused, false, 'the pause waits for the commit in flight');
+  await s.advance(2_000);
+  await pausing;
+  assert.equal(paused, true);
+  assert.deepEqual(s.made.map((m) => m.reason), ['recovered']);
+
+  s.checkpoints.wrote('c1');
+  await s.advance(60_000);
+  s.checkpoints.request('chapter-switch');
+  await s.advance(10_000);
+  s.checkpoints.now('close');
+  await s.advance(10_000);
+  assert.deepEqual(s.made.map((m) => m.reason), ['recovered'], 'nothing is committed while paused');
+
+  s.checkpoints.resume();
+  await s.advance(10_000);
+  assert.deepEqual(s.made.map((m) => m.reason), ['recovered', 'close']);
+  assert.equal(s.overlapped(), false);
+});
+
+test('a pause with nothing fired resumes to no commit, and the timers run again after it', async () => {
+  const s = setup();
+  await s.checkpoints.pause();
+  s.checkpoints.resume();
+  await s.advance(120_000);
+  assert.equal(s.made.length, 0);
+  s.checkpoints.wrote('c1');
+  await s.advance(60_000);
+  assert.deepEqual(s.made.map((m) => m.reason), ['idle']);
+});
+
+test('a commit queued behind the one in flight waits out the pause', async () => {
+  const s = setup(3_000);
+  s.checkpoints.now('recovered');
+  s.checkpoints.now('idle');
+  const pausing = s.checkpoints.pause();
+  await s.advance(10_000);
+  await pausing;
+  assert.deepEqual(s.made.map((m) => m.reason), ['recovered']);
+  s.checkpoints.resume();
+  await s.advance(10_000);
+  assert.deepEqual(s.made.map((m) => m.reason), ['recovered', 'idle']);
+});
