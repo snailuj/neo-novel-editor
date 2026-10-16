@@ -1,4 +1,4 @@
-// The wiki in the window. Import to Wiki asks the main half, which runs the file picker
+// The wiki in the window. Import to Wiki and Import List to Wiki ask the main half, which runs the file picker
 // and the questions. [[links]] are drawn on the page of any book and followed with
 // Ctrl+click (Cmd+click on a Mac) or Follow Link: from another book the page shows in
 // the wiki pane beside it (pane.ts), so the writer keeps their place; in the wiki book
@@ -19,7 +19,7 @@ import { startWikiPane } from './pane.ts';
 const REDRAW_MS = 300;
 const STATUS_MS = 4_000;
 
-interface Imported { outcome: string; bookId?: string | null; imported?: Applied['imported']; open?: boolean; message?: string }
+interface Imported { outcome: string; bookId?: string | null; imported?: Applied['imported']; open?: boolean; openBookId?: string | null; message?: string }
 
 const frames = (n: number) => new Promise<void>((resolve) => {
   const next = (left: number) => (left === 0 ? resolve() : requestAnimationFrame(() => next(left - 1)));
@@ -109,6 +109,12 @@ export function startWiki(neo: NeoApiV4) {
     return opened;
   };
 
+  // A book an import list filled beside the wiki (Morning Pages, say); it is on no shelf.
+  const openImported = async (bookId: string) => {
+    if (neo.book()?.id === bookId) return;
+    if (!(await neo.open(bookId))) say('The book could not be opened.');
+  };
+
   // The wiki book opened at a page. The book takes the writer back to where they last
   // were a frame after it opens, so the page is gone to once that is done.
   const editInBook = async (chId: string) => {
@@ -142,23 +148,30 @@ export function startWiki(neo: NeoApiV4) {
     return place && typeof text === 'string' ? linkAt(text, place.off) : null;
   };
 
-  neo.addCommand('import-wiki', async () => {
+  const runImport = async (from: 'pages' | 'list') => {
     if (importing) {
       say('An import is already running.');
       return;
     }
     importing = true;
     try {
-      const answer = (await neo.invoke('wiki.import', { openBookId: neo.book()?.id ?? null })) as Imported;
+      const answer = (await neo.invoke('wiki.import', { openBookId: neo.book()?.id ?? null, from })) as Imported;
       await refresh();
       drawLinks();
       if (answer.outcome === 'imported' && answer.open) await openWiki();
+      else if (answer.outcome === 'imported' && answer.openBookId) await openImported(answer.openBookId);
       else if (pane.shown()) await pane.reload();
     } finally {
       importing = false;
     }
-  });
+  };
+  neo.addCommand('import-wiki', () => runImport('pages'));
+  neo.addCommand('import-wiki-list', () => runImport('list'));
   neo.addCommand('open-wiki', async () => { await openWiki(); });
+  neo.addCommand('open-imported-book', async () => {
+    const { bookId } = (await neo.invoke('wiki.imported-book')) as { bookId: string | null };
+    if (bookId) await openImported(bookId);
+  });
   neo.addCommand('follow-link', async () => {
     const target = linkHere();
     if (!target) {
