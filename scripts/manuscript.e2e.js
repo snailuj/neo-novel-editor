@@ -29,7 +29,7 @@ app.setPath('documents', tmp);
 const LIB = path.join(tmp, 'NEO Library');
 fs.mkdirSync(LIB);
 fs.writeFileSync(path.join(LIB, 'library.json'), JSON.stringify({
-  authorName: 'Mary Ann Evans', emailAddress: 'mary@example.com', penNames: [], firstRunDone: true, pageTheme: 'night', hintShown: true,
+  authorName: 'Mary Ann Evans', emailAddress: 'mary@example.com', penNames: [], firstRunDone: true, moreFeatures: true, pageTheme: 'night', hintShown: true,
   shelves: [{ id: 'shelf-1', name: 'Works in Progress', bookIds: [] }]
 }));
 const loadFile = BrowserWindow.prototype.loadFile;

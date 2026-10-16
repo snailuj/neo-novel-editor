@@ -33,7 +33,7 @@ isolate(tmp, { userData: path.join(tmp, 'app'), documents: tmp });
 fs.mkdirSync(LIBRARY);
 // hintShown: the once-per-library Enter hint would otherwise fill #hint
 fs.writeFileSync(path.join(LIBRARY, 'library.json'), JSON.stringify({
-  authorName: '', penNames: [], firstRunDone: true, pageTheme: 'night', hintShown: true,
+  authorName: '', penNames: [], firstRunDone: true, moreFeatures: true, pageTheme: 'night', hintShown: true,
   shelves: [{ id: 'shelf-1', name: 'Works in Progress', bookIds: [] }]
 }));
 // Windows stops a window's animation frames while it counts the window as
