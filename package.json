@@ -27,6 +27,7 @@
     "test": "node --test \"scripts/*.test.js\"",
     "test:unit": "node --test \"tests/unit/**/*.test.ts\"",
     "librarian": "node src/librarian/cli.ts",
+    "blocks": "node src/librarian/blocks/cli.ts",
     "test:e2e": "npm run build && playwright test",
     "check": "npm run gen:check && npm run typecheck && npm run lint:fork && npm test && npm run test:unit",
     "test:coverage": "node --test --experimental-test-coverage \"scripts/*.test.js\"",
