@@ -4,7 +4,7 @@
 // row it already has (matched by page and block id) and only adds new blocks.
 import path from 'node:path';
 import type { Judged } from './judge.ts';
-import { type Label, MORNING_PAGES, ruleLabel } from './rules.ts';
+import { fallbackGuess, type Label, MORNING_PAGES, ruleLabel } from './rules.ts';
 import type { Block } from './split.ts';
 
 export const COLUMNS = ['page', 'block', 'lines', 'heading', 'proposed', 'label', 'include', 'dest', 'book', 'pasted', 'by', 'reason', 'preview'] as const;
@@ -71,7 +71,7 @@ export function rowsFor(page: string, blocks: readonly Block[], judged: Readonly
     const heading = b.heading.join(' > ');
     const ruled = ruleLabel(b);
     const j = judged.get(b.id);
-    const label: Label = ruled?.label ?? j?.label ?? 'other';
+    const label: Label = ruled?.label ?? j?.label ?? fallbackGuess(b);
     const by = ruled ? 'rule' : j?.by ?? 'no-judge';
     const pasted = !ruled && j?.pasted === true;
     let reason = ruled?.reason ?? j?.reason ?? 'not judged';

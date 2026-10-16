@@ -122,6 +122,7 @@ export function applySheet(vault: string, rows: readonly Row[], out: string, opt
       log.info(`removed ${rel}, which the sheet no longer writes`);
     }
   }
+  mkdirSync(out, { recursive: true });
   writeFileSync(recordFile, JSON.stringify(written, null, 2));
   result.written = written;
   log.info(`wrote ${wiki.size} wiki pages and ${book.size} Morning Pages chapters; ${result.missing.length} blocks changed since review; ${result.unresolved} rows still to check`);
