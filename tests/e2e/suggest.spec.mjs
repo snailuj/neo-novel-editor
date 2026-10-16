@@ -77,6 +77,15 @@ async function paneSettled(page) {
   });
 }
 
+// NEO toggles fullscreen on any Ctrl+Enter that reaches the document (app.js), so a box
+// that takes Ctrl+Enter to send must keep it from going further. These count the ones
+// that got there, from a listener on the document beside NEO's.
+const watchCtrlEnter = (page) => page.evaluate(() => {
+  window.ctrlEnterReached = 0;
+  document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) window.ctrlEnterReached += 1; });
+});
+const ctrlEnterReached = (page) => page.evaluate(() => window.ctrlEnterReached);
+
 async function ready(page) {
   await page.waitForFunction(() => !!window.hoard);
   await expect.poll(() => page.evaluate(() => window.hoard.gitStatus().then((s) => s.state))).toBe('tracked');
@@ -116,10 +125,12 @@ test('the librarian\'s page takes suggestions, which the librarian accepts or fl
     await page.keyboard.press('Backspace');
     await expect(page.locator('#hoard-suggest-text')).toHaveValue('');
     await page.locator('#hoard-suggest-note').fill('The keeper is unnamed here.');
+    await watchCtrlEnter(page);
     await page.locator('#hoard-suggest-note').press('Control+Enter');
     await expect.poll(() => readMarks(library, bookId).map((m) => [m.kind, m.state])).toEqual([['substitution', 'accepted'], ['deletion', 'accepted']]);
     await expect.poll(() => chapterFile(library, bookId), { timeout: 10_000 }).toBe('<p>The harbour of Vell faces east.</p><p>Its rows at dawn.</p>');
     expect(readMarks(library, bookId)[1].thread.map((e) => [e.who, e.body])).toEqual([['author', 'The keeper is unnamed here.']]);
+    expect(await ctrlEnterReached(page)).toBe(0);
 
     // a link to no page is flagged, and the page stays as it was
     await select(page, 'Vell');
@@ -186,6 +197,7 @@ test('a comment made in the Wiki pane is drawn there and is the wiki book\'s own
       getSelection().addRange(range);
     });
     await paneSettled(page);
+    await watchCtrlEnter(page);
     await page.locator('.hoard-pane-add').click({ force: true });
     await page.locator('#hoard-pane-compose-text').fill('Why west?');
     await page.locator('#hoard-pane-compose-text').press('Control+Enter');
@@ -199,6 +211,7 @@ test('a comment made in the Wiki pane is drawn there and is the wiki book\'s own
     await cardIn.locator('textarea').fill('Because of the sunset.');
     await cardIn.locator('textarea').press('Control+Enter');
     await expect.poll(() => readMarks(library, wikiId)[0].thread.map((e) => e.body)).toEqual(['Why west?', 'Because of the sunset.']);
+    expect(await ctrlEnterReached(page)).toBe(0);
     await paneSettled(page);
     await page.locator(`.hoard-pane-marks .hoard-mark[data-mark="${made.id}"] button[data-action="Resolve"]`).click({ force: true });
     await expect.poll(() => readMarks(library, wikiId)[0].state).toBe('resolved');
