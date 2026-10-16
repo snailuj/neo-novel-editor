@@ -156,12 +156,15 @@ const CASE = /^## Case \d+: (.*)$/;
  */
 export function scoreSheet(sheet: string, key: Key): Score {
   const sections = new Map<string, { shown: Set<string>; ticked: Set<string> }>();
+  const headings: string[] = [];
   let current: { shown: Set<string>; ticked: Set<string> } | null = null;
   for (const line of sheet.split('\n')) {
     const heading = CASE.exec(line);
     if (heading) {
       current = { shown: new Set(), ticked: new Set() };
-      sections.set(heading[1]!.trim(), current);
+      // The author may rewrite a heading as a link to the source; both pair by link key.
+      headings.push(heading[1]!.trim());
+      sections.set(linkKey(heading[1]!.trim().replace(/^\[\[(.*)\]\]$/, '$1')), current);
       continue;
     }
     const m = ROW.exec(line);
@@ -171,8 +174,8 @@ export function scoreSheet(sheet: string, key: Key): Score {
   }
   const rate = (a: number, b: number): number => (b ? a / b : 0);
   const cases = key.cases.map((c) => {
-    const section = sections.get(c.source);
-    if (!section) throw new Error(`the sheet has no case for ${c.source} (its cases: ${[...sections.keys()].join(", ") || "none"})`);
+    const section = sections.get(linkKey(c.source));
+    if (!section) throw new Error(`the sheet has no case for ${c.source} (its cases: ${headings.join(', ') || 'none'})`);
     const { shown, ticked } = section;
     return {
       source: c.source,

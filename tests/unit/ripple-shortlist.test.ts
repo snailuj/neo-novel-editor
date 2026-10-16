@@ -196,6 +196,9 @@ test('scoring reads a path with brackets, aligns cases by source, and counts pag
   assert.equal(l.caught, 2);
   assert.equal(l.unrated, 1);
   assert.throws(() => scoreSheet('## Case 1: sources/Other.md\n', key), /sources\/Other\.md/);
+  const renamed = sheet.replace(`## Case 1: ${sourceRel}`, '## Case 1: [[Tide-Ledger]]');
+  assert.notEqual(renamed, sheet, 'baseline: the heading changed');
+  assert.equal(scoreSheet(renamed, key).cases[0]!.lists[0]!.caught, 2, 'a heading may name the source as a link');
 });
 
 // Rule: a case is read as the vault stood before its source came in, so a link the
