@@ -32,11 +32,11 @@ export interface Io {
 class UsageError extends Error {}
 
 const USAGE = 'usage: blocks classify --vault DIR --out SHEET [--already LIST] [--judge CMD] [--votes N] [--jobs N] [--pages FILE] [PAGE...]\n'
-  + '       blocks apply --vault DIR --sheet SHEET --out DIR [--path-prefix P] [--picks FILE]';
+  + '       blocks apply --vault DIR --sheet SHEET --out DIR [--path-prefix P] [--picks FILE [--picks-kinds writing,morning-pages]]';
 
 const VALUES: Record<string, string[]> = {
   classify: ['--vault', '--out', '--already', '--judge', '--votes', '--jobs', '--pages'],
-  apply: ['--vault', '--sheet', '--out', '--path-prefix', '--picks'],
+  apply: ['--vault', '--sheet', '--out', '--path-prefix', '--picks', '--picks-kinds'],
 };
 const REQUIRED: Record<string, string[]> = { classify: ['--vault', '--out'], apply: ['--vault', '--sheet', '--out'] };
 
@@ -139,7 +139,9 @@ function apply(values: Map<string, string>, io: Io): number {
   const result = applySheet(at(values.get('--vault')!), rows, at(values.get('--out')!), prefix === undefined ? {} : { pathPrefix: prefix });
   const picksFile = values.get('--picks');
   if (picksFile !== undefined) {
-    const { picks } = blockPicks(at(values.get('--vault')!), rows);
+    const kinds = (values.get('--picks-kinds') ?? 'writing,morning-pages').split(',').map((k) => k.trim());
+    for (const k of kinds) if (k !== 'writing' && k !== 'morning-pages') throw new UsageError(`--picks-kinds: unknown kind '${k}'`);
+    const picks = blockPicks(at(values.get('--vault')!), rows).picks.filter((p) => kinds.includes(p.kind));
     writeAtomic(at(picksFile), picks.map((p) => JSON.stringify(p)).join('\n') + (picks.length ? '\n' : ''));
     io.stdout(`Wrote ${picks.length} picks to ${picksFile}.\n`);
   }

@@ -31,10 +31,10 @@ test('rows carry the proposal and sensible defaults for wiki, wiki_page and book
   assert.deepEqual(rows.map((r) => [r.proposed, r.label, r.wiki, r.wiki_page, r.book, r.by]), [
     ['morning-pages', 'morning-pages', 'no', '', '2026-01-02', 'judge'],
     // writing in Morning Pages goes both ways
-    ['writing', 'writing', 'yes', '2026-01-02-Week-1-Morning-Pages-(snippets)', '2026-01-02', 'judge'],
+    ['writing', 'writing', 'yes', '2026-01-02-Morning-Pages-(snippets)', '2026-01-02', 'judge'],
     ['tasks', 'tasks', 'no', '', '', 'judge'],
     // pasted writing is left out by default
-    ['writing', 'writing', 'no', '2026-01-02-Week-1-The-Story-(snippets)', '', 'judge'],
+    ['writing', 'writing', 'no', '2026-01-02-The-Story-(snippets)', '', 'judge'],
   ]);
   assert.equal(rows[1]!.lines, '4-4');
   assert.equal(rows[1]!.heading, 'Morning Pages');
@@ -56,7 +56,7 @@ test('a vote for morning-pages outside the section suggests the book; a vote for
   const v = new Map([[blocks[0]!.id, { label: 'other', pasted: false, reason: 'r', by: 'votes-differ', votes: ['other', 'morning-pages'] } as Judged]]);
   assert.deepEqual(rowsFor(PATH, blocks, v, []).map((r) => [r.wiki, r.book]), [['no', '2026-01-02']]);
   v.set(blocks[0]!.id, { ...v.get(blocks[0]!.id)!, votes: ['other', 'writing'] });
-  assert.deepEqual(rowsFor(PATH, blocks, v, []).map((r) => [r.wiki, r.book, r.wiki_page]), [['check', '', '2026-01-02-Week-1-(snippets)']]);
+  assert.deepEqual(rowsFor(PATH, blocks, v, []).map((r) => [r.wiki, r.book, r.wiki_page]), [['check', '', '2026-01-02-(snippets)']]);
 });
 
 test('votes that differ, a failed judge and no judge all ask the author', () => {
@@ -121,6 +121,7 @@ test('a re-run keeps every reviewed row and adds new blocks', () => {
 test('default names are one safe path segment', () => {
   assert.equal(defaultDest('a/b: c?.md', 'x/y #z'), 'b-c-x-y-z-(snippets)');
   assert.equal(defaultDest('Notes.md', ''), 'Notes-(snippets)');
+  assert.equal(defaultDest('Daily/2026-01-10 Week 2 Day 6.md', 'Morning Pages'), '2026-01-10-Morning-Pages-(snippets)', 'a daily note by its date');
   assert.equal(defaultBook('Garuda.md', '2026-04-14 > Sub'), '2026-04-14');
   assert.equal(defaultBook('Garuda.md', 'July'), 'Garuda');
 });

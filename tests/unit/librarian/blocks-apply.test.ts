@@ -73,11 +73,11 @@ test('included writing becomes wiki pages with their sources; nothing else does'
   const result = applySheet(dir, sheet(), out, { pathPrefix: 'E:\\Out' });
   assert.deepEqual(result.missing, []);
   const pages = readdirSync(path.join(out, 'wiki')).sort();
-  assert.deepEqual(pages, ['2026-01-01-Week-1-Notes-(snippets).md', '2026-01-02-Week-1-Later-(snippets).md']);
-  const later = readFileSync(path.join(out, 'wiki', '2026-01-02-Week-1-Later-(snippets).md'), 'utf8');
+  assert.deepEqual(pages, ['2026-01-01-Notes-(snippets).md', '2026-01-02-Later-(snippets).md']);
+  const later = readFileSync(path.join(out, 'wiki', '2026-01-02-Later-(snippets).md'), 'utf8');
   assert.match(later, /^---\nsources:\n {2}- "Daily\/2026-01-02 Week 1\.md lines 13-13 \^[0-9a-f]{10}"\n---\n\nAn idea: the otter keeps a ledger of debts\.\n$/);
   const list = readFileSync(path.join(out, 'import-list.txt'), 'utf8');
-  assert.equal(list, 'E:\\Out\\wiki\\2026-01-01-Week-1-Notes-(snippets).md\nE:\\Out\\wiki\\2026-01-02-Week-1-Later-(snippets).md\n');
+  assert.equal(list, 'E:\\Out\\wiki\\2026-01-01-Notes-(snippets).md\nE:\\Out\\wiki\\2026-01-02-Later-(snippets).md\n');
 });
 
 test('rows of several sections joined in one dest keep their order under their headings', () => {
@@ -128,7 +128,7 @@ test('rows to check are not written, and are counted', () => {
   const out = tempDir();
   const result = applySheet(vault(), rows, out, {});
   assert.equal(result.unresolved, 1);
-  assert.equal(existsSync(path.join(out, 'wiki', '2026-01-02-Week-1-Later-(snippets).md')), false);
+  assert.equal(existsSync(path.join(out, 'wiki', '2026-01-02-Later-(snippets).md')), false);
 });
 
 test('a re-run removes the pages the last run wrote and this one does not', () => {
@@ -137,7 +137,7 @@ test('a re-run removes the pages the last run wrote and this one does not', () =
   applySheet(vault(), rows, out, {});
   for (const r of rows) if (r.preview.startsWith('The heron')) r.wiki = 'no';
   applySheet(vault(), rows, out, {});
-  assert.deepEqual(readdirSync(path.join(out, 'wiki')), ['2026-01-02-Week-1-Later-(snippets).md']);
+  assert.deepEqual(readdirSync(path.join(out, 'wiki')), ['2026-01-02-Later-(snippets).md']);
 });
 
 test('a wiki_page that is not one path segment is refused', () => {
@@ -156,7 +156,7 @@ test('picks name each included block by lines under the whole file\'s hash, once
   assert.deepEqual(day1.map((p) => [p.start, p.end, p.kind, p.target]), [
     [7, 7, 'morning-pages', '2026-01-02'],
     [9, 10, 'morning-pages', '2026-01-02'],
-    [13, 13, 'writing', '2026-01-02-Week-1-Later-(snippets)'],
+    [13, 13, 'writing', '2026-01-02-Later-(snippets)'],
     [13, 13, 'morning-pages', '2026-01-02'],
     [15, 17, 'morning-pages', '2026-01-02'],
   ]);

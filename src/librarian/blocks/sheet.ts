@@ -52,10 +52,12 @@ const stemOf = (page: string) => path.posix.basename(page.replace(/\\/g, '/')).r
 const safe = (s: string) => s.replace(/[\\/:*?"<>|#^[\]]+/g, ' ').trim().replace(/\s+/g, '-').replace(/-{2,}/g, '-');
 const DATE = /\d{4}-\d{2}-\d{2}/;
 
-/** The default wiki page for a writing block: its page and innermost heading. */
+/** The default wiki page for a writing block: its page (a daily note by its date alone) and innermost heading. */
 export function defaultDest(page: string, heading: string): string {
   const inner = heading.split(' > ').pop() ?? '';
-  return `${[safe(stemOf(page)), safe(inner)].filter(Boolean).join('-')}-(snippets)`;
+  const stem = stemOf(page);
+  const name = /^\d{4}-\d{2}-\d{2}\b/.exec(stem)?.[0] ?? stem;
+  return `${[safe(name), safe(inner)].filter(Boolean).join('-')}-(snippets)`;
 }
 
 /** The default Morning Pages chapter: the page's date, else a heading's, else the page. */
