@@ -1,8 +1,9 @@
 // npm run ripple:shortlist -- --vault <hoard> --out <folder> [--source <relpath> ...]
-//   [--pick N --rulings <RIPPLE.jsonl>] [--skip-key <earlier key.json> ...] [--git] [--k 30]
+//   [--pick N --rulings <RIPPLE.jsonl>] [--skip-key <earlier key.json> ...]
+//   [--cases-from <earlier key.json> ...] [--seen <earlier sheet.md> ...] [--git] [--k 30]
 //   [--embed <model>[#titles] ...]
 // Writes sheet.md (each candidate once, to tick by hand) and key.json to --out, never
-// inside the vault. `--score <folder> [--ticks <sheet.md>] [--union N]` then reads the
+// inside the vault. `--score <folder> [--ticks <sheet.md> ...] [--union N]` then reads the
 // ticks back into score.md, with --union adding the roster plus N pages from each model.
 // A spike for choosing ripple's shortlist method; not part of the app.
 import { createHash } from 'node:crypto';
@@ -10,7 +11,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, write
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { readText } from '../../librarian/vault-fs.ts';
-import { buildSheet, pastTargets, pickSources, renderScore, scoreSheet, withUnions, type Key, type SheetCase, type SheetList } from './sheet.ts';
+import { buildSheet, pastTargets, pickSources, readSheet, renderScore, scoreSheet, withUnions, type Key, type SheetCase, type SheetList } from './sheet.ts';
 import {
   ROSTER_ZONES, blend, buildCorpus, embeddingRank, inRoster, lexicalRank, rosterChars, rosterRank,
   type Embed, type Source,
@@ -136,11 +137,13 @@ async function main(argv: string[]): Promise<void> {
       pick: { type: 'string' },
       rulings: { type: 'string' },
       'skip-key': { type: 'string', multiple: true },
+      'cases-from': { type: 'string', multiple: true },
+      seen: { type: 'string', multiple: true },
       git: { type: 'boolean', default: false },
       k: { type: 'string', default: '30' },
       embed: { type: 'string', multiple: true },
       score: { type: 'string' },
-      ticks: { type: 'string' },
+      ticks: { type: 'string', multiple: true },
       union: { type: 'string' },
       pooling: { type: 'string', default: 'mean' },
       dtype: { type: 'string', default: 'q8' },
@@ -157,9 +160,10 @@ async function main(argv: string[]): Promise<void> {
       if (!(n > 0)) throw new UsageError('--union takes a number');
       key = withUnions(key, n);
     }
-    // --ticks scores this run's lists against a sheet ticked for an earlier run.
-    const ticks = values.ticks ? path.resolve(values.ticks) : path.join(dir, 'sheet.md');
-    const score = scoreSheet(readFileSync(ticks, 'utf8'), key);
+    // --ticks scores this run's lists against sheets ticked for earlier runs; several are
+    // read as one, so a top-up sheet scores together with the sheet it tops up.
+    const ticks = values.ticks?.length ? values.ticks.map((t) => path.resolve(t)) : [path.join(dir, 'sheet.md')];
+    const score = scoreSheet(ticks.map((t) => readFileSync(t, 'utf8')).join('\n'), key);
     writeFileSync(path.join(dir, 'score.md'), renderScore(score));
     for (const t of score.totals) log(`${t.method}: caught ${t.caught} of ${t.ticked} ticked, ${t.size} listed`);
     log(`wrote ${path.join(dir, 'score.md')}`);
@@ -174,6 +178,10 @@ async function main(argv: string[]): Promise<void> {
   if (!(k > 0) || !(briefChars >= 0)) throw new UsageError('--k and --brief-chars take numbers');
   const rulings = values.rulings ? readFileSync(values.rulings, 'utf8') : '';
   const sources = [...(values.source ?? [])];
+  // --cases-from runs an earlier key's cases again, as with another model or precision.
+  for (const file of values['cases-from'] ?? []) {
+    for (const c of (JSON.parse(readFileSync(file, 'utf8')) as Key).cases) if (!sources.includes(c.source)) sources.push(c.source);
+  }
   if (values.pick) {
     if (!rulings) throw new UsageError('--pick needs --rulings');
     // An earlier run's key names the cases already read, so a second sheet holds new ones.
@@ -245,7 +253,9 @@ async function main(argv: string[]): Promise<void> {
     });
   }
 
-  const { sheet, key } = buildSheet(cases);
+  // --seen makes a top-up: rows the named sheets already showed are left out.
+  const seen = values.seen?.length ? readSheet(values.seen.map((f) => readFileSync(f, 'utf8')).join('\n')).sections : undefined;
+  const { sheet, key } = buildSheet(cases, seen && new Map([...seen].map(([id, sec]) => [id, sec.shown])));
   writeFileSync(path.join(out, 'sheet.md'), sheet);
   writeFileSync(path.join(out, 'key.json'), `${JSON.stringify({ ...key, k, models: values.embed ?? [], timings }, null, 2)}\n`);
   for (const c of key.cases) {

@@ -87,12 +87,15 @@ export function pickSources(log: string, n: number, skip: readonly string[] = []
  * row says which list put it there or where it ranked. The key keeps each list's pages
  * and what the judge's packet would cost with it, in characters.
  */
-export function buildSheet(cases: SheetCase[]): { sheet: string; key: Key } {
+export function buildSheet(cases: SheetCase[], seen?: Map<string, Set<string>>): { sheet: string; key: Key } {
   const out: string[] = [
     '# Ripple shortlist: hand-reading sheet',
     '',
     'For each case, read the source, then tick (`[x]`) every page the judge should see when it decides what this source changes. Leave the rest. Then run the score step; key.json says which method listed which page.',
   ];
+  // A top-up sheet leaves out the pages an earlier sheet already showed for the case, so
+  // the author reads only what is new; the score step reads both sheets' ticks together.
+  if (seen) out.push('', 'This sheet holds only pages the earlier sheets did not show. Score it together with them.');
   const key: Key = {
     note: 'Characters, not tokens. pastCaught counts past applied hop-0 targets in the list; past rulings are a noisy key.',
     cases: [],
@@ -102,7 +105,8 @@ export function buildSheet(cases: SheetCase[]): { sheet: string; key: Key } {
     if (c.readAt) out.push(`Read as the vault stood at ${c.readAt.slice(0, 12)}, before the source came in.`, '');
     const union = new Map<string, string>();
     for (const list of c.lists) for (const r of list.ranked) union.set(r.relpath, c.corpus.byRel.get(r.relpath)?.name ?? r.relpath);
-    const rows = [...union].sort((a, b) => a[1].localeCompare(b[1]) || (a[0] < b[0] ? -1 : 1));
+    const done = seen?.get(linkKey(c.source));
+    const rows = [...union].filter(([rel]) => !done?.has(rel)).sort((a, b) => a[1].localeCompare(b[1]) || (a[0] < b[0] ? -1 : 1));
     for (const [rel, name] of rows) out.push(`- [ ] [[${name}]] (${rel}): ${c.corpus.byRel.get(rel)?.gloss ?? ''}`);
     out.push('', 'Notes:', '');
     key.cases.push({
@@ -177,21 +181,25 @@ export interface Score {
 const ROW = /^- \[([ xX])\] \[\[[^\]]*\]\] \((.+?)\): /;
 const CASE = /^## Case \d+: (.*)$/;
 
+interface Section { shown: Set<string>; ticked: Set<string> }
+
 /**
- * The author's ticks against each list: recall over ticked pages, precision over the
- * pages shown. Cases pair by source, so a sheet ticked for one run scores another's key.
+ * Each case's shown and ticked pages, keyed by the source's link key. A case that comes
+ * twice, as when an earlier sheet and its top-up are read together, is one case.
  */
-export function scoreSheet(sheet: string, key: Key): Score {
-  const sections = new Map<string, { shown: Set<string>; ticked: Set<string> }>();
+export function readSheet(sheet: string): { sections: Map<string, Section>; headings: string[] } {
+  const sections = new Map<string, Section>();
   const headings: string[] = [];
-  let current: { shown: Set<string>; ticked: Set<string> } | null = null;
+  let current: Section | null = null;
   for (const line of sheet.split('\n')) {
     const heading = CASE.exec(line);
     if (heading) {
-      current = { shown: new Set(), ticked: new Set() };
       // The author may rewrite a heading as a link to the source; both pair by link key.
-      headings.push(heading[1]!.trim());
-      sections.set(linkKey(heading[1]!.trim().replace(/^\[\[(.*)\]\]$/, '$1')), current);
+      const name = heading[1]!.trim();
+      const id = linkKey(name.replace(/^\[\[(.*)\]\]$/, '$1'));
+      headings.push(name);
+      current = sections.get(id) ?? { shown: new Set(), ticked: new Set() };
+      sections.set(id, current);
       continue;
     }
     const m = ROW.exec(line);
@@ -199,6 +207,15 @@ export function scoreSheet(sheet: string, key: Key): Score {
     current.shown.add(m[2]!);
     if (m[1] !== ' ') current.ticked.add(m[2]!);
   }
+  return { sections, headings };
+}
+
+/**
+ * The author's ticks against each list: recall over ticked pages, precision over the
+ * pages shown. Cases pair by source, so a sheet ticked for one run scores another's key.
+ */
+export function scoreSheet(sheet: string, key: Key): Score {
+  const { sections, headings } = readSheet(sheet);
   const rate = (a: number, b: number): number => (b ? a / b : 0);
   const cases = key.cases.map((c) => {
     const section = sections.get(linkKey(c.source));

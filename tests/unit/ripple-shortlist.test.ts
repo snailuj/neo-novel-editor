@@ -10,7 +10,7 @@ import {
   blend, buildCorpus, card, chunks, embeddingRank, inRoster, lexicalRank, packetChars, rosterChars, rosterRank,
   type Embed, type Source,
 } from '../../src/hoard/ripple/shortlist.ts';
-import { buildSheet, pastTargets, pickSources, scoreSheet, withUnions, type Key } from '../../src/hoard/ripple/sheet.ts';
+import { buildSheet, pastTargets, pickSources, readSheet, scoreSheet, withUnions, type Key } from '../../src/hoard/ripple/sheet.ts';
 import { readSnapshot } from '../../src/hoard/ripple/snapshot.ts';
 import { isolateGitConfig, tempDir } from './git-support.ts';
 
@@ -215,6 +215,27 @@ test('scoring reads a path with brackets, aligns cases by source, and counts pag
   const renamed = sheet.replace(`## Case 1: ${sourceRel}`, '## Case 1: [[Tide-Ledger]]');
   assert.notEqual(renamed, sheet, 'baseline: the heading changed');
   assert.equal(scoreSheet(renamed, key).cases[0]!.lists[0]!.caught, 2, 'a heading may name the source as a link');
+});
+
+// Rule: a top-up sheet shows only pages no earlier sheet showed for the case, and the two
+// sheets' ticks score as one.
+test('a top-up sheet leaves out pages already shown, and scores together with the first', () => {
+  const roster = rosterRank(corpus, source);
+  const mk = (n: number, seen?: Map<string, Set<string>>) => buildSheet([{
+    source: sourceRel, corpus, lists: [{ method: 'roster', ranked: roster.slice(0, n) }], pastTargets: [],
+    rosterChars: 1, briefChars: 0, sourceChars: 1,
+  }], seen);
+  const first = mk(2);
+  const top = mk(4, new Map([...readSheet(first.sheet).sections].map(([id, sec]) => [id, sec.shown])));
+  const firstRows = [...readSheet(first.sheet).sections.values()][0]!.shown;
+  const topRows = [...readSheet(top.sheet).sections.values()][0]!.shown;
+  assert.equal(firstRows.size, 2);
+  assert.equal(topRows.size, 2, 'only the two pages the first sheet lacked');
+  assert.ok([...topRows].every((r) => !firstRows.has(r)));
+  const tickAll = (sheet: string) => sheet.replaceAll('- [ ] ', '- [x] ');
+  const l = scoreSheet(`${tickAll(first.sheet)}\n${tickAll(top.sheet)}`, top.key).cases[0]!.lists[0]!;
+  assert.equal(l.caught, 4);
+  assert.equal(l.unrated, 0);
 });
 
 // Rule: a union keeps the whole roster list and adds the first pages of another list
