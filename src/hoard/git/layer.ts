@@ -6,6 +6,7 @@
 import { validateHoardSettingsV1 } from '../../generated/validators.cjs';
 import { blameChapter, type BlameLine } from './blame.ts';
 import { Checkpoints, type Clock } from './checkpoints.ts';
+import type { Gate } from './gate.ts';
 import { commitAll, whoFor, type Identity, type Reason, type Who } from './commit.ts';
 import { repoState, syncedFolder, type RepoState } from './repo.ts';
 import { GitError, type Git, type GitLog } from './runner.ts';
@@ -62,6 +63,7 @@ export class GitLayer {
   #lastFailure = '';
   #leftOut = '';
   #pairs: Promise<unknown> = Promise.resolve();
+  #gate: Gate | undefined;
 
   constructor(options: GitLayerOptions) {
     this.#o = options;
@@ -71,6 +73,11 @@ export class GitLayer {
       commit: (reason) => this.#commit(reason),
       onError: (err, reason) => this.#failed(err, reason),
     });
+  }
+
+  /** The pre-commit gate every commit from here on runs (gate.ts). */
+  useGate(gate: Gate): void {
+    this.#gate = gate;
   }
 
   status(): RepoState {
@@ -183,6 +190,37 @@ export class GitLayer {
     }
   }
 
+  /** A file as a commit holds it (rel from the library); null when it lacks it or there is no history. */
+  async show(commit: string, rel: string): Promise<string | null> {
+    if (this.#state.state !== 'tracked') return null;
+    const { git, library } = this.#o;
+    try {
+      const { stdout } = await git.run(library, ['cat-file', 'blob', `${commit}:${rel}`]);
+      return stdout;
+    } catch (err) {
+      if (err instanceof GitError && err.kind === 'exit') return null;
+      throw err;
+    }
+  }
+
+  /**
+   * The files under a folder that commits after `from`, up to `to`, changed, each with
+   * whether any of those commits was not the librarian's. Oldest first.
+   */
+  async changed(from: string, to: string, under: string): Promise<{ rel: string; byAuthor: boolean }[]> {
+    if (this.#state.state !== 'tracked') return [];
+    const { git, library, settings } = this.#o;
+    const { stdout } = await git.run(library, ['-c', 'core.quotepath=off', 'log', '--reverse', '--format=@@%ae', '--name-only', `${from}..${to}`, '--', under]);
+    const files = new Map<string, boolean>();
+    let author = false;
+    for (const line of stdout.split('\n')) {
+      if (line.startsWith('@@')) { author = line.slice(2).trim() !== settings.librarian.email; continue; }
+      if (!line.trim()) continue;
+      files.set(line, (files.get(line) ?? false) || author);
+    }
+    return [...files].map(([rel, byAuthor]) => ({ rel, byAuthor }));
+  }
+
   /** On quit: one last commit, waiting at most timeoutMs. */
   async close(timeoutMs: number): Promise<void> {
     this.#checkpoints.stop();
@@ -216,7 +254,7 @@ export class GitLayer {
     const { git, library, settings, log } = this.#o;
     const start = performance.now();
     const made = await commitAll(git, library, {
-      who, reason, librarian: settings.librarian, author: settings.author, paths,
+      who, reason, librarian: settings.librarian, author: settings.author, paths, gate: this.#gate,
     });
     this.#lastFailure = '';
     if (!made) {

@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The author's ruling on one ripple proposal, version 1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["openBookId", "id", "decision"],
+  "properties": {
+    "openBookId": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
+    "id": { "type": "string", "pattern": "^r-[0-9a-f]{12}$" },
+    "decision": { "enum": ["apply", "reject", "defer"] }
+  }
+}

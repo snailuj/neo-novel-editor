@@ -188,5 +188,11 @@ export function startWiki(neo: NeoApiV4) {
   });
   neo.on('chapter-change', redrawSoon);
 
-  return { openWiki, follow, pages: () => wiki, drawLinks, pane };
+  // Reads the page list again, after another part of hoard (ripple) made a page.
+  const reindex = async () => {
+    await refresh();
+    drawLinks();
+  };
+
+  return { openWiki, follow, pages: () => wiki, index, drawLinks, pane, reindex };
 }

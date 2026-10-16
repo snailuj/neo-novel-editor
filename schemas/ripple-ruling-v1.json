@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "One line of ripple's rulings log, version 1, at .neo/ripple/rulings.jsonl in the library. The log is event-sourced: the newest line for an id is that id's state. A job is one source page at one state of its text; a proposal is one thing the judge proposed for a job, and its status is the author's ruling; the cursor says how far reconcile has read the change log and git.",
+  "oneOf": [{ "$ref": "#/definitions/job" }, { "$ref": "#/definitions/proposal" }, { "$ref": "#/definitions/cursor" }],
+  "definitions": {
+    "at": { "description": "An ISO 8601 time in UTC.", "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" },
+    "commit": { "oneOf": [{ "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" }, { "type": "null" }] },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "page": {
+      "title": "RipplePage",
+      "description": "A page of the library: a chapter of a book, with the title it had then.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bookId", "chId", "title"],
+      "properties": {
+        "bookId": { "type": "string", "minLength": 1 },
+        "chId": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" }
+      }
+    },
+    "hop": { "description": "0 for a change the author made or imported; one more for each change ripple made on the way. Ripple opens no job past hop 2.", "type": "integer", "minimum": 0, "maximum": 2 },
+    "job": {
+      "title": "RippleJob",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "id", "at", "state", "origin", "source", "source_hash", "commit", "hop"],
+      "properties": {
+        "version": { "const": 1 },
+        "type": { "const": "job" },
+        "id": { "type": "string", "pattern": "^j-[0-9a-f]{12}$" },
+        "at": { "$ref": "#/definitions/at" },
+        "state": { "description": "open: no packet yet. packeted: waiting for the judge. judged: the judge's proposals are in the log. skipped: the author set it aside.", "enum": ["open", "packeted", "judged", "skipped"] },
+        "origin": { "description": "What made the job: an import, a change in git, the author's Ripple This Chapter, or an earlier ripple.", "enum": ["imported", "changed", "asked", "ripple"] },
+        "source": { "$ref": "#/definitions/page" },
+        "source_hash": { "$ref": "#/definitions/sha256" },
+        "commit": { "description": "The library's HEAD when the job was made, where the quotes are checked.", "$ref": "#/definitions/commit" },
+        "hop": { "$ref": "#/definitions/hop" },
+        "parent": { "description": "The proposal whose change made this job.", "type": "string", "pattern": "^r-[0-9a-f]{12}$" },
+        "problem": { "description": "Why the judge's answer could not be taken, while it cannot.", "type": "string", "maxLength": 2000 }
+      }
+    },
+    "proposal": {
+      "title": "RippleProposal",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "id", "at", "job", "kind", "status", "hop", "source", "reason"],
+      "properties": {
+        "version": { "const": 1 },
+        "type": { "const": "proposal" },
+        "id": { "type": "string", "pattern": "^r-[0-9a-f]{12}$" },
+        "at": { "$ref": "#/definitions/at" },
+        "job": { "type": "string", "pattern": "^j-[0-9a-f]{12}$" },
+        "kind": { "enum": ["nothing", "claim", "topic", "mint"] },
+        "status": { "description": "proposed: waiting for the author. A nothing is rejected as it arrives: the judge declined the page, and that is recorded as a decision.", "enum": ["proposed", "applied", "rejected", "deferred"] },
+        "hop": { "$ref": "#/definitions/hop" },
+        "source": { "$ref": "#/definitions/page" },
+        "target": { "description": "The page a nothing, claim or topic is about, or the title a mint makes.", "type": "string", "maxLength": 500 },
+        "reason": { "type": "string", "maxLength": 4000 },
+        "quote": { "description": "The source's words the proposal rests on.", "type": "string", "maxLength": 4000 },
+        "anchor": { "description": "A claim's words on the target page now.", "type": "string", "maxLength": 20000 },
+        "text": { "description": "A claim's new words, or a mint's first passage.", "type": "string", "maxLength": 20000 },
+        "line": { "description": "The line a topic adds to the target page.", "type": "string", "maxLength": 2000 },
+        "outcome": { "description": "How an applied proposal landed: written by the librarian, made a suggestion or a comment for the author, or minted as a new page.", "enum": ["written", "suggested", "commented", "minted"] },
+        "delta": { "description": "Why it was deferred, or a word on how it landed.", "type": "string", "maxLength": 2000 },
+        "commit": { "description": "The librarian's commit holding the change, when there is one.", "$ref": "#/definitions/commit" }
+      }
+    },
+    "cursor": {
+      "title": "RippleCursor",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "id", "at", "commit", "changes"],
+      "properties": {
+        "version": { "const": 1 },
+        "type": { "const": "cursor" },
+        "id": { "const": "cursor" },
+        "at": { "$ref": "#/definitions/at" },
+        "commit": { "description": "The commit reconcile read git up to.", "$ref": "#/definitions/commit" },
+        "changes": { "description": "How many lines of .neo/changes.jsonl reconcile has read.", "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

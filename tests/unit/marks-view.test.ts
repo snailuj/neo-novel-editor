@@ -67,10 +67,26 @@ test('a card names a note by its quote and a suggestion by its change', () => {
   assert.equal(label(newMark({ id: 'm-l4', kind: 'substitution', anchor: anchorAt(text, { pIdx: 0, off: 4, len: 4 }), proposed: 'sea', who: 'author', at })), 'Replace “tide” with “sea”');
 });
 
-test('an insertion that is found is listed where it is, though there are no words to draw', () => {
-  const ins = newMark({ id: 'm-l5', kind: 'insertion', anchor: anchorPoint(text, { pIdx: 1, off: 4 }), proposed: ',', who: 'author', at });
-  const drawn = drawChapter('c1', [ins], text);
-  assert.deepEqual(drawn.found.get('m-l5'), { pIdx: 1, off: 4, len: 0 });
-  assert.deepEqual(drawn.stale, []);
+test('an insertion is drawn on the letter after its point, or the one before at a paragraph\'s end', () => {
+  const lines = ['Mara counted 🐟 boats', 'Dusk.', ''];
+  const ins = (id: string, pIdx: number, off: number) => newMark({ id, kind: 'insertion', anchor: anchorPoint(lines, { pIdx, off }), proposed: ',', who: 'author', at });
+  const marks = [ins('m-i1', 0, 4), ins('m-i2', 0, 13), ins('m-i3', 1, 5), ins('m-i4', 2, 0), transition(ins('m-i5', 1, 0), 'flagged', 'librarian', at)];
+  const drawn = drawChapter('c1', marks, lines);
+  assert.deepEqual(drawn.found.get('m-i1'), { pIdx: 0, off: 4, len: 0 }, 'found at its point');
+  assert.deepEqual(drawn.places.insertion, [
+    { chId: 'c1', pIdx: 0, off: 4, len: 1 },
+    { chId: 'c1', pIdx: 0, off: 13, len: 2 },
+    { chId: 'c1', pIdx: 1, off: 4, len: 1 },
+  ]);
+  assert.deepEqual(drawn.places.flagged, [{ chId: 'c1', pIdx: 1, off: 0, len: 1 }]);
   assert.deepEqual(drawn.places.suggestion, []);
+  assert.deepEqual(drawn.stale, [], 'an empty paragraph has no letter to draw on, but the insertion is found');
+});
+
+test('a closed mark whose words are gone is not stale: an accepted change removes them', () => {
+  const sub = newMark({ id: 'm-c1', kind: 'substitution', anchor: anchorAt(text, { pIdx: 0, off: 4, len: 4 }), proposed: 'sea', who: 'author', at });
+  const after = ['The sea came in at dusk.', text[1]];
+  assert.deepEqual(drawChapter('c1', [sub], after).stale, ['m-c1'], 'an open one is');
+  assert.deepEqual(drawChapter('c1', [transition(sub, 'accepted', 'librarian', at)], after).stale, []);
+  assert.deepEqual(drawChapter('c1', [transition(sub, 'rejected', 'author', at)], after).stale, []);
 });
