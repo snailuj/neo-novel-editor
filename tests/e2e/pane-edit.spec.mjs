@@ -200,3 +200,233 @@ test('a refused change leaves the page as it was, and an open wiki is not writte
     await fixture.close();
   }
 });
+
+// ---- editing in the pane ------------------------------------------------------------
+
+const PAGE = '.hoard-wiki-page';
+const paneAlert = '.hoard-pane-marks .hoard-alert';
+
+// The caret put in the pane's page just after `words`, as a click there would.
+async function caretAfter(page, words) {
+  await page.evaluate((words) => {
+    const body = document.querySelector('.hoard-wiki-page');
+    const p = [...body.querySelectorAll(':scope > p')].find((el) => el.textContent.includes(words));
+    const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const at = node.textContent.indexOf(words);
+      if (at === -1) continue;
+      body.focus();
+      getSelection().collapse(node, at + words.length);
+      return;
+    }
+  }, words);
+}
+
+// Rule: on the writer's own page, words typed in the pane are saved as the writer's, only
+// their paragraph's bytes change, and the pane is wider while the writer types in it.
+test('typing in the pane on the writer\'s page is saved as theirs, and the pane widens meanwhile', async () => {
+  const { profile, library } = await trackedProfile();
+  const fixture = await launchProfile(profile);
+  try {
+    const { page } = fixture;
+    await ready(page);
+    const { wikiId } = await wikiBeside(page, library, TEXT, {});
+    await expect(page.locator(PAGE)).toHaveAttribute('contenteditable', 'true');
+    await expect(page.locator('.hoard-pane-mode')).toBeHidden();
+
+    await caretAfter(page, 'west');
+    await expect(page.locator('#side-pane')).not.toHaveClass(/\bwide\b/);
+    await page.keyboard.type(' and south');
+    await expect(page.locator('#side-pane')).toHaveClass(/\bwide\b/);
+    await expect(page.locator(`${PAGE} p`).nth(0)).toHaveText('The harbour of Vell faces west and south.');
+    await expect.poll(() => pageFile(library, wikiId)).toBe('<p data-block="b1">The harbour of Vell faces west and south.</p><p data-block="b2">Its keeper rows at dawn.</p>');
+    await expect.poll(() => pageAuthors(library, wikiId)[0], { timeout: 10_000 }).toBe('Ada Author');
+
+    // a second change in another paragraph, made over the first, with the page left as
+    // it is under the caret
+    await page.evaluate(() => { document.querySelectorAll('.hoard-wiki-page > p')[1].dataset.kept = 'yes'; });
+    await caretAfter(page, 'rows');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.type('ams');
+    await expect.poll(() => pageFile(library, wikiId)).toBe('<p data-block="b1">The harbour of Vell faces west and south.</p><p data-block="b2">Its keeper roams at dawn.</p>');
+    await page.waitForTimeout(500);
+    await expect(page.locator(`${PAGE} > p[data-kept]`)).toHaveCount(1);
+
+    // the writer goes back to the book: the pane is narrow again
+    await page.locator('.chapter-body p').first().click();
+    await expect(page.locator('#side-pane')).not.toHaveClass(/\bwide\b/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+// Rule: the pane changes words within a paragraph only; Enter, joining two paragraphs,
+// pasting several lines and formatting are left to the wiki book, and the pane says so.
+// One line pasted comes in as plain words.
+test('the pane keeps to words within a paragraph and sends the rest to the wiki book', async () => {
+  const { profile, library } = await trackedProfile();
+  const fixture = await launchProfile(profile);
+  try {
+    const { page } = fixture;
+    await ready(page);
+    const { wikiId } = await wikiBeside(page, library, TEXT, {});
+    const lines = page.locator(`${PAGE} > p`);
+
+    await caretAfter(page, 'west');
+    await page.keyboard.press('Enter');
+    await expect(page.locator(paneAlert)).toContainText('Edit in Wiki Book');
+    await expect(lines).toHaveCount(2);
+
+    // Backspace at the start of the second paragraph would join the two
+    await page.evaluate(() => {
+      const p = document.querySelectorAll('.hoard-wiki-page > p')[1];
+      getSelection().collapse(p.firstChild, 0);
+    });
+    await page.keyboard.press('Backspace');
+    await expect(lines).toHaveCount(2);
+    await expect(lines.nth(0)).toHaveText('The harbour of Vell faces west.');
+    await expect(lines.nth(1)).toHaveText('Its keeper rows at dawn.');
+
+    // formatting
+    await page.evaluate(() => {
+      const node = document.querySelectorAll('.hoard-wiki-page > p')[1].firstChild;
+      getSelection().setBaseAndExtent(node, 4, node, 10);
+    });
+    await page.keyboard.press('Control+b');
+    await expect(page.locator(`${PAGE} b`)).toHaveCount(0);
+
+    // a paste of two lines is refused; one line comes in plain, as typed
+    const paste = async (text, html) => {
+      await fixture.app.evaluate(({ clipboard }, { text, html }) => clipboard.write(html ? { text, html } : { text }), { text, html });
+      await page.keyboard.press('Control+v');
+    };
+    await caretAfter(page, 'dawn');
+    await page.evaluate(() => { document.querySelector('.hoard-pane-marks .hoard-alert').textContent = ''; });
+    await paste('one\ntwo', null);
+    await expect(page.locator(paneAlert)).toContainText('Edit in Wiki Book');
+    await expect(lines.nth(1)).toHaveText('Its keeper rows at dawn.');
+    await paste(' and dusk', '<b> and dusk</b>');
+    await expect(lines.nth(1)).toHaveText('Its keeper rows at dawn and dusk.');
+    await expect(page.locator(`${PAGE} b`)).toHaveCount(0);
+    await expect.poll(() => pageFile(library, wikiId)).toBe('<p data-block="b1">The harbour of Vell faces west.</p><p data-block="b2">Its keeper rows at dawn and dusk.</p>');
+
+    // a paragraph's words selected by a triple click are typed over, and the paragraph stays
+    await lines.nth(0).click({ clickCount: 3 });
+    await page.keyboard.type('Gone.');
+    await expect(lines).toHaveCount(2);
+    await expect.poll(() => pageFile(library, wikiId)).toBe('<p data-block="b1">Gone.</p><p data-block="b2">Its keeper rows at dawn and dusk.</p>');
+  } finally {
+    await fixture.close();
+  }
+});
+
+// Rule: on the librarian's page a keystroke in the pane starts a suggestion with it and
+// changes nothing; Edit directly lets typing through, saved as the writer's.
+test('typing on the librarian\'s page suggests, until the writer edits it directly', async () => {
+  const { profile, library } = await trackedProfile();
+  const fixture = await launchProfile(profile);
+  try {
+    const { page } = fixture;
+    await ready(page);
+    const { wikiId } = await wikiBeside(page, library, TEXT, { type: 'lore' });
+    await expect(page.locator('.hoard-pane-mode')).toBeVisible();
+    await expect(page.locator('.hoard-pane-direct')).toHaveText('Edit directly');
+
+    // NEO's typography answers a quotation mark with its own insert: it too suggests
+    await selectInPane(page, 'keeper');
+    await page.keyboard.type('"');
+    await expect(page.locator('#hoard-pane-suggest-text')).toHaveValue('"');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#hoard-pane-suggest-text')).toBeHidden();
+    // so does a paste
+    await selectInPane(page, 'keeper');
+    await fixture.app.evaluate(({ clipboard }) => clipboard.writeText('warden'));
+    await page.keyboard.press('Control+v');
+    await expect(page.locator('#hoard-pane-suggest-text')).toHaveValue('warden');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#hoard-pane-suggest-text')).toBeHidden();
+    expect(pageFile(library, wikiId)).toBe(TEXT);
+
+    await selectInPane(page, 'west');
+    await page.keyboard.type('e');
+    await expect(page.locator('#hoard-pane-suggest-text')).toBeVisible();
+    await expect(page.locator('#hoard-pane-suggest-text')).toHaveValue('e');
+    await page.keyboard.type('ast');
+    await page.keyboard.press('Enter');
+    await expect.poll(() => readMarks(library, wikiId).map((m) => [m.kind, m.state])).toEqual([['substitution', 'accepted']]);
+    await expect(page.locator(`${PAGE} p`).nth(0)).toHaveText('The harbour of Vell faces east.');
+    expect(pageAuthors(library, wikiId)[0]).toBe('Librarian');
+
+    await page.locator('.hoard-pane-direct').click({ force: true });
+    await expect(page.locator('.hoard-pane-direct')).toHaveText('Suggest instead');
+    await caretAfter(page, 'dawn');
+    await page.keyboard.type(' and dusk');
+    await expect.poll(() => pageFile(library, wikiId)).toBe('<p data-block="b1">The harbour of Vell faces east.</p><p data-block="b2">Its keeper rows at dawn and dusk.</p>');
+    await expect.poll(() => pageAuthors(library, wikiId)[0], { timeout: 10_000 }).toBe('Ada Author');
+    expect(readMarks(library, wikiId)).toHaveLength(1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+// Rule: what was typed is saved before the pane leaves the page, and a change made on
+// another device meanwhile is kept: the typing is made again on the page as it is now,
+// or, where both changed the same words, the page stays as the other device left it and
+// the pane shows the writer what they typed.
+test('typing is saved before the pane moves on, and a change from another device is never written over', async () => {
+  const { profile, library } = await trackedProfile();
+  const fixture = await launchProfile(profile);
+  try {
+    const { page } = fixture;
+    await ready(page);
+    const { wikiId } = await wikiBeside(page, library, TEXT, {});
+    const file = path.join(library, wikiId, 'chapters', `${LORE}.html`);
+
+    // the page shown again, with no pause after typing and the caret still in it
+    await caretAfter(page, 'west');
+    await page.keyboard.type(' side');
+    await page.evaluate((chId) => window.hoard.wiki.pane.open(chId), LORE);
+    expect(pageFile(library, wikiId)).toContain('faces west side.');
+    await expect(page.locator(`${PAGE} p`).nth(0)).toHaveText('The harbour of Vell faces west side.');
+    await caretAfter(page, ' side');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Backspace');
+    await expect.poll(() => pageFile(library, wikiId)).toBe(TEXT);
+
+    // straight to the wiki book, with no pause after typing
+    await caretAfter(page, 'west');
+    await page.keyboard.type(' bay');
+    await page.locator('.hoard-wiki-edit').click();
+    await expect(page.locator('.chapter-body p').first()).toHaveText('The harbour of Vell faces west bay.');
+    expect(pageFile(library, wikiId)).toContain('faces west bay.');
+    // the wiki open as the book: the pane does not take typing
+    await page.evaluate((chId) => window.hoard.wiki.pane.open(chId), LORE);
+    await expect(page.locator(PAGE)).toHaveAttribute('contenteditable', 'false');
+
+    // back beside another book; another device changes the second paragraph meanwhile
+    await seedBook(page, '<p>Elsewhere.</p>');
+    await page.evaluate((chId) => window.hoard.wiki.pane.open(chId), LORE);
+    await paneSettled(page);
+    await expect(page.locator(PAGE)).toHaveAttribute('contenteditable', 'true');
+    await writeFile(file, '<p data-block="b1">The harbour of Vell faces west bay.</p><p data-block="b2">Its keeper sleeps at dawn.</p>');
+    await caretAfter(page, 'bay');
+    await page.keyboard.type(' now');
+    await expect.poll(() => pageFile(library, wikiId)).toBe('<p data-block="b1">The harbour of Vell faces west bay now.</p><p data-block="b2">Its keeper sleeps at dawn.</p>');
+    await expect(page.locator(`${PAGE} p`).nth(1)).toHaveText('Its keeper sleeps at dawn.');
+
+    // both changed the same paragraph: the other device's words stay, and the writer's show
+    const theirs = '<p data-block="b1">The harbour was moved east, the keeper says.</p><p data-block="b2">Its keeper sleeps at dawn.</p>';
+    await writeFile(file, theirs);
+    await caretAfter(page, 'now');
+    await page.keyboard.type(' still');
+    await expect(page.locator(paneAlert)).toContainText('The harbour of Vell faces west bay now still.');
+    expect(pageFile(library, wikiId)).toBe(theirs);
+    await expect(page.locator(`${PAGE} p`).nth(0)).toHaveText('The harbour was moved east, the keeper says.');
+  } finally {
+    await fixture.close();
+  }
+});

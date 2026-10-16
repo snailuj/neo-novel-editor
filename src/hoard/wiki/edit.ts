@@ -28,6 +28,12 @@ function rangeIn(p: Element, off: number, len: number): Range | null {
   return null;
 }
 
+/** Each paragraph's words, as the host counts them. */
+export function paragraphTexts(html: string): string[] {
+  const doc = new DOMParser().parseFromString(`<!doctype html><body>${html}`, 'text/html');
+  return [...doc.body.querySelectorAll('p')].map((p) => p.textContent ?? '');
+}
+
 /**
  * The page's HTML with the len units at off in paragraph pIdx made to read text, or null
  * when they do not read expected, the paragraph is not there, or the page's paragraphs

@@ -111,6 +111,21 @@ body[data-hoard-wiki] .chapter-body p { text-indent: 0; text-align: start; hyphe
 .hoard-wiki-missing { color: var(--muted); text-decoration: underline dotted; }
 .hoard-wiki-empty { font-size: 12px; color: var(--muted); }
 
+/* Editing in the pane (wiki/pane-edit.ts): the page takes the caret as NEO's own pages
+   do, with no outline of its own; an empty line keeps a line's height so the caret can
+   go in. The librarian's mode line reads as the book's does. */
+.hoard-wiki-page[contenteditable='true'] { outline: none; cursor: text; caret-color: var(--accent); }
+.hoard-wiki-page[contenteditable='true'] .hoard-wiki-line { min-block-size: 1.2em; }
+.hoard-pane-mode { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-block-end: 8px; }
+.hoard-pane-mode[hidden] { display: none; }
+.hoard-pane-mode-text { flex: 1 1 100%; margin: 0; font-size: 11px; color: var(--muted); }
+.hoard-pane-direct {
+  background: none; border: none; color: var(--muted); font-size: 11px; padding: 0;
+  min-block-size: 44px; min-inline-size: 44px; opacity: 0;
+}
+.hoard-wiki-pane:hover .hoard-pane-direct, .hoard-pane-direct:focus-visible { opacity: 1; }
+.hoard-pane-direct:hover { color: var(--accent); }
+
 /* Suggest mode: the librarian's pages take suggestions (review/window.ts). A held page
    carries a quiet rule at its edge; the Comments section says why and offers the way
    out. The mode line's buttons, like the rest of the section's, show on hover or focus. */
