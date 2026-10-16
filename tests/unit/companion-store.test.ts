@@ -20,7 +20,7 @@ import { tempDir } from './git-support.ts';
 
 type T = { after(fn: () => void): void };
 
-async function setup(t: T, withWiki = true) {
+async function setup(t: T, seeded = true) {
   const library = tempDir(t);
   const vault = tempDir(t);
   const wrote: string[] = [];
@@ -31,7 +31,7 @@ async function setup(t: T, withWiki = true) {
   const log = (level: 'error' | 'warn' | 'info' | 'debug', message: string) => { lines.push({ level, message }); };
   const marks = new MarkStore({ library: () => library, now, newId, wrote: (name) => wrote.push(name), log });
   const wiki = new WikiStore({ library: () => library, now, newId, marks, log });
-  if (withWiki) {
+  if (seeded) {
     const page = (name: string, text: string) => {
       const file = path.join(vault, `${name}.md`);
       writeFileSync(file, text);
