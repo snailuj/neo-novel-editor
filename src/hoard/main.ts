@@ -6,6 +6,7 @@
 // Markdown pages into the wiki book, searches the library's files, and reads each
 // chapter the writer leaves for wiki pages it names (companion/). The library's
 // repository is looked at after activate returns, so NEO's start never waits on git.
+// Every commit runs the pre-commit gate (git/gate.ts) over what it stages.
 import { app, BrowserWindow, dialog, utilityProcess } from 'electron';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -16,6 +17,7 @@ import {
 } from '../generated/validators.cjs';
 import { startCompanion } from './companion/main.ts';
 import { textconvCommand } from './git/blame.ts';
+import { startGate } from './git/gate-main.ts';
 import { GitLayer, resolveSettings } from './git/layer.ts';
 import { startLibrarianPairs } from './git/librarian-main.ts';
 import { createGit } from './git/runner.ts';
@@ -209,6 +211,7 @@ async function keepHistory(host: NeoMainHost, layer: GitLayer) {
 export function activate(host: NeoMainHost): void {
   host.handle('ping', ping);
   const layer = startHistory(host);
+  startGate(host, layer);
   startLibrarianPairs(host, layer);
   const marks = startMarks(host, layer);
   const wiki = startWiki(host, layer, marks);
