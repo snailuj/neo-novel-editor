@@ -20,7 +20,7 @@ const PAGE = [
   '## Morning Pages',
   'I woke and wrote.',
   '',
-  'The fox crept along the wall.',
+  'The otter crept along the wall.',
 ].join('\n');
 
 test('rules label only what is plainly structure', () => {

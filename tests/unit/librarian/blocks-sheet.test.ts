@@ -11,7 +11,7 @@ const PAGE = [
   '## Morning Pages', // 1
   'I woke and wrote.', // 2
   '', // 3
-  'The fox crept along the wall, "quiet," she said.', // 4
+  'The otter crept along the wall, "quiet," she said.', // 4
   '## Tasks', // 5
   '- [ ] Walk', // 6
   '## The Story', // 7
@@ -99,7 +99,7 @@ test('a sheet reads back as written, quotes, commas, newlines and all', () => {
   assert.ok(text.startsWith('\uFEFFpage,block,lines,'), 'a BOM so Excel reads UTF-8');
   assert.deepEqual(readSheet(text), rows);
   assert.deepEqual(readSheet(text.replace(/\r?\n/g, '\r\n')), rows, 'CRLF too');
-  assert.match(rows[1]!.preview, /fox crept/);
+  assert.match(rows[1]!.preview, /otter crept/);
 });
 
 test('a re-run keeps every reviewed row and adds new blocks', () => {

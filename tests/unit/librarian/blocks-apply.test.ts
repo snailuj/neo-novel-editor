@@ -38,13 +38,13 @@ const DAY1 = [
   '    - a nested worry',
   '',
   '### Later',
-  'An idea: the fox keeps a ledger of debts.',
+  'An idea: the otter keeps a ledger of debts.',
   '',
   '```',
   '# a line that looks like a heading',
   '```',
 ].join('\n');
-const DAY2 = '## Morning Pages\nSecond day, short.\n\n## Notes\nThe gull never lands.';
+const DAY2 = '## Morning Pages\nSecond day, short.\n\n## Notes\nThe heron never lands.';
 
 function vault(): string {
   const dir = tempDir();
@@ -74,19 +74,19 @@ test('included writing becomes wiki pages with their sources; nothing else does'
   const pages = readdirSync(path.join(out, 'wiki')).sort();
   assert.deepEqual(pages, ['2026-01-01-Week-1-Notes-(snippets).md', '2026-01-02-Week-1-Later-(snippets).md']);
   const later = readFileSync(path.join(out, 'wiki', '2026-01-02-Week-1-Later-(snippets).md'), 'utf8');
-  assert.match(later, /^---\nsources:\n {2}- "Daily\/2026-01-02 Week 1\.md lines 13-13 \^[0-9a-f]{10}"\n---\n\nAn idea: the fox keeps a ledger of debts\.\n$/);
+  assert.match(later, /^---\nsources:\n {2}- "Daily\/2026-01-02 Week 1\.md lines 13-13 \^[0-9a-f]{10}"\n---\n\nAn idea: the otter keeps a ledger of debts\.\n$/);
   const list = readFileSync(path.join(out, 'import-list.txt'), 'utf8');
   assert.equal(list, 'E:\\Out\\wiki\\2026-01-01-Week-1-Notes-(snippets).md\nE:\\Out\\wiki\\2026-01-02-Week-1-Later-(snippets).md\n');
 });
 
 test('rows of several sections joined in one dest keep their order under their headings', () => {
   const rows = sheet();
-  for (const r of rows) if (r.label === 'writing') r.wiki_page = 'Fox-Ideas';
+  for (const r of rows) if (r.label === 'writing') r.wiki_page = 'Otter-Ideas';
   const out = tempDir();
   applySheet(vault(), rows, out, {});
-  const text = readFileSync(path.join(out, 'wiki', 'Fox-Ideas.md'), 'utf8');
+  const text = readFileSync(path.join(out, 'wiki', 'Otter-Ideas.md'), 'utf8');
   const body = text.slice(text.indexOf('---\n\n') + 5);
-  assert.equal(body, '## Morning Pages > Later\n\nAn idea: the fox keeps a ledger of debts.\n\n## Notes\n\nThe gull never lands.\n');
+  assert.equal(body, '## Morning Pages > Later\n\nAn idea: the otter keeps a ledger of debts.\n\n## Notes\n\nThe heron never lands.\n');
 });
 
 test('the Morning Pages file reads through NEO\'s import as one chapter per day, in date order, every word kept', async () => {
@@ -102,7 +102,7 @@ test('the Morning Pages file reads through NEO\'s import as one chapter per day,
       '- a list of worries',
       '- a nested worry',
       // a writing block inside Morning Pages stays in the day too
-      'An idea: the fox keeps a ledger of debts.',
+      'An idea: the otter keeps a ledger of debts.',
       '```',
       '\u200B# a line that looks like a heading',
       '```',
@@ -134,7 +134,7 @@ test('a re-run removes the pages the last run wrote and this one does not', () =
   const out = tempDir();
   const rows = sheet();
   applySheet(vault(), rows, out, {});
-  for (const r of rows) if (r.preview.startsWith('The gull')) r.wiki = 'no';
+  for (const r of rows) if (r.preview.startsWith('The heron')) r.wiki = 'no';
   applySheet(vault(), rows, out, {});
   assert.deepEqual(readdirSync(path.join(out, 'wiki')), ['2026-01-02-Week-1-Later-(snippets).md']);
 });
