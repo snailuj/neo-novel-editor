@@ -119,13 +119,15 @@ export function startCompanion(neo: NeoApiV4, o: {
     const { bookId, chId, mark, page } = found;
     try {
       await neo.invoke('companion.quiet', { page: page.chId, quiet: on });
-      if (on && mark.state === 'open') {
-        await neo.invoke('marks.state', { bookId, chId, markId: mark.id, state: 'resolved' });
+      // Stop resolves the comment it was chosen on, and Flag Again, its undo, reopens it
+      const turn = on ? (mark.state === 'open' ? 'resolved' : null) : (mark.state === 'resolved' ? 'open' : null);
+      if (turn) {
+        await neo.invoke('marks.state', { bookId, chId, markId: mark.id, state: turn });
         await o.marks.relist();
       }
       say(on
         ? `The librarian will stop flagging “${page.title}”. Flag This Page Again undoes it.`
-        : `The librarian will flag “${page.title}” in new writing again.`);
+        : `The librarian will flag “${page.title}” in new writing again${turn ? ', and this comment is open again' : ''}.`);
     } catch (err) {
       say(`Nothing changed: ${err instanceof Error ? err.message : String(err)}`);
     }

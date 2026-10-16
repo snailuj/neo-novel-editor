@@ -10,8 +10,8 @@ import { launchProfile } from '../support/electron-profile.mjs';
 // end); Show or Hide Comments (Ctrl+Shift+M) keeps every comment off the page, a new one
 // included, until shown again; the comment's link shows the page in the Wiki section; the
 // same page named again in that chapter gets no second comment; a typed [[link]] is not a
-// forgotten reference; and Stop Flagging This Page resolves the comment and quiets the
-// page in every chapter.
+// forgotten reference; Stop Flagging This Page resolves the comment and quiets the page
+// in every chapter; and Flag This Page Again undoes both.
 
 async function profileWithVault() {
   const profile = await mkdtemp(path.join(tmpdir(), 'neo-test-'));
@@ -66,7 +66,7 @@ async function twoChapters(page) {
 
 const drawn = (page, name) => page.evaluate((key) => [...(CSS.highlights.get(key) ?? [])].map((r) => r.toString()), `plugin-hoard-${name}`);
 
-test('a page named in new writing is flagged at the next save, once, hidden on request, and not after Stop Flagging', async () => {
+test('a page named in new writing is flagged at the next save, once, hidden on request, not after Stop Flagging, and again after Flag Again', async () => {
   const { profile, library, files } = await profileWithVault();
   const fixture = await launchProfile(profile);
   try {
@@ -143,6 +143,18 @@ test('a page named in new writing is flagged at the next save, once, hidden on r
     await page.locator('.chapter-body p').nth(0).click();
     await settled();
     expect((await librarians('c2')).map(([exact]) => exact)).toEqual(['harbour']);
+
+    // Flag This Page Again, on the same comment, undoes it: the comment is open again,
+    // the page is no longer quiet, and a chapter not yet told of it is told
+    await page.evaluate(() => window.hoard.marks.show());
+    await card.locator('.hoard-quote').click();
+    await menu(app, 'Flag This Page Again');
+    await expect.poll(() => librarians('c1').then((l) => l.map(([, state]) => state))).toEqual(['open']);
+    const loud = JSON.parse(await readFile(path.join(library, '.neo', 'companion.json'), 'utf8'));
+    expect(Object.keys(loud.quiet)).toEqual([]);
+    await write(1, ' A kraken surfaced.');
+    await page.locator('.chapter-body p').nth(0).click();
+    await expect.poll(() => librarians('c2').then((l) => l.map(([exact]) => exact).sort()), { timeout: 10_000 }).toEqual(['harbour', 'kraken']);
   } finally {
     await fixture.close();
   }
