@@ -71,6 +71,19 @@ const clip = (text: string, n = 140) => (text.length > n ? `${text.slice(0, n - 
 const submitKey = (e: KeyboardEvent) => e.key === 'Enter' && (e.ctrlKey || e.metaKey);
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
+// Show or Hide Comments: whether marks are drawn on the page, kept on this device, as
+// NEO keeps how it looks per device. Hidden, they are still made, kept and listed in the
+// section; the page shows none, a new one included, until the writer shows them again.
+const HIDDEN_KEY = 'hoard.commentsHidden';
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform);
+const TOGGLE_KEYS = IS_MAC ? '⌘⇧M' : 'Ctrl+Shift+M';
+const storedHidden = () => {
+  try { return localStorage.getItem(HIDDEN_KEY) === '1'; } catch { return false; }
+};
+const storeHidden = (on: boolean) => {
+  try { localStorage.setItem(HIDDEN_KEY, on ? '1' : '0'); } catch { /* the choice lasts until the window closes */ }
+};
+
 // A comment's words, each [[link]] in them a button that shows its page.
 function linkedWords(text: string, follow?: (target: string) => void): Node[] {
   if (!follow) return [document.createTextNode(text)];
@@ -102,6 +115,8 @@ export function startMarks(neo: NeoApiV3, o: { follow?: (target: string) => void
   const blame = new Map<string, { at: number; lines: BlameLine[] }>();
   let blameTimer: ReturnType<typeof setTimeout> | undefined;
   let statusTimer: ReturnType<typeof setTimeout> | undefined;
+  let hidden = storedHidden();
+  let saidTimer: ReturnType<typeof setTimeout> | undefined;
 
   // ---- the section's parts, made once --------------------------------------------
   const root = pane.element;
@@ -109,7 +124,9 @@ export function startMarks(neo: NeoApiV3, o: { follow?: (target: string) => void
   const head = el('div', 'hoard-marks-head');
   const blameLine = el('p', 'hoard-blame');
   const addButton = button('hoard-add', 'Add comment');
-  head.append(blameLine, addButton);
+  const hiddenLine = el('p', 'hoard-hidden-note', `Comments are hidden on the page. ${TOGGLE_KEYS} shows them.`);
+  hiddenLine.hidden = !hidden;
+  head.append(blameLine, addButton, hiddenLine);
   const alert = el('p', 'hoard-alert');
   alert.setAttribute('role', 'alert');
   const status = el('p', 'hoard-status');
@@ -147,10 +164,31 @@ export function startMarks(neo: NeoApiV3, o: { follow?: (target: string) => void
   };
 
   const paint = () => {
-    for (const name of NAMES) neo.highlight(name, [...drawn.values()].flatMap((d) => d.places[name]));
+    for (const name of NAMES) neo.highlight(name, hidden ? [] : [...drawn.values()].flatMap((d) => d.places[name]));
     const span = active && here ? drawn.get(here.chId)?.found.get(active) : null;
-    neo.highlight('active', span && here ? [{ chId: here.chId, ...span }] : []);
+    neo.highlight('active', span && here && !hidden ? [{ chId: here.chId, ...span }] : []);
   };
+
+  const setHidden = (on: boolean) => {
+    hidden = on;
+    storeHidden(on);
+    hiddenLine.hidden = !on;
+    paint();
+  };
+  const toggleHidden = () => {
+    setHidden(!hidden);
+    neo.status(hidden ? `Comments hidden. ${TOGGLE_KEYS} shows them again.` : 'Comments shown.');
+    clearTimeout(saidTimer);
+    saidTimer = setTimeout(() => neo.status(''), STATUS_MS);
+  };
+  neo.addCommand('toggle-comments', toggleHidden);
+  window.addEventListener('keydown', (e) => {
+    const cmd = IS_MAC ? e.metaKey : e.ctrlKey;
+    if (!cmd || !e.shiftKey || e.altKey || e.code !== 'KeyM' || e.isComposing) return;
+    e.preventDefault();
+    e.stopPropagation();
+    toggleHidden();
+  }, true);
 
   const redrawAll = () => {
     drawn.clear();
@@ -529,6 +567,9 @@ export function startMarks(neo: NeoApiV3, o: { follow?: (target: string) => void
     unreadable: (chId: string) => unreadable.has(chId),
     /** Takes the main half's answer for a chapter: the marks as the file now holds them. */
     settle,
+    /** Whether marks are drawn on the page (Show or Hide Comments). */
+    hidden: () => hidden,
+    setHidden,
     /** The marks read again from their files, after another part of the plugin added some. */
     relist: () => relist(),
     activate(id: string | null) { active = id; paint(); render(); },
