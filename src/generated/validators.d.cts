@@ -2,10 +2,13 @@
 import type { ErrorObject } from 'ajv';
 import type { HighlightV1 } from './highlight-v1.js';
 import type { HoardChangeV1 } from './hoard-change-v1.js';
+import type { HoardCompanionV1 } from './hoard-companion-v1.js';
 import type { HoardMarksV1 } from './hoard-marks-v1.js';
 import type { HoardPageV1 } from './hoard-page-v1.js';
 import type { HoardSettingsV1 } from './hoard-settings-v1.js';
 import type { HoardWikiV1 } from './hoard-wiki-v1.js';
+import type { HoardCompanionQuietV1 } from './ipc/hoard-companion-quiet-v1.js';
+import type { HoardCompanionReadV1 } from './ipc/hoard-companion-read-v1.js';
 import type { HoardGitBlameV1 } from './ipc/hoard-git-blame-v1.js';
 import type { HoardGitCheckpointV1 } from './ipc/hoard-git-checkpoint-v1.js';
 import type { HoardGitLibrarianBeginV1 } from './ipc/hoard-git-librarian-begin-v1.js';
@@ -29,10 +32,13 @@ export interface Validator<T> {
 
 export const validateHighlightV1: Validator<HighlightV1>;
 export const validateHoardChangeV1: Validator<HoardChangeV1>;
+export const validateHoardCompanionV1: Validator<HoardCompanionV1>;
 export const validateHoardMarksV1: Validator<HoardMarksV1>;
 export const validateHoardPageV1: Validator<HoardPageV1>;
 export const validateHoardSettingsV1: Validator<HoardSettingsV1>;
 export const validateHoardWikiV1: Validator<HoardWikiV1>;
+export const validateHoardCompanionQuietV1: Validator<HoardCompanionQuietV1>;
+export const validateHoardCompanionReadV1: Validator<HoardCompanionReadV1>;
 export const validateHoardGitBlameV1: Validator<HoardGitBlameV1>;
 export const validateHoardGitCheckpointV1: Validator<HoardGitCheckpointV1>;
 export const validateHoardGitLibrarianBeginV1: Validator<HoardGitLibrarianBeginV1>;
