@@ -56,8 +56,34 @@ const DATE = /\d{4}-\d{2}-\d{2}/;
 export function defaultDest(page: string, heading: string): string {
   const inner = heading.split(' > ').pop() ?? '';
   const stem = stemOf(page);
-  const name = /^\d{4}-\d{2}-\d{2}\b/.exec(stem)?.[0] ?? stem;
-  return `${[safe(name), safe(inner)].filter(Boolean).join('-')}-(snippets)`;
+  const name = safe(/^\d{4}-\d{2}-\d{2}\b/.exec(stem)?.[0] ?? stem);
+  // A heading that repeats the page's name ("## 2025-09-13", "Habit Tracking 2025-09-13") says it once.
+  const head = safe(inner).split(name).join('-').replace(/-{2,}/g, '-').replace(/^-|-$/g, '');
+  return `${[name, head].filter(Boolean).join('-')}-(snippets)`;
+}
+
+/**
+ * Leaves one wiki copy of each text: a fresh row bound for the wiki whose text an earlier
+ * one already carries (a generated line repeated across daily notes) is set to no.
+ * Rows an earlier run made are never changed, so a reviewed sheet stays as reviewed.
+ */
+export function dedupeRows(rows: Row[], isFresh: (row: Row) => boolean): number {
+  const first = new Map<string, Row>();
+  let changed = 0;
+  for (const r of rows) {
+    if (r.wiki !== 'yes') continue;
+    const hash = r.block.replace(/-\d+$/, '');
+    const earlier = first.get(hash);
+    if (!earlier) {
+      first.set(hash, r);
+      continue;
+    }
+    if (!isFresh(r)) continue;
+    r.wiki = 'no';
+    r.reason = `same text as ${earlier.page} lines ${earlier.lines}; ${r.reason}`;
+    changed++;
+  }
+  return changed;
 }
 
 /** The default Morning Pages chapter: the page's date, else a heading's, else the page. */

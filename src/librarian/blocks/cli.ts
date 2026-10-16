@@ -18,7 +18,7 @@ import { getLogger, setLogSink } from '../log.ts';
 import { applySheet, blockPicks } from './apply.ts';
 import { commandJudge, judgePage, type JudgeFn } from './judge.ts';
 import { ruleLabel } from './rules.ts';
-import { type Already, mergeRows, parseAlready, readSheet, type Row, rowsFor, writeSheet } from './sheet.ts';
+import { type Already, dedupeRows, mergeRows, parseAlready, readSheet, type Row, rowsFor, writeSheet } from './sheet.ts';
 import { splitBlocks } from './split.ts';
 
 const log = getLogger('librarian.blocks.cli');
@@ -97,6 +97,7 @@ async function classify(values: Map<string, string>, positional: string[], io: I
   const save = () => writeAtomic(sheetFile, writeSheet(order.flatMap((p) => byPage.get(p) ?? [])));
 
   let failed = 0;
+  const fresh = new Set<string>();
   const one = async (page: string) => {
     const started = performance.now();
     const file = path.join(vault, page);
@@ -109,6 +110,7 @@ async function classify(values: Map<string, string>, positional: string[], io: I
     const prior = byPage.get(page) ?? [];
     const known = new Set(prior.map((r) => r.block));
     const todo = blocks.filter((b) => !known.has(b.id));
+    for (const b of todo) fresh.add(`${page}\0${b.id}`);
     const judged = judge && todo.length ? await judgePage(page, todo, judge, { votes }) : new Map();
     const merged = mergeRows(prior, rowsFor(page, blocks, judged, already));
     const dropped = prior.filter((r) => !blocks.some((b) => b.id === r.block));
@@ -123,6 +125,8 @@ async function classify(values: Map<string, string>, positional: string[], io: I
   await Promise.all(Array.from({ length: Math.min(jobs, queue.length) }, async () => {
     for (let page = queue.shift(); page !== undefined; page = queue.shift()) await one(page);
   }));
+  const dupes = dedupeRows(order.flatMap((p) => byPage.get(p) ?? []), (r) => fresh.has(`${r.page}\0${r.block}`));
+  if (dupes) log.info(`${dupes} new rows repeat text an earlier row sends to the wiki; set to no`);
   save();
 
   const rows = order.flatMap((p) => byPage.get(p) ?? []);

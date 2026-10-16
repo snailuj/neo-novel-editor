@@ -129,3 +129,12 @@ test('usage and a missing page', async () => {
   assert.equal(r.code, 3, 'a missing page is an error');
   assert.equal(readSheet(readFileSync(path.join(dir, 's.csv'), 'utf8')).length, 2, 'the other pages still go in');
 });
+
+test('text repeated across pages goes to the wiki once', async () => {
+  const { dir, vault, judge } = setup();
+  writeFileSync(path.join(vault, 'Copy.md'), 'The otter again.');
+  const sheet = path.join(dir, 'sheet.csv');
+  await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, 'Scratch.md', 'Copy.md'], dir);
+  const rows = readSheet(readFileSync(sheet, 'utf8'));
+  assert.deepEqual(rows.filter((r) => r.preview === 'The otter again.').map((r) => [r.page, r.wiki]), [['Scratch.md', 'yes'], ['Copy.md', 'no']]);
+});

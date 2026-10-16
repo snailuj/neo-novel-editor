@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Judged } from '../../../src/librarian/blocks/judge.ts';
-import { defaultBook, defaultDest, mergeRows, parseAlready, readSheet, rowsFor, writeSheet } from '../../../src/librarian/blocks/sheet.ts';
+import { dedupeRows, defaultBook, defaultDest, mergeRows, parseAlready, readSheet, rowsFor, writeSheet } from '../../../src/librarian/blocks/sheet.ts';
 import { splitBlocks } from '../../../src/librarian/blocks/split.ts';
 
 const PAGE = [
@@ -122,6 +122,19 @@ test('default names are one safe path segment', () => {
   assert.equal(defaultDest('a/b: c?.md', 'x/y #z'), 'b-c-x-y-z-(snippets)');
   assert.equal(defaultDest('Notes.md', ''), 'Notes-(snippets)');
   assert.equal(defaultDest('Daily/2026-01-10 Week 2 Day 6.md', 'Morning Pages'), '2026-01-10-Morning-Pages-(snippets)', 'a daily note by its date');
+  assert.equal(defaultDest('Daily/2025-09-13.md', '2025-09-13'), '2025-09-13-(snippets)', 'a heading that is the name says it once');
+  assert.equal(defaultDest('Daily/2026-02-18 Week 8.md', 'Habit Tracking 2026-02-18'), '2026-02-18-Habit-Tracking-(snippets)');
+  assert.equal(defaultDest('Inbox.md', 'Inbox'), 'Inbox-(snippets)');
   assert.equal(defaultBook('Garuda.md', '2026-04-14 > Sub'), '2026-04-14');
   assert.equal(defaultBook('Garuda.md', 'July'), 'Garuda');
+});
+
+test('one wiki copy of each text; rows from an earlier run are never changed', () => {
+  const a = splitBlocks('A repeated generated line.');
+  const mk = (page: string) => rowsFor(page, a, judged(a, [['writing']]), [])[0]!;
+  const rows = [mk('Daily/2026-01-01.md'), mk('Daily/2026-01-02.md'), mk('Daily/2026-01-03.md')];
+  const old = rows[2]!;
+  assert.equal(dedupeRows(rows, (r) => r !== old), 1);
+  assert.deepEqual(rows.map((r) => r.wiki), ['yes', 'no', 'yes']);
+  assert.match(rows[1]!.reason, /^same text as Daily\/2026-01-01\.md lines 1-1; /);
 });
