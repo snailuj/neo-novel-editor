@@ -6,7 +6,10 @@
 // - a page the writer quieted is left out until they ask for it again, and a quiet file
 //   that does not read is never taken for empty or written over;
 // - a marks file that does not read is never written over;
-// - two reads of one chapter at once flag a page once.
+// - two reads of one chapter at once flag a page once;
+// - read while the writer is still typing, a name the caret is in or just after is left
+//   for a later read, since the word may not be finished;
+// - a page imported after an earlier read is found by the next one.
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -20,7 +23,7 @@ import { tempDir } from './git-support.ts';
 
 type T = { after(fn: () => void): void };
 
-async function setup(t: T, withWiki = true) {
+async function setup(t: T, seeded = true) {
   const library = tempDir(t);
   const vault = tempDir(t);
   const wrote: string[] = [];
@@ -31,7 +34,7 @@ async function setup(t: T, withWiki = true) {
   const log = (level: 'error' | 'warn' | 'info' | 'debug', message: string) => { lines.push({ level, message }); };
   const marks = new MarkStore({ library: () => library, now, newId, wrote: (name) => wrote.push(name), log });
   const wiki = new WikiStore({ library: () => library, now, newId, marks, log });
-  if (withWiki) {
+  if (seeded) {
     const page = (name: string, text: string) => {
       const file = path.join(vault, `${name}.md`);
       writeFileSync(file, text);
@@ -118,13 +121,18 @@ test('a quiet file that does not read is never taken for empty or written over',
   assert.ok(lines.some((l) => l.level === 'error' && l.message.includes('companion.json')));
 });
 
-test('a marks file that does not read is never written over', async (t) => {
-  const { companion, library } = await setup(t);
+test('a marks file that does not read is never written over, and is read again only once it changes', async (t) => {
+  const { companion, library, lines } = await setup(t);
   const file = sidecarPath(library, 'book-a', 'c1');
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, 'not json');
-  assert.deepEqual(await companion.read({ bookId: 'book-a', chId: 'c1', before: '', after: html('The Kraken.') }), { added: 0 });
+  const read = () => companion.read({ bookId: 'book-a', chId: 'c1', before: '', after: html('The Kraken.') });
+  assert.deepEqual(await read(), { added: 0 });
+  assert.deepEqual(await read(), { added: 0 });
   assert.equal(readFileSync(file, 'utf8'), 'not json');
+  assert.equal(lines.filter((l) => l.message.includes('does not read')).length, 1);
+  writeFileSync(file, '{"version": 1, "marks": []}\n');
+  assert.deepEqual(await read(), { added: 1 });
 });
 
 test('two reads of one chapter at once flag a page once', async (t) => {
@@ -136,4 +144,28 @@ test('two reads of one chapter at once flag a page once', async (t) => {
   ]);
   assert.deepEqual(answers.map((a) => a.added).sort(), [0, 1]);
   assert.equal(marksOf('c1').length, 1);
+});
+
+test('a name the caret is in or just after is left for a later read, as the word may not be finished', async (t) => {
+  const { companion, marksOf } = await setup(t);
+  const after = html('The tide.', 'Then the Kraken');
+  assert.deepEqual(await companion.read({ bookId: 'book-a', chId: 'c1', before: '', after, caret: { pIdx: 1, off: 15 } }), { added: 0 });
+  assert.deepEqual(await companion.read({ bookId: 'book-a', chId: 'c1', before: '', after, caret: { pIdx: 1, off: 11 } }), { added: 0 });
+  assert.deepEqual(await companion.read({ bookId: 'book-a', chId: 'c1', before: '', after, caret: { pIdx: 0, off: 9 } }), { added: 1 });
+  assert.equal(marksOf('c1').length, 1);
+});
+
+test('a name before the caret, with the word finished, is read at once', async (t) => {
+  const { companion } = await setup(t);
+  const after = html('Then the Kraken rose');
+  assert.deepEqual(await companion.read({ bookId: 'book-a', chId: 'c1', before: '', after, caret: { pIdx: 0, off: 20 } }), { added: 1 });
+});
+
+test('a page imported after an earlier read is found by the next one', async (t) => {
+  const { companion, wiki } = await setup(t);
+  assert.deepEqual(await companion.read({ bookId: 'book-a', chId: 'c1', before: '', after: html('The lighthouse.') }), { added: 0 });
+  const file = path.join(tempDir(t), 'Lighthouse.md');
+  writeFileSync(file, 'It stands.\n');
+  await wiki.apply(wiki.sort([file]), null);
+  assert.deepEqual(await companion.read({ bookId: 'book-a', chId: 'c1', before: '', after: html('The lighthouse.') }), { added: 1 });
 });

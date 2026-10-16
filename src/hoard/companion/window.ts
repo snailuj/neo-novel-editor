@@ -1,10 +1,11 @@
 // The librarian's watcher in the window. It keeps, for each chapter the writer saves, the
 // chapter as it was at its first save here (`previous`) and as last saved, and hands both
-// to the main half once the writer has left the chapter: the caret moved into another, or
-// the book closed. A save that lands after the writer has left is handed over at once.
-// Nothing is read while the writer is still in a chapter, so no comment appears under
-// the words being written; the librarian's comments wait in the chapter for the writer's
-// return, drawn and listed by the Comments section like any other.
+// to the main half at every save (snailuj, 16 October: comments at each save, with Show
+// or Hide Comments to keep them off the page). While the writer is still in the chapter
+// the caret goes along, and a name it is in or just after is left alone, as the word may
+// not be finished. Leaving the chapter (the caret moves into another, or the book closes)
+// hands it over a last time without the caret, and forgets it. One read per chapter is
+// out at a time; saves meanwhile are folded into one more read when it answers.
 //
 // Stop Flagging This Page and Flag This Page Again act on the librarian's comment at the
 // caret, or the one picked in the Comments section.
@@ -14,7 +15,15 @@ import type { WikiPage } from './mentions.ts';
 
 const STATUS_MS = 4_000;
 
-interface Pending { bookId: string; chId: string; before: string; after: string }
+interface Pending {
+  bookId: string;
+  chId: string;
+  before: string;
+  after: string;
+  /** A read is out for this chapter; `again` asks for one more when it answers. */
+  out: boolean;
+  again: boolean;
+}
 
 interface MarksView {
   state(): { bookId: string | null; marks: Record<string, Mark[]>; active: string | null; here: { chId: string } | null };
@@ -27,6 +36,8 @@ export function startCompanion(neo: NeoApiV4, o: {
 }) {
   const pending = new Map<string, Pending>();
   let here: string | null = null;
+  // the caret's paragraph and offset in the chapter it is in
+  let caret: { pIdx: number; off: number } | null = null;
   let statusTimer: ReturnType<typeof setTimeout> | undefined;
   const reading = new Set<Promise<unknown>>();
 
@@ -36,14 +47,26 @@ export function startCompanion(neo: NeoApiV4, o: {
     statusTimer = setTimeout(() => neo.status(''), STATUS_MS);
   };
 
+  // Hands a chapter to the main half: with the caret while the writer is in it, and for
+  // the last time once they have left.
   const send = (k: string) => {
-    const req = pending.get(k);
-    if (!req) return;
-    pending.delete(k);
+    const p = pending.get(k);
+    if (!p) return;
+    if (p.out) { p.again = true; return; }
+    const left = k !== here;
+    if (left) pending.delete(k);
+    p.out = true;
+    p.again = false;
+    const req = { bookId: p.bookId, chId: p.chId, before: p.before, after: p.after, caret: left ? null : caret };
     const run = (neo.invoke('companion.read', req) as Promise<{ added: number }>)
       .then(async ({ added }) => { if (added > 0) await o.marks.relist(); })
       .catch((err: unknown) => console.debug('hoard: companion.read', err))
-      .finally(() => reading.delete(run));
+      .finally(() => {
+        reading.delete(run);
+        p.out = false;
+        // a save, or the writer leaving, while it was out
+        if (p.again && pending.get(k) === p) send(k);
+      });
     reading.add(run);
   };
 
@@ -56,20 +79,22 @@ export function startCompanion(neo: NeoApiV4, o: {
     const k = `${bookId}/${chId}`;
     const known = pending.get(k);
     if (known) known.after = html;
-    else pending.set(k, { bookId, chId, before: previous ?? '', after: html });
-    if (k !== here) send(k);
+    else pending.set(k, { bookId, chId, before: previous ?? '', after: html, out: false, again: false });
+    send(k);
   });
   neo.on('selection', ({ place }) => {
     const book = neo.book();
     if (!place || !book) return;
+    caret = { pIdx: place.pIdx, off: place.off + place.len };
     const k = `${book.id}/${place.chId}`;
     if (k === here) return;
     here = k;
     sendLeft();
   });
-  neo.on('book-open', () => { here = null; });
+  neo.on('book-open', () => { here = null; caret = null; });
   neo.on('book-close', () => {
     here = null;
+    caret = null;
     sendLeft();
   });
 

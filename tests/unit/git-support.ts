@@ -9,7 +9,8 @@ interface Cleanup { after(fn: () => void): void }
 
 export function tempDir(t: Cleanup, prefix = 'hoard-git-'): string {
   const dir = mkdtempSync(path.join(tmpdir(), prefix));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  // Windows can refuse a removal for a moment while a scanner or a git process lets go.
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   return dir;
 }
 

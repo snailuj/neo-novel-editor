@@ -1,13 +1,56 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "description": "A chapter the writer has left, version 1, for the librarian to read: the chapter's HTML when the writer came to it (empty for a new chapter) and as it was last saved.",
+  "description": "A chapter for the librarian to read, version 1: the chapter's HTML when the writer came to it (empty for a new chapter) and as last saved. caret is where the caret is while the writer is still in the chapter, or null once they have left; a name it is in or just after is left for a later read.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["bookId", "chId", "before", "after"],
+  "required": [
+    "bookId",
+    "chId",
+    "before",
+    "after"
+  ],
   "properties": {
-    "bookId": { "type": "string", "minLength": 1 },
-    "chId": { "type": "string", "minLength": 1 },
-    "before": { "type": "string", "maxLength": 20000000 },
-    "after": { "type": "string", "maxLength": 20000000 }
+    "bookId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "chId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "before": {
+      "type": "string",
+      "maxLength": 20000000
+    },
+    "after": {
+      "type": "string",
+      "maxLength": 20000000
+    },
+    "caret": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "title": "CompanionCaret",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pIdx",
+            "off"
+          ],
+          "properties": {
+            "pIdx": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "off": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    }
   }
 }
