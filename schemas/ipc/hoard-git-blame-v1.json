@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "A request for a chapter's blame, version 1: the book folder and chapter id, each one name inside the library.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["bookId", "chId"],
+  "properties": {
+    "bookId": { "type": "string", "minLength": 1 },
+    "chId": { "type": "string", "minLength": 1 }
+  }
+}

@@ -16,6 +16,13 @@ export const bundles = [
     // Electron supplies itself at run time; bundling it would shadow the real module.
     options: { format: 'cjs', platform: 'node', target: 'es2024', external: ['electron'] },
   },
+  {
+    name: 'textconv',
+    entry: 'tools/git/neo-textconv.js',
+    outfile: 'hoard/textconv.cjs',
+    // git runs it for blame, through Electron as node; package.json unpacks it from the asar.
+    options: { format: 'cjs', platform: 'node', target: 'es2024' },
+  },
 ];
 
 export const copies = [
