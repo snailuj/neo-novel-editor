@@ -3,7 +3,8 @@
 // landed write feeds the checkpoints, the window asks for one on a chapter switch or a
 // book closing, and quitting makes one last commit. It keeps the writer's marks in
 // sidecars under .neo/, which the history commits with the chapters, brings hoard's
-// Markdown pages into the wiki book, and searches the library's files. The library's
+// Markdown pages into the wiki book, searches the library's files, and reads each
+// chapter the writer leaves for wiki pages it names (companion/). The library's
 // repository is looked at after activate returns, so NEO's start never waits on git.
 import { app, BrowserWindow, dialog, utilityProcess } from 'electron';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -13,6 +14,7 @@ import {
   validateHoardGitBlameV1, validateHoardGitCheckpointV1, validateHoardMarksAddV1, validateHoardMarksListV1,
   validateHoardMarksReplyV1, validateHoardMarksStateV1, validateHoardPingV1, validateHoardSearchQueryV1, validateHoardWikiImportV1, validateHoardWikiPageV1,
 } from '../generated/validators.cjs';
+import { startCompanion } from './companion/main.ts';
 import { textconvCommand } from './git/blame.ts';
 import { GitLayer, resolveSettings } from './git/layer.ts';
 import { createGit } from './git/runner.ts';
@@ -113,7 +115,7 @@ function messageBox(options: Electron.MessageBoxOptions) {
 
 // The wiki: Import to Wiki asks for Markdown files, says what would come in, and imports
 // on the writer's word; the window asks for the pages to follow links.
-function startWiki(host: NeoMainHost, layer: GitLayer, marks: MarkStore): void {
+function startWiki(host: NeoMainHost, layer: GitLayer, marks: MarkStore): WikiStore {
   const wiki = new WikiStore({
     library: () => host.paths.library(),
     marks,
@@ -167,6 +169,7 @@ function startWiki(host: NeoMainHost, layer: GitLayer, marks: MarkStore): void {
     });
     return { outcome: 'imported', bookId: applied.bookId, imported: applied.imported, open: done.response === 0 };
   });
+  return wiki;
 }
 
 // Search: the library's files are read in a worker process, started on the first
@@ -206,7 +209,8 @@ export function activate(host: NeoMainHost): void {
   host.handle('ping', ping);
   const layer = startHistory(host);
   const marks = startMarks(host, layer);
-  startWiki(host, layer, marks);
+  const wiki = startWiki(host, layer, marks);
+  startCompanion(host, layer, marks, wiki);
   startSearch(host);
   layer.open().catch((err: unknown) => host.log('error', 'git.open failed', String(err)));
 }
