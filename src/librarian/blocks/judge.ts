@@ -129,9 +129,10 @@ export async function judgePage(page: string, blocks: readonly Block[], judge: J
 
 /**
  * A judge that runs `command` in a shell, the prompt on its stdin and the reply from its
- * stdout. A command that fails is tried once more, then the failure escalates.
+ * stdout. A failed run is tried again after each wait in `waitsMs` (a model's rate or
+ * usage limit passes in minutes); when the last try fails too, the failure escalates.
  */
-export function commandJudge(command: string): JudgeFn {
+export function commandJudge(command: string, waitsMs: readonly number[] = [30_000, 120_000, 600_000]): JudgeFn {
   const runOnce = (prompt: string) => new Promise<string>((resolve, reject) => {
     const child = spawn(command, { shell: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '';
@@ -139,16 +140,22 @@ export function commandJudge(command: string): JudgeFn {
     child.stdout.on('data', (d: Buffer) => (out += d));
     child.stderr.on('data', (d: Buffer) => (err += d));
     child.on('error', reject);
-    child.on('close', (code) => (code === 0 ? resolve(out) : reject(new Error(`judge command failed (exit ${code}): ${err.trim().slice(0, 500)}`))));
+    // Some commands report a limit on stdout, so the message carries whichever said something.
+    child.on('close', (code) => (code === 0 ? resolve(out)
+      : reject(new Error(`judge command failed (exit ${code}): ${(err.trim() || out.trim()).slice(0, 500)}`))));
     child.stdin.on('error', () => {});
     child.stdin.end(prompt);
   });
   return async (prompt) => {
-    try {
-      return await runOnce(prompt);
-    } catch (err) {
-      log.warning(`${(err as Error).message}; trying once more`);
-      return runOnce(prompt);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await runOnce(prompt);
+      } catch (err) {
+        const wait = waitsMs[attempt];
+        if (wait === undefined) throw err;
+        log.warning(`${(err as Error).message}; trying again in ${Math.round(wait / 1000)}s (${attempt + 1} of ${waitsMs.length} retries)`);
+        await new Promise((resolve) => setTimeout(resolve, wait));
+      }
     }
   };
 }

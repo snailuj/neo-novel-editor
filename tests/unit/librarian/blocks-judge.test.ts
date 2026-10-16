@@ -1,6 +1,9 @@
 // Labelling blocks: the structural rules, and the judge's prompt, reply check, retries
 // and votes. The judge here is a function standing in for the model command.
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 import { buildPrompt, commandJudge, judgePage, parseReply } from '../../../src/librarian/blocks/judge.ts';
 import { fallbackGuess, ruleLabel } from '../../../src/librarian/blocks/rules.ts';
@@ -119,9 +122,26 @@ test('a reply that is good on the retry is used', async () => {
   assert.equal([...judged.values()][2]!.label, 'writing');
 });
 
-test('a judge command that fails twice escalates', async () => {
-  const judge = commandJudge(`${JSON.stringify(process.execPath)} -e "process.exit(3)"`);
-  await assert.rejects(judgePage('p.md', splitBlocks(PAGE), judge, { votes: 1 }), /exit 3/);
+test('a judge command is retried after each wait, then the failure escalates with what it printed', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'judge-'));
+  const count = path.join(dir, 'n');
+  const script = `require('fs').appendFileSync(${JSON.stringify(count)}, 'x'); console.log('limit reached'); process.exit(3)`;
+  const judge = commandJudge(`${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`, [0, 0]);
+  await assert.rejects(judgePage('p.md', splitBlocks(PAGE), judge, { votes: 1 }), /exit 3\): limit reached/);
+  assert.equal(readFileSync(count, 'utf8').length, 3, 'the first try and two retries');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('a judge command that recovers on a retry is used', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'judge-'));
+  const flag = path.join(dir, 'tried');
+  const script = `const fs=require('fs');if(!fs.existsSync(${JSON.stringify(flag)})){fs.writeFileSync(${JSON.stringify(flag)},'');process.exit(1)}`
+    + "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const n=(s.match(/<block id=/g)||[]).length;"
+    + "process.stdout.write(JSON.stringify(Array.from({length:n},(_,i)=>({id:'b'+(i+1),label:'tasks'}))))})";
+  const judge = commandJudge(`${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`, [0]);
+  const judged = await judgePage('p.md', splitBlocks(PAGE), judge, { votes: 1 });
+  assert.deepEqual([...judged.values()].map((j) => j.label), ['tasks', 'tasks', 'tasks']);
+  rmSync(dir, { recursive: true, force: true });
 });
 
 test('a judge command reads the prompt on stdin and answers on stdout', async () => {
