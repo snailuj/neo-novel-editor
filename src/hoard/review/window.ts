@@ -314,12 +314,17 @@ export function startReview(neo: NeoApiV4, marks: Marks, o: { pages: () => Pages
   composeCancel.addEventListener('click', () => stopComposing(true));
   for (const box of [text, note]) {
     box.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') { e.preventDefault(); stopComposing(true); }
       // Enter sends from the words, Ctrl+Enter from the note, and the key goes no further:
       // NEO toggles fullscreen on a Ctrl+Enter that reaches the document
       if (e.key === 'Enter' && (box === text ? !e.shiftKey : (e.ctrlKey || e.metaKey))) { e.preventDefault(); e.stopPropagation(); submit(); }
     });
   }
+  // NEO takes an Esc from a side pane before the boxes see it (capture on the document)
+  // and puts the writer back on the page; seen first, from the window, it also drops
+  // the suggestion, and NEO still goes back to the page
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !e.isComposing && composing && e.target instanceof Node && composer.contains(e.target)) stopComposing(false);
+  }, true);
   neo.addCommand('suggest-change', () => suggestChange());
   neo.addCommand('edit-directly', toggleDirect);
 

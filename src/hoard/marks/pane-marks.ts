@@ -42,7 +42,7 @@ const who = (w: string) => (w === 'librarian' ? 'Librarian' : 'You');
 const clip = (text: string, n = 140) => (text.length > n ? `${text.slice(0, n - 1)}…` : text);
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 const submitKey = (e: KeyboardEvent) => e.key === 'Enter' && (e.ctrlKey || e.metaKey);
-// A key a box acts on goes no further: NEO toggles fullscreen on a Ctrl+Enter that
+// A Ctrl+Enter a box sends with goes no further: NEO toggles fullscreen on one that
 // reaches the document, whether or not something took it first.
 const keep = (e: KeyboardEvent) => { e.preventDefault(); e.stopPropagation(); };
 
@@ -271,10 +271,13 @@ export function startPaneMarks(neo: NeoApiV4, pane: Pane) {
   addButton.addEventListener('click', commentOnSelection);
   composeAdd.addEventListener('click', () => { submit(); });
   composeCancel.addEventListener('click', stopComposing);
-  composerText.addEventListener('keydown', (e) => {
-    if (submitKey(e)) { keep(e); submit(); }
-    if (e.key === 'Escape') { e.preventDefault(); stopComposing(); }
-  });
+  composerText.addEventListener('keydown', (e) => { if (submitKey(e)) { keep(e); submit(); } });
+  // NEO takes an Esc from a side pane before the box sees it (capture on the document)
+  // and puts the writer back on the page; seen first, from the window, it also stops
+  // composing, and NEO still goes back to the page
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !e.isComposing && composing && e.target instanceof Node && composer.contains(e.target)) stopComposing();
+  }, true);
 
   pane.onShown((shown) => {
     page = shown;
