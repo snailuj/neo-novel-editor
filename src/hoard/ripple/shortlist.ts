@@ -40,8 +40,11 @@ export interface Ranked {
   passage?: string;
 }
 
-/** Texts in, one vector each out. `query` is the source, `document` a page's chunks. */
-export type Embed = (texts: string[], role: 'query' | 'document') => Promise<number[][]>;
+/**
+ * Texts in, one vector each out. `query` is the source, `document` a page's chunks, with
+ * `titles` naming each chunk's page for a model whose prompt takes one.
+ */
+export type Embed = (texts: string[], role: 'query' | 'document', titles?: string[]) => Promise<number[][]>;
 
 /** Whether a vault path is a page the roster considers: Markdown in a zone, no `_` or `.` folder. */
 export function inRoster(relpath: string, zones: readonly string[] = ROSTER_ZONES): boolean {
@@ -210,11 +213,11 @@ function terms(text: string): string[] {
   return (text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).filter((t) => !STOP.has(t));
 }
 
-interface Chunked { relpath: string; text: string }
+interface Chunked { relpath: string; name: string; text: string }
 
 function corpusChunks(corpus: Corpus, source: Source): Chunked[] {
   return corpus.docs.filter((d) => d.relpath !== source.relpath)
-    .flatMap((d) => chunks(d.body).map((text) => ({ relpath: d.relpath, text })));
+    .flatMap((d) => chunks(d.body).map((text) => ({ relpath: d.relpath, name: d.name, text })));
 }
 
 /** Best chunk per page, pages in score order, ties by path; zero scores dropped. */
@@ -265,7 +268,7 @@ export async function embeddingRank(corpus: Corpus, source: Source, embed: Embed
   const queries = chunks(prose(source.text));
   if (!units.length || !queries.length) return [];
   const qv = await embed(queries, 'query');
-  const dv = await embed(units.map((u) => u.text), 'document');
+  const dv = await embed(units.map((u) => u.text), 'document', units.map((u) => u.name));
   const scored = units.map((u, i) => ({ ...u, score: Math.max(...qv.map((q) => cosine(q, dv[i]!))) }));
   return bestPerPage(scored, 'embedding');
 }

@@ -73,11 +73,13 @@ export function pastTargets(log: string, source: string): string[] {
     .map((r) => linkKey(r.target as string)))];
 }
 
-/** The `n` sources with the most applied hop-0 rulings, ties by path. */
-export function pickSources(log: string, n: number): string[] {
+/** The `n` sources with the most applied hop-0 rulings, ties by path, leaving out `skip`. */
+export function pickSources(log: string, n: number, skip: readonly string[] = []): string[] {
   const counts = new Map<string, number>();
   for (const r of latest(log).filter(applied)) counts.set(r.source as string, (counts.get(r.source as string) ?? 0) + 1);
-  return [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, n).map(([s]) => s);
+  const skipped = new Set(skip.map(linkKey));
+  return [...counts].filter(([s]) => !skipped.has(linkKey(s)))
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, n).map(([s]) => s);
 }
 
 /**

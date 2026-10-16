@@ -1,5 +1,6 @@
 // npm run ripple:shortlist -- --vault <hoard> --out <folder> [--source <relpath> ...]
-//   [--pick N --rulings <RIPPLE.jsonl>] [--git] [--k 30] [--embed <model> ...]
+//   [--pick N --rulings <RIPPLE.jsonl>] [--skip-key <earlier key.json> ...] [--git] [--k 30]
+//   [--embed <model>[#titles] ...]
 // Writes sheet.md (each candidate once, to tick by hand) and key.json to --out, never
 // inside the vault. `--score <folder> [--ticks <sheet.md>]` then reads the ticks back into
 // score.md. A spike for choosing ripple's shortlist method; not part of the app.
@@ -32,12 +33,62 @@ function inside(child: string, parent: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
-interface EmbedOptions { model: string; pooling: string; dtype: string; device?: string; cacheFile: string }
+interface EmbedOptions { model: string; titles: boolean; pooling: string; dtype: string; device?: string; cacheFile: string }
+
+type Run = (texts: string[]) => Promise<number[][]>;
+const loaded = new Map<string, Promise<Run>>();
 
 // transformers.js is optional and never a dependency of the fork: a run on the author's
 // machine installs it with `npm i --no-save`. Vectors are cached by chunk hash, so cases
 // read at different commits embed only what changed.
 async function loadEmbedder(o: EmbedOptions): Promise<Embed> {
+  const gemma = /embeddinggemma/i.test(o.model);
+  // EmbeddingGemma's document prompt is "title: {title} | text: ", "none" when there is
+  // none (Google's model card). `#titles` gives it the page's name.
+  const prefix = (role: 'query' | 'document', title?: string): string => {
+    if (!gemma) return '';
+    return role === 'query' ? 'task: search result | query: ' : `title: ${(o.titles && title) || 'none'} | text: `;
+  };
+  if (!loaded.has(o.model)) loaded.set(o.model, loadModel(o, gemma));
+  const run = await loaded.get(o.model)!;
+  const cache = new Map<string, number[]>();
+  if (existsSync(o.cacheFile)) {
+    for (const line of readFileSync(o.cacheFile, 'utf8').split('\n')) {
+      if (!line) continue;
+      try {
+        const { h, v } = JSON.parse(line) as { h: string; v: number[] };
+        cache.set(h, v);
+      } catch {
+        log(`skipped a torn line in ${o.cacheFile}`);
+      }
+    }
+    log(`${cache.size} cached vectors`);
+  }
+  return async (texts, role, titles) => {
+    const keyed = texts.map((t, i) => {
+      const input = prefix(role, titles?.[i]) + t;
+      return { input, h: createHash('sha256').update(`${o.model}\0${o.dtype}\0${input}`).digest('hex') };
+    });
+    const missing = [...new Map(keyed.filter((k) => !cache.has(k.h)).map((k) => [k.h, k])).values()];
+    const t0 = Date.now();
+    for (let i = 0; i < missing.length; i += 16) {
+      const batch = missing.slice(i, i + 16);
+      const vectors = await run(batch.map((b) => b.input));
+      batch.forEach((b, j) => {
+        cache.set(b.h, vectors[j]!);
+        appendFileSync(o.cacheFile, `${JSON.stringify({ h: b.h, v: vectors[j] })}\n`);
+      });
+      if ((i / 16) % 30 === 29) log(`embedded ${i + batch.length} of ${missing.length}`);
+    }
+    if (missing.length) {
+      const ms = Date.now() - t0;
+      log(`embedded ${missing.length} ${role} chunks in ${ms} ms (${(missing.length / (ms / 1000 || 1)).toFixed(1)} a second)`);
+    }
+    return keyed.map((k) => cache.get(k.h)!);
+  };
+}
+
+async function loadModel(o: EmbedOptions, gemma: boolean): Promise<Run> {
   let lib: any;
   try {
     const spec = '@huggingface/transformers';
@@ -45,10 +96,8 @@ async function loadEmbedder(o: EmbedOptions): Promise<Embed> {
   } catch (err) {
     throw new UsageError(`--embed needs transformers.js 4.3.1 or later: npm i --no-save @huggingface/transformers (${(err as Error).message})`);
   }
-  const gemma = /embeddinggemma/i.test(o.model);
-  const prefix = gemma ? { query: 'task: search result | query: ', document: 'title: none | text: ' } : { query: '', document: '' };
   const started = Date.now();
-  let run: (texts: string[]) => Promise<number[][]>;
+  let run: Run;
   if (gemma) {
     // EmbeddingGemma 2 is multimodal; with the vision and audio encoders nulled in its
     // config only the 270M text model loads (onnx-community/embeddinggemma-2-ONNX card).
@@ -73,41 +122,7 @@ async function loadEmbedder(o: EmbedOptions): Promise<Embed> {
     run = async (texts) => (await extract(texts, { pooling: o.pooling, normalize: true })).tolist();
   }
   log(`loaded ${o.model} (${o.dtype}) in ${Date.now() - started} ms`);
-  const cache = new Map<string, number[]>();
-  if (existsSync(o.cacheFile)) {
-    for (const line of readFileSync(o.cacheFile, 'utf8').split('\n')) {
-      if (!line) continue;
-      try {
-        const { h, v } = JSON.parse(line) as { h: string; v: number[] };
-        cache.set(h, v);
-      } catch {
-        log(`skipped a torn line in ${o.cacheFile}`);
-      }
-    }
-    log(`${cache.size} cached vectors`);
-  }
-  return async (texts, role) => {
-    const keyed = texts.map((t) => {
-      const input = prefix[role] + t;
-      return { input, h: createHash('sha256').update(`${o.model}\0${o.dtype}\0${input}`).digest('hex') };
-    });
-    const missing = [...new Map(keyed.filter((k) => !cache.has(k.h)).map((k) => [k.h, k])).values()];
-    const t0 = Date.now();
-    for (let i = 0; i < missing.length; i += 16) {
-      const batch = missing.slice(i, i + 16);
-      const vectors = await run(batch.map((b) => b.input));
-      batch.forEach((b, j) => {
-        cache.set(b.h, vectors[j]!);
-        appendFileSync(o.cacheFile, `${JSON.stringify({ h: b.h, v: vectors[j] })}\n`);
-      });
-      if ((i / 16) % 30 === 29) log(`embedded ${i + batch.length} of ${missing.length}`);
-    }
-    if (missing.length) {
-      const ms = Date.now() - t0;
-      log(`embedded ${missing.length} ${role} chunks in ${ms} ms (${(missing.length / (ms / 1000 || 1)).toFixed(1)} a second)`);
-    }
-    return keyed.map((k) => cache.get(k.h)!);
-  };
+  return run;
 }
 
 async function main(argv: string[]): Promise<void> {
@@ -119,6 +134,7 @@ async function main(argv: string[]): Promise<void> {
       source: { type: 'string', multiple: true },
       pick: { type: 'string' },
       rulings: { type: 'string' },
+      'skip-key': { type: 'string', multiple: true },
       git: { type: 'boolean', default: false },
       k: { type: 'string', default: '30' },
       embed: { type: 'string', multiple: true },
@@ -152,16 +168,21 @@ async function main(argv: string[]): Promise<void> {
   const sources = [...(values.source ?? [])];
   if (values.pick) {
     if (!rulings) throw new UsageError('--pick needs --rulings');
-    sources.push(...pickSources(rulings, Number(values.pick)).filter((s) => !sources.includes(s)));
+    // An earlier run's key names the cases already read, so a second sheet holds new ones.
+    const skip = (values['skip-key'] ?? []).flatMap((file) => (JSON.parse(readFileSync(file, 'utf8')) as Key).cases.map((c) => c.source));
+    sources.push(...pickSources(rulings, Number(values.pick), skip).filter((s) => !sources.includes(s)));
   }
   if (!sources.length) throw new UsageError('name a --source, or --pick N with --rulings');
   mkdirSync(out, { recursive: true });
 
-  // The blend fills from the last model named, so name the preferred one last.
+  // Each model also fills a blend of its own. `<model>#titles` hands EmbeddingGemma each
+  // page's name; the model loads once however many ways it is named.
   const embedders: { model: string; embed: Embed }[] = [];
-  for (const model of values.embed ?? []) {
-    embedders.push({ model, embed: await loadEmbedder({
-      model, pooling: values.pooling, dtype: values.dtype, device: values.device,
+  for (const spec of values.embed ?? []) {
+    const [model, flag] = spec.split('#') as [string, string | undefined];
+    if (flag !== undefined && flag !== 'titles') throw new UsageError(`--embed ${spec}: the only flag is #titles`);
+    embedders.push({ model: flag ? `${model} titled` : model, embed: await loadEmbedder({
+      model, titles: flag === 'titles', pooling: values.pooling, dtype: values.dtype, device: values.device,
       cacheFile: path.join(out, `embed-cache-${model.replace(/[^\w.-]+/g, '_')}.jsonl`),
     }) });
   }
@@ -200,16 +221,15 @@ async function main(argv: string[]): Promise<void> {
     const lexical = lexicalRank(corpus!, source);
     lap('lexical');
     const lists: SheetList[] = [{ method: 'roster', ranked: roster.slice(0, k) }, { method: 'lexical', ranked: lexical.slice(0, k) }];
-    let fill = lexical;
-    let filler = 'lexical';
+    const blends: SheetList[] = [];
     for (const { model, embed } of embedders) {
       const embedded = await embeddingRank(corpus!, source, embed);
       lap(`embedding ${model}`);
       lists.push({ method: `embedding ${model}`, ranked: embedded.slice(0, k) });
-      fill = embedded;
-      filler = model;
+      blends.push({ method: `blend ${model}`, ranked: blend(roster, embedded, k) });
     }
-    lists.push({ method: filler === 'lexical' ? 'blend' : `blend ${filler}`, ranked: blend(roster, fill, k) });
+    if (!embedders.length) blends.push({ method: 'blend', ranked: blend(roster, lexical, k) });
+    lists.push(...blends);
     timings[rel] = t;
     cases.push({
       source: rel, corpus: corpus!, lists, readAt, briefChars, sourceChars: source.text.length,

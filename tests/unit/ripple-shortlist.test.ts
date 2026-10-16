@@ -111,6 +111,21 @@ test('embedding ranking scores each page by its closest chunk, asking for query 
   assert.deepEqual([...new Set(roles)].sort(), ['document', 'query']);
 });
 
+// EmbeddingGemma's document prefix carries the page's title, so each chunk goes in with
+// the name of the page it came from, and the source's chunks with none.
+test('embedding ranking hands each document chunk its page name as a title', async () => {
+  const seen: { role: string; texts: string[]; titles?: string[] }[] = [];
+  const spy: Embed = async (texts, role, titles) => { seen.push({ role, texts, titles }); return letters(texts, role); };
+  const twin: Source = { relpath: 'sources/T.md', text: 'The harbour light stands on the breakwater and is lit at dusk.' };
+  await embeddingRank(corpus, twin, spy);
+  const docs = seen.find((s) => s.role === 'document')!;
+  assert.equal(docs.titles?.length, docs.texts.length);
+  const at = docs.texts.findIndex((t) => /breakwater/i.test(t));
+  assert.ok(at >= 0, 'baseline: a chunk of Harbour-Light is embedded');
+  assert.equal(docs.titles![at], 'Harbour-Light');
+  assert.equal(seen.find((s) => s.role === 'query')!.titles, undefined);
+});
+
 // Rule: the blend never drops a page the source names or links directly, however low the
 // filler ranks it, and holds no page twice.
 test('the blend keeps every named and hop-1 page first, then fills to k without repeats', () => {
@@ -139,6 +154,7 @@ test('past targets are the applied, hop-0 proposals of a source, newest record p
   const log = readFileSync(path.join(fixtures, 'RIPPLE.jsonl'), 'utf8');
   assert.deepEqual(pastTargets(log, sourceRel).sort(), ['brine-works', 'wren-calder']);
   assert.deepEqual(pickSources(log, 1), ['sources/Tide-Ledger.md']);
+  assert.ok(!pickSources(log, 5, ['sources/Tide-Ledger.md']).includes('sources/Tide-Ledger.md'));
   assert.throws(() => pastTargets('{"id":"a"}\nnot json\n', sourceRel), /line 2/);
 });
 
@@ -241,6 +257,11 @@ test('the command writes a sheet and a key, scores the ticks, and refuses to wri
   const scored = spawnSync(process.execPath, [cli, '--score', out], { encoding: 'utf8' });
   assert.equal(scored.status, 0, scored.stderr);
   assert.match(readFileSync(path.join(out, 'score.md'), 'utf8'), /\| roster \| 1 of 1 \|/);
+  // A second run skips the cases an earlier key already holds, so it picks the next source.
+  const again = spawnSync(process.execPath, [cli, '--vault', vault, '--out', tempDir(t, 'ripple-out-'), '--pick', '1',
+    '--rulings', path.join(fixtures, 'RIPPLE.jsonl'), '--skip-key', path.join(out, 'key.json')], { encoding: 'utf8' });
+  assert.equal(again.status, 2);
+  assert.match(again.stderr, /no such source: sources\/Other-Log\.md/);
   const noLib = spawnSync(process.execPath, [cli, '--vault', vault, '--out', out, '--source', sourceRel, '--embed', 'some/model'], { encoding: 'utf8' });
   assert.equal(noLib.status, 2);
   assert.match(noLib.stderr, /npm i --no-save @huggingface\/transformers/);
