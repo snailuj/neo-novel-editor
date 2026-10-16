@@ -1,0 +1,7 @@
+{"src": "old/harbour.md", "dest": "sources/harbour-talk.md", "method": "verbatim", "src_sha256": "a1", "body_sha256": "4a28a877541e2cd52964245cc28fbd539c81973842a352377cdf37287005c204"}
+{"src": "old/gone.md", "dest": "sources/gone.md", "method": "verbatim", "src_sha256": "b2", "body_sha256": "00"}
+{"src": "old/drift.md", "dest": "writing/drift.md", "method": "verbatim", "src_sha256": "c3", "body_sha256": "11"}
+{"src": "old/abs.md", "dest": "/elsewhere/library/lore/abs.md", "method": "converted", "src_sha256": "d4"}
+{"src": "old/harbour-copy.md", "dest": "sources/harbour-copy.md", "method": "converted", "src_sha256": "a1", "body_sha256": "4a28a877541e2cd52964245cc28fbd539c81973842a352377cdf37287005c204"}
+{"dest": "lore/Old-Name.md", "method": "retire", "reason": "renamed", "successor": "lore/Tidecraft.md"}
+{"src": "old/map.canvas", "dest": "sources/map.canvas", "method": "verbatim", "src_sha256": "e5", "file_sha256": "d14d7329304df05f244daa478ed0cc7f58e1a2d60a53d319e60e625395020728"}

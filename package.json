@@ -26,6 +26,7 @@
     "test:simple": "electron scripts/simple.e2e.js",
     "test": "node --test \"scripts/*.test.js\"",
     "test:unit": "node --test \"tests/unit/**/*.test.ts\"",
+    "librarian": "node src/librarian/cli.ts",
     "test:e2e": "npm run build && playwright test",
     "check": "npm run gen:check && npm run typecheck && npm run lint:fork && npm test && npm run test:unit",
     "test:coverage": "node --test --experimental-test-coverage \"scripts/*.test.js\"",
@@ -186,7 +187,8 @@
     "esbuild": "0.28.2",
     "json-schema-to-typescript": "16.0.0",
     "oxlint": "^1.86.0",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "yaml": "2.9.0"
   },
   "dependencies": {
     "@farscrl/hunspell-wasm": "1.0.1",

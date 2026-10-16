@@ -5,6 +5,7 @@ import type { HoardSettingsV1 } from './hoard-settings-v1.js';
 import type { HoardGitBlameV1 } from './ipc/hoard-git-blame-v1.js';
 import type { HoardGitCheckpointV1 } from './ipc/hoard-git-checkpoint-v1.js';
 import type { HoardPingV1 } from './ipc/hoard-ping-v1.js';
+import type { ManifestRecordV1 } from './manifest-record-v1.js';
 import type { PlaceV1 } from './place-v1.js';
 import type { PluginManifestV1 } from './plugin-manifest-v1.js';
 
@@ -18,5 +19,6 @@ export const validateHoardSettingsV1: Validator<HoardSettingsV1>;
 export const validateHoardGitBlameV1: Validator<HoardGitBlameV1>;
 export const validateHoardGitCheckpointV1: Validator<HoardGitCheckpointV1>;
 export const validateHoardPingV1: Validator<HoardPingV1>;
+export const validateManifestRecordV1: Validator<ManifestRecordV1>;
 export const validatePlaceV1: Validator<PlaceV1>;
 export const validatePluginManifestV1: Validator<PluginManifestV1>;

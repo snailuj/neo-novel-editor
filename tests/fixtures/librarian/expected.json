@@ -1,0 +1,134 @@
+[
+ {
+  "argv": [
+   "lint"
+  ],
+  "code": 1,
+  "stdout": "INDEX.md:3: BD3 wrapped paragraph (one paragraph = one line)\nINDEX.md:6: LK1 alias-only link [[kella]] -> Kell'a\nlore/Tidecraft.md: FM3 unknown key 'flavour'\nlore/Tidecraft.md:25: TC1 malformed CriticMarkup mark {++\nlore/Tidecraft.md:23: BD1 inline Dataview field\nlore/Tidecraft.md:15: BD2 em dash in librarian prose (use '--')\nlore/Tidecraft.md:14: BD3 wrapped paragraph (one paragraph = one line)\nlore/Tidecraft.md:19: CS1 citation of [[harbour-talk]] names speaker 'the hosts' (expected 'Ada Vell')\nlore/Tidecraft.md: DP1 link into _deprecated/ -- [[2025-old-thing]] resolves to the ghost _deprecated/2025-old-thing.md\nlore/Tidecraft.md:5: LK1 alias-only link [[kella]] -> Kell'a\nlore/Tidecraft.md:21: LK1 alias-only link [[kella]] -> Kell'a\nlore/Tidecraft.md:29: LK1 alias-only link [[kella]] -> Kell'a (author bytes)\nprojects/story-calendar.md: FM9 invalid stage 'banana'\nprojects/story-calendar.md: AT3 body must open with a '> [!librarian] An agent has contributed to this file.' callout, or the older collapsed '> [!librarian]-' one\nwriting/path/the-boathouse.md:10: LK1 alias-only link [[kella]] -> Kell'a (author bytes)\nprojects/story-calendar.md: LK2 basename 'story-calendar' collides with lore/Story-Calendar.md (case-insensitive; Obsidian resolves [[story-calendar]] to one of them)\nsources/silent-notes.md: CS2 provenance.author Unattributed with no _meta/LOG.md line recording the ladder check\n"
+ },
+ {
+  "argv": [
+   "dangling"
+  ],
+  "code": 1,
+  "stdout": "near-miss: [[Rivers-and-Stone]] ~ lore/Rivers-Ash-and-Stone.md (0.90, linked from writing/path/the-boathouse.md)\n\n3 unresolved target(s)\n    1  [[Nowhere]]  lore/Tidecraft.md\n    1  [[Old-Name]]  lore/Tidecraft.md\n    1  [[Rivers-and-Stone]]  writing/path/the-boathouse.md\n"
+ },
+ {
+  "argv": [
+   "dangling",
+   "--match",
+   "RIVERS-and"
+  ],
+  "code": 1,
+  "stdout": "near-miss: [[Rivers-and-Stone]] ~ lore/Rivers-Ash-and-Stone.md (0.90, linked from writing/path/the-boathouse.md)\n\n1 unresolved target(s)\n    1  [[Rivers-and-Stone]]  writing/path/the-boathouse.md\n"
+ },
+ {
+  "argv": [
+   "quotes"
+  ],
+  "code": 1,
+  "stdout": "lore/Tidecraft.md:17: QV1 quotation not found in [[harbour-talk]]: \"a map of all the potential biscuits\"\nlore/Tidecraft.md:19: QV2 quotation of [[harbour-talk]] differs in case: \"the pattern is primary\"\n"
+ },
+ {
+  "argv": [
+   "verify"
+  ],
+  "code": 1,
+  "stdout": "sources/gone.md: missing (src old/gone.md)\nwriting/drift.md: hash mismatch — verbatim law broken (src old/drift.md)\n/elsewhere/library/lore/abs.md: missing (src old/abs.md)\nsources/harbour-copy.md: missing (src old/harbour-copy.md)\n"
+ },
+ {
+  "argv": [
+   "repair"
+  ],
+  "code": 1,
+  "stdout": "dest absolute, NOT under <vault> -- run repair on that checkout: /elsewhere/library/lore/abs.md\n"
+ },
+ {
+  "argv": [
+   "duplicates"
+  ],
+  "code": 0,
+  "stdout": "old/harbour.md -> sources/harbour-talk.md | old/harbour-copy.md -> sources/harbour-copy.md\n"
+ },
+ {
+  "argv": [
+   "check",
+   "--src",
+   "old/harbour.md",
+   "--src-file",
+   "sources/harbour-talk.md"
+  ],
+  "code": 2,
+  "stdout": "changed (1 prior record(s))\n"
+ },
+ {
+  "argv": [
+   "check",
+   "--src",
+   "old/new.md",
+   "--src-file",
+   "sources/harbour-talk.md"
+  ],
+  "code": 1,
+  "stdout": "not ingested\n"
+ },
+ {
+  "argv": [
+   "relink",
+   "--check"
+  ],
+  "code": 1,
+  "stdout": "INDEX.md:6: [[kella]] -> [[Kell'a|kella]]  [librarian]\nlore/Tidecraft.md:5: \"[[kella]]\" -> \"[[Kell'a]]\"  [librarian]\nlore/Tidecraft.md:21: [[kella]] -> [[Kell'a|kella]]  [librarian]\nlore/Tidecraft.md:29: [[kella]] -> [[Kell'a|kella]]  [human-span]\nwriting/path/the-boathouse.md:10: [[kella]] -> [[Kell'a|kella]]  [author-body]\n5 rewrite(s) pending in 3 file(s): 3 librarian, 1 human-span, 1 author-body\n"
+ },
+ {
+  "argv": [
+   "relink",
+   "--check",
+   "--scope",
+   "librarian"
+  ],
+  "code": 1,
+  "stdout": "INDEX.md:6: [[kella]] -> [[Kell'a|kella]]  [librarian]\nlore/Tidecraft.md:5: \"[[kella]]\" -> \"[[Kell'a]]\"  [librarian]\nlore/Tidecraft.md:21: [[kella]] -> [[Kell'a|kella]]  [librarian]\n3 rewrite(s) pending in 2 file(s): 3 librarian\n"
+ },
+ {
+  "argv": [
+   "relink",
+   "--check",
+   "--scope",
+   "author"
+  ],
+  "code": 1,
+  "stdout": "lore/Tidecraft.md:29: [[kella]] -> [[Kell'a|kella]]  [human-span]\nwriting/path/the-boathouse.md:10: [[kella]] -> [[Kell'a|kella]]  [author-body]\n2 rewrite(s) pending in 2 file(s): 1 human-span, 1 author-body\n"
+ },
+ {
+  "argv": [
+   "relink",
+   "--check",
+   "--map",
+   "Old-Name=Tidecraft"
+  ],
+  "code": 1,
+  "stdout": "INDEX.md:6: [[kella]] -> [[Kell'a|kella]]  [librarian]\nlore/Tidecraft.md:5: \"[[kella]]\" -> \"[[Kell'a]]\"  [librarian]\nlore/Tidecraft.md:21: [[kella]] -> [[Kell'a|kella]]  [librarian]\nlore/Tidecraft.md:21: [[Old-Name]] -> [[Tidecraft]]  [librarian]\nlore/Tidecraft.md:29: [[kella]] -> [[Kell'a|kella]]  [human-span]\nwriting/path/the-boathouse.md:10: [[kella]] -> [[Kell'a|kella]]  [author-body]\nmap: [[Tidecraft]] resolves to lore/Tidecraft.md\n6 rewrite(s) pending in 3 file(s): 4 librarian, 1 human-span, 1 author-body\n"
+ },
+ {
+  "argv": [
+   "relink",
+   "--check",
+   "--map-only",
+   "--map",
+   "Old-Name=Tidecraft"
+  ],
+  "code": 1,
+  "stdout": "lore/Tidecraft.md:21: [[Old-Name]] -> [[Tidecraft]]  [librarian]\nmap: [[Tidecraft]] resolves to lore/Tidecraft.md\n1 rewrite(s) pending in 1 file(s): 1 librarian\n"
+ },
+ {
+  "argv": [
+   "relink",
+   "--check",
+   "--map",
+   "Kell'a=Tidecraft"
+  ],
+  "code": 3,
+  "stdout": ""
+ }
+]
