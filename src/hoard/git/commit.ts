@@ -48,6 +48,8 @@ export interface CommitOptions {
   librarian: Identity;
   /** The author's identity from the plugin settings; git config's when absent. */
   author?: Identity | null;
+  /** Only these paths, relative to the library; everything else waits for the next commit. */
+  paths?: readonly string[];
 }
 
 export interface Committed {
@@ -80,12 +82,13 @@ function identityEnv(who: Who, options: CommitOptions): Record<string, string> {
   };
 }
 
-/** Stages and commits every change; null when nothing changed. */
+/** Stages and commits every change, or those of options.paths; null when nothing changed. */
 export async function commitAll(git: Git, library: string, options: CommitOptions): Promise<Committed | null> {
   const leftOut = booksWithOwnRepo(library);
-  const pathspec = ['--', '.', ...leftOut.map((b) => `:(exclude)${b}`)];
+  const only = options.paths ? options.paths.map((p) => `:(literal)${p}`) : null;
+  const pathspec = ['--', ...(only ?? ['.']), ...leftOut.map((b) => `:(exclude)${b}`)];
   await git.run(library, ['add', '-A', ...pathspec]);
-  const { stdout: staged } = await git.run(library, ['diff', '--cached', '--name-only', '-z']);
+  const { stdout: staged } = await git.run(library, ['diff', '--cached', '--name-only', '-z', ...(only ? ['--', ...only] : [])]);
   const files = staged.split('\0').filter(Boolean).length;
   if (!files) return null;
   await git.run(library, [
@@ -93,6 +96,7 @@ export async function commitAll(git: Git, library: string, options: CommitOption
     'commit', '-q', '--no-verify',
     '-m', SUBJECTS[options.reason],
     '-m', `Neo-Checkpoint: ${options.reason}`,
+    ...(only ? ['--', ...only] : []),
   ], { env: identityEnv(options.who, options) });
   const { stdout: head } = await git.run(library, ['rev-parse', 'HEAD']);
   return { commit: head.trim(), files, leftOut };

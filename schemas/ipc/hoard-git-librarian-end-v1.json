@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The end of a librarian edit, version 1: the pair its start answered with (null when the library keeps no history), and the chapter's HTML after the edit, which the disk must hold before the librarian's commit (null when the book closed meanwhile, to commit the disk as it is).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["pair", "html"],
+  "properties": {
+    "pair": { "type": ["string", "null"], "minLength": 1 },
+    "html": { "type": ["string", "null"] }
+  }
+}
