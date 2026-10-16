@@ -16,7 +16,9 @@
 // leaves and comments on the wiki pages its new words name (companion/window.ts).
 import { startCompanion } from './companion/window.ts';
 import { startLibrarian } from './git/librarian.ts';
+import { startPaneMarks } from './marks/pane-marks.ts';
 import { startMarks } from './marks/window.ts';
+import { startReview } from './review/window.ts';
 import { startSearch } from './search/window.ts';
 import { startWiki } from './wiki/window.ts';
 
@@ -51,12 +53,14 @@ NeoPlugins.register({
     const gitStatus = () => neo.invoke('git.status');
     const marks = startMarks(neo, { follow: (target) => { wiki.follow(target); } });
     const wiki = startWiki(neo);
+    const librarian = startLibrarian(neo);
+    const review = startReview(neo, marks, { pages: wiki.index, librarian });
+    const paneMarks = startPaneMarks(neo, wiki.pane);
     const search = startSearch(neo, {
       bookId: () => wiki.pages()?.bookId ?? null,
       show: (chId, at) => wiki.pane.open(chId, at ?? undefined),
     });
     const companion = startCompanion(neo, { marks, wiki: () => wiki.pages() });
-    const librarian = startLibrarian(neo);
-    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, search, companion, librarian }) });
+    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, librarian, review, paneMarks, search, companion }) });
   },
 });

@@ -50,6 +50,7 @@ export function startWikiPane(neo: NeoApiV4, o: { resolve: () => Resolver; editI
   const history = new PageHistory();
   let shown: PageRead | null = null;
   let asked = 0;
+  const shownListeners: ((page: PageRead | null) => void)[] = [];
   // where to take the reader on the next page drawn: words a search found
   let showAt: { pIdx: number; off: number; len: number } | null = null;
 
@@ -187,6 +188,7 @@ export function startWikiPane(neo: NeoApiV4, o: { resolve: () => Resolver; editI
       render(page);
       if (at) markAt(at);
     }
+    for (const fn of shownListeners) fn(page);
     refreshNav();
     if (hadFocus) title.focus();
   };
@@ -219,5 +221,10 @@ export function startWikiPane(neo: NeoApiV4, o: { resolve: () => Resolver; editI
     shown: () => (shown ? { chId: shown.chId, title: shown.title } : null),
     /** The page shown again, as saved now (after an import, say). */
     reload: () => showCurrent(),
+    /** The pane's section, and the element holding the page's lines, one per paragraph in order. */
+    root,
+    body,
+    /** Told after each page is drawn in the pane, with null when it is gone. */
+    onShown(fn: (page: PageRead | null) => void) { shownListeners.push(fn); },
   };
 }

@@ -29,6 +29,22 @@ interface Item {
   reply: HTMLTextAreaElement;
   replyButton: HTMLButtonElement;
   stateButton: HTMLButtonElement;
+  extra: HTMLSpanElement;
+  extraShown: string;
+}
+
+/** A button another part of the plugin puts on a card (review/window.ts: Accept Anyway, Withdraw). */
+export interface CardAction {
+  label: string;
+  run: () => Promise<void>;
+}
+
+/** What another part of the plugin adds to the Comments section. */
+export interface MarksExtension {
+  /** The buttons a card shows beside Reply, for a mark of the chapter chId. */
+  cardActions?(mark: Mark, chId: string): CardAction[];
+  /** Told after the section has drawn, for a part that keeps its own line in it. */
+  rendered?(): void;
 }
 
 const REDRAW_MS = 300;
@@ -131,6 +147,7 @@ export function startMarks(neo: NeoApiV3, o: { follow?: (target: string) => void
   const empty = el('p', 'stickies-empty hoard-empty', 'No comments in this chapter. Select some words, then choose Add Comment.');
   root.append(head, alert, status, composer, list, empty);
   const items = new Map<string, Item>();
+  const extensions: MarksExtension[] = [];
 
   const warn = (text: string) => { alert.textContent = text; };
   const tell = (text: string) => {
@@ -196,7 +213,8 @@ export function startMarks(neo: NeoApiV3, o: { follow?: (target: string) => void
     const actions = el('div', 's-actions');
     const replyButton = button('', 'Reply');
     const stateButton = button('', '');
-    actions.append(replyButton, el('span', 's-sep', '·'), stateButton);
+    const extra = el('span', 'hoard-extra');
+    actions.append(replyButton, el('span', 's-sep', '·'), stateButton, extra);
     itemRoot.append(quote, thread, label, reply, actions);
     const send = () => sendReply(mark.id, reply);
     replyButton.addEventListener('click', send);
@@ -207,7 +225,7 @@ export function startMarks(neo: NeoApiV3, o: { follow?: (target: string) => void
       const now = currentMark(mark.id);
       if (now) changeState(mark.id, now.state === 'resolved' ? 'open' : 'resolved');
     });
-    const item: Item = { root: itemRoot, quote, thread, shown: '', reply, replyButton, stateButton };
+    const item: Item = { root: itemRoot, quote, thread, shown: '', reply, replyButton, stateButton, extra, extraShown: '' };
     items.set(mark.id, item);
     return item;
   };
@@ -237,7 +255,43 @@ export function startMarks(neo: NeoApiV3, o: { follow?: (target: string) => void
     item.stateButton.hidden = mark.kind !== 'comment' && mark.kind !== 'highlight';
     item.replyButton.disabled = busy.has(mark.id);
     item.stateButton.disabled = busy.has(mark.id);
+    fillExtra(item, mark);
   };
+
+  // Buttons rebuilt only when their labels change, so one holding the focus keeps it.
+  function fillExtra(item: Item, mark: Mark) {
+    const chId = here?.chId;
+    const wanted = chId ? extensions.flatMap((x) => x.cardActions?.(mark, chId) ?? []) : [];
+    const shown = wanted.map((a) => a.label).join('\n');
+    if (shown !== item.extraShown) {
+      item.extra.replaceChildren(...wanted.map((action) => {
+        const b = button('', action.label);
+        b.dataset.action = action.label;
+        return b;
+      }));
+      item.extraShown = shown;
+    }
+    [...item.extra.children].forEach((node, i) => {
+      const b = node as HTMLButtonElement;
+      const action = wanted[i];
+      b.disabled = busy.has(mark.id);
+      b.onclick = () => { runAction(mark.id, action); };
+      b.hidden = false;
+    });
+    item.extra.hidden = wanted.length === 0;
+  }
+
+  async function runAction(id: string, action: CardAction) {
+    if (busy.has(id)) return;
+    busy.add(id);
+    render();
+    try {
+      await action.run();
+    } finally {
+      busy.delete(id);
+      render();
+    }
+  }
 
   function render() {
     const chId = here?.chId ?? null;
@@ -261,6 +315,7 @@ export function startMarks(neo: NeoApiV3, o: { follow?: (target: string) => void
       warn('This chapter\'s comments file could not be read, so it is left untouched and no comment can be added here. neo-errors.log names the file; mend or move it, then open the book again.');
     }
     renderBlame();
+    for (const x of extensions) x.rendered?.();
   }
 
   const currentMark = (id: string) => (here ? marks[here.chId]?.find((m) => m.id === id) : undefined);
@@ -500,11 +555,29 @@ export function startMarks(neo: NeoApiV3, o: { follow?: (target: string) => void
   return {
     addComment,
     show: () => pane.show(),
+    /** Another part of the plugin's buttons on cards and lines in the section. */
+    extend(x: MarksExtension) {
+      extensions.push(x);
+      render();
+    },
+    /** The section's head, after the blame line, for a part's own controls. */
+    head,
+    /** Puts a part's own element in the section, before the list. */
+    mount(node: HTMLElement) { root.insertBefore(node, list); },
+    warn,
+    tell,
+    /** The open book and the caret's chapter, as the section knows them. */
+    where: () => (bookId && here ? { bookId, ...here } : null),
+    marksOf: (chId: string) => marks[chId] ?? [],
+    unreadable: (chId: string) => unreadable.has(chId),
+    /** Takes the main half's answer for a chapter: the marks as the file now holds them. */
+    settle,
     /** Whether marks are drawn on the page (Show or Hide Comments). */
     hidden: () => hidden,
     setHidden,
     /** The marks read again from their files, after another part of the plugin added some. */
     relist: () => relist(),
+    activate(id: string | null) { active = id; paint(); render(); },
     /** For tests and the console: what the window holds and draws now. */
     state: () => structuredClone({
       bookId, marks, active, here,

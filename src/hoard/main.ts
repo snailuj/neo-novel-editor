@@ -23,6 +23,7 @@ import { startLibrarianPairs } from './git/librarian-main.ts';
 import { createGit } from './git/runner.ts';
 import { ATTRIBUTES } from './git/start.ts';
 import { MarkStore } from './marks/store.ts';
+import { startReview } from './review/main.ts';
 import { SearchClient, type WorkerProcess } from './search/client.ts';
 import { WikiStore } from './wiki/store.ts';
 import { describeSort } from './wiki/summary.ts';
@@ -216,6 +217,7 @@ export function activate(host: NeoMainHost): void {
   const marks = startMarks(host, layer);
   const wiki = startWiki(host, layer, marks);
   startCompanion(host, layer, marks, wiki);
+  startReview(host, marks);
   startSearch(host);
   layer.open().catch((err: unknown) => host.log('error', 'git.open failed', String(err)));
 }
