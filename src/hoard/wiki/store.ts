@@ -15,8 +15,16 @@
 // owns it: first the author's, holding what they wrote meanwhile and each page with only
 // its quotations and code (convert.ts), then the librarian's, with the whole pages.
 //
-// A page's source that changed since it came in is never written over: the page may
-// hold words written in NEO since. It is listed instead.
+// A page's source that changed since it came in updates the page in place only while
+// NEO has not changed the page (its chapter file still hashes as the import left it),
+// and every mark on it stays. When NEO has changed it too, the new source comes in as
+// the next page, as NEO does with a chapter changed on two devices, and later imports
+// follow that newest page. Words written in NEO are never written over.
+//
+// A pick is a file, or an import list's entry (import-list.ts): a page with a name of
+// its own, or sections of a page joined into one (a split). A page an old vault gave
+// hoard, by hoard's own manifest, comes in with hoard's pages instead, so it is not
+// imported twice. A page's images and PDFs are copied into the wiki book.
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -25,13 +33,17 @@ import type { Mark } from '../../generated/hoard-marks-v1.js';
 import type { HoardPageV1 } from '../../generated/hoard-page-v1.js';
 import type { HoardWikiV1 } from '../../generated/hoard-wiki-v1.js';
 import { validateHoardChangeV1, validateHoardPageV1, validateHoardWikiV1 } from '../../generated/validators.cjs';
+import { split } from '../../librarian/frontmatter.ts';
 import { key } from '../../librarian/links.ts';
-import { appendRecord, parseManifest, serialiseRecord, type ManifestRecordV1 } from '../../librarian/manifest.ts';
+import { appendRecord, parseManifest, serialiseRecord } from '../../librarian/manifest.ts';
 import { oneName, writeJson, writeWhole } from '../files.ts';
 import { anchorAt, anchorPoint } from '../marks/anchor.ts';
 import { newMark } from '../marks/model.ts';
 import type { MarkStore } from '../marks/store.ts';
+import { AttachmentFinder, attachmentsIn, copyAttachment } from './attachments.ts';
 import { convertPage, pageHtml, type ConvertedPage } from './convert.ts';
+import { HoardIndex, hoardRoot, vaultRoot } from './hoard-manifest.ts';
+import { section } from './sections.ts';
 
 type Level = 'error' | 'warn' | 'info' | 'debug';
 
@@ -49,19 +61,31 @@ export interface WikiStoreOptions {
   log: (level: Level, message: string, data?: unknown) => void;
 }
 
-interface Picked { path: string; name: string }
+/** A file to import, or an import list's entry: a name of its own, or one section of it. */
+export interface Pick { path: string; name?: string | null; section?: string | null }
+
+interface Picked { path: string; name: string; sections: string[] }
+/** An attachment a page names, and the file found for it. */
+export interface Found { target: string; file: string }
+interface Converted { sha256: string; page: ConvertedPage; attachments: Found[]; missing: string[] }
 export type Verdict =
-  | Picked & { kind: 'new'; sha256: string; page: ConvertedPage }
-  | Picked & { kind: 'same' | 'changed' | 'clash' }
+  | Picked & Converted & { kind: 'new' }
+  | Picked & Converted & { kind: 'update' | 'beside'; chId: string }
+  | Picked & { kind: 'same' | 'clash' | 'through-hoard' | 'hoard-older' }
   | Picked & { kind: 'unreadable'; why: string };
 
-export interface Sorted { verdicts: Verdict[] }
+export interface Sorted { verdicts: Verdict[]; picks?: Pick[] }
 
 export interface Applied {
   bookId: string | null;
   imported: { chId: string; name: string }[];
+  updated: { chId: string; name: string }[];
   marks: number;
   keptAsText: number;
+  /** Attachments copied into the wiki book. */
+  attachments: number;
+  /** Attachments a page names that its vault does not hold. */
+  missing: string[];
 }
 
 export interface WikiPages {
@@ -81,6 +105,7 @@ const sha256 = (data: string | Buffer) => createHash('sha256').update(data).dige
 const nameOf = (file: string) => path.basename(file).replace(/\.md$/i, '');
 // Paths compare as the file system does: without case on Windows.
 const samePath = (file: string) => (process.platform === 'win32' ? path.resolve(file).toLowerCase() : path.resolve(file));
+const pickKey = (p: { path: string; sections: string[] }) => [samePath(p.path), ...p.sections].join('\n');
 const byName = (a: Picked, b: Picked) => {
   const [ka, kb] = [key(a.name), key(b.name)];
   if (ka !== kb) return ka < kb ? -1 : 1;
@@ -157,61 +182,153 @@ export class WikiStore {
     return { bookId: wiki.bookId, chId, title: listed.title, html };
   }
 
-  // Each page already in the wiki: its source (by path) and its title (by link key).
-  #known(): { bySource: Map<string, string>; names: Set<string> } {
-    const bySource = new Map<string, string>();
+  // Each page already in the wiki: the newest page for each source (path and sections),
+  // every title and source name (by link key), and hoard's roots, found from its pages.
+  #known(): { bySource: Map<string, { chId: string; title: string; sha256: string; imported: string }>; names: Set<string>; hoards: Set<string> } {
+    const bySource = new Map<string, { chId: string; title: string; sha256: string; imported: string }>();
     const names = new Set<string>();
+    const hoards = new Set<string>();
     const wiki = this.pages();
-    if (!wiki) return { bySource, names };
+    if (!wiki) return { bySource, names, hoards };
+    const rootOf = new Map<string, string | null>();
     for (const { chId, title } of wiki.pages) {
       names.add(key(title));
       const file = this.#pageFile(wiki.bookId, chId);
       if (!existsSync(file)) continue;
       try {
         const page = JSON.parse(readFileSync(file, 'utf8')) as unknown;
-        if (validateHoardPageV1(page)) {
-          bySource.set(samePath(page.source.path), page.source.sha256);
-          names.add(key(page.source.name));
-        }
+        if (!validateHoardPageV1(page)) continue;
+        const k = pickKey({ path: page.source.path, sections: page.source.sections ?? [] });
+        const was = bySource.get(k);
+        if (!was || was.imported <= page.imported) bySource.set(k, { chId, title, sha256: page.source.sha256, imported: page.imported });
+        names.add(key(page.source.name));
+        const dir = path.dirname(page.source.path);
+        if (!rootOf.has(dir)) rootOf.set(dir, hoardRoot(page.source.path));
+        const root = rootOf.get(dir);
+        if (root) hoards.add(root);
       } catch (err) {
         this.#o.log('warn', `wiki: the page sidecar ${file} does not read`, String(err));
       }
     }
-    return { bySource, names };
+    return { bySource, names, hoards };
   }
 
-  /** What importing these files would do. Reads; never writes. */
-  sort(files: readonly string[]): Sorted {
-    const { bySource, names } = this.#known();
-    const seen = new Set<string>();
-    const picked: Picked[] = [];
-    for (const file of files) {
-      if (seen.has(samePath(file))) continue;
-      seen.add(samePath(file));
-      picked.push({ path: file, name: nameOf(file) });
+  // The hash each chapter file had when an import last wrote it, from the manifest.
+  #written(): Map<string, string> {
+    const file = path.join(this.#library, '.neo', 'manifest.jsonl');
+    const written = new Map<string, string>();
+    if (!existsSync(file)) return written;
+    try {
+      for (const r of parseManifest(readFileSync(file, 'utf8'))) if (typeof r.file_sha256 === 'string') written.set(r.dest, r.file_sha256);
+    } catch (err) {
+      // Then no page counts as untouched, and a changed source comes in beside its page.
+      this.#o.log('warn', 'wiki: the manifest does not read, so no page counts as untouched', String(err));
     }
-    picked.sort(byName);
-    const verdicts = picked.map((p): Verdict => {
+    return written;
+  }
+
+  // True while NEO has not changed the page since an import wrote it.
+  #untouched(bookId: string, chId: string, written: Map<string, string>): boolean {
+    const was = written.get(`${bookId}/chapters/${chId}.html`);
+    const file = path.join(this.#library, bookId, 'chapters', `${chId}.html`);
+    return was !== undefined && existsSync(file) && sha256(readFileSync(file)) === was;
+  }
+
+  // Each file once, or each list entry's sections joined into the page it names.
+  #picked(picks: readonly (string | Pick)[]): Picked[] {
+    const picked: Picked[] = [];
+    const whole = new Set<string>();
+    const parts = new Map<string, Picked>();
+    for (const raw of picks) {
+      const pick: Pick = typeof raw === 'string' ? { path: raw } : raw;
+      const name = pick.name || nameOf(pick.path);
+      if (pick.section) {
+        const k = `${samePath(pick.path)}\n${key(name)}`;
+        const into = parts.get(k);
+        if (into) {
+          if (!into.sections.includes(pick.section)) into.sections.push(pick.section);
+          continue;
+        }
+        const p = { path: pick.path, name, sections: [pick.section] };
+        parts.set(k, p);
+        picked.push(p);
+        continue;
+      }
+      if (whole.has(samePath(pick.path))) continue;
+      whole.add(samePath(pick.path));
+      picked.push({ path: pick.path, name, sections: [] });
+    }
+    return picked.sort(byName);
+  }
+
+  // The Markdown a pick brings in: the page, or its sections joined, without the
+  // frontmatter of the page they were cut from.
+  #converted(p: Picked, bytes: Buffer, finders: Map<string, AttachmentFinder>): Converted | { why: string } {
+    let text = bytes.toString('utf8');
+    if (p.sections.length) {
+      const { body } = split(text.replace(/^\ufeff/, '').replace(/\r\n?/g, '\n'));
+      const cut: string[] = [];
+      for (const heading of p.sections) {
+        const part = section(body, heading);
+        if (part === null) return { why: `it has no heading \u201c${heading}\u201d` };
+        cut.push(part);
+      }
+      text = `${cut.join('\n\n')}\n`;
+    }
+    let page: ConvertedPage;
+    try {
+      page = convertPage(text, () => this.#id('b'));
+    } catch (err) {
+      return { why: err instanceof Error ? err.message : String(err) };
+    }
+    const root = vaultRoot(p.path) ?? path.dirname(path.resolve(p.path));
+    let finder = finders.get(root);
+    if (!finder) finders.set(root, finder = new AttachmentFinder(root));
+    const attachments: Found[] = [];
+    const missing: string[] = [];
+    for (const target of attachmentsIn(text)) {
+      const file = finder.find(target, p.path);
+      if (file) attachments.push({ target, file });
+      else missing.push(target);
+    }
+    return { sha256: sha256(bytes), page, attachments, missing };
+  }
+
+  /** What importing these files or list entries would do. Reads; never writes. */
+  sort(picks: readonly (string | Pick)[]): Sorted {
+    const { bySource, names, hoards } = this.#known();
+    const hoard = hoards.size ? HoardIndex.read(hoards, this.#o.log) : null;
+    const written = this.#written();
+    const bookId = this.wikiId();
+    const finders = new Map<string, AttachmentFinder>();
+    const day = this.#now().slice(0, 10);
+    const verdicts = this.#picked(picks).map((p): Verdict => {
       let bytes: Buffer;
       try {
         bytes = readFileSync(p.path);
       } catch (err) {
         return { ...p, kind: 'unreadable', why: (err as NodeJS.ErrnoException).code === 'ENOENT' ? 'the file is not there' : String(err) };
       }
-      const sha = sha256(bytes);
-      const was = bySource.get(samePath(p.path));
-      if (was !== undefined) return { ...p, kind: was === sha ? 'same' : 'changed' };
-      if (names.has(key(p.name))) return { ...p, kind: 'clash' };
-      let page: ConvertedPage;
-      try {
-        page = convertPage(bytes.toString('utf8'), () => this.#id('b'));
-      } catch (err) {
-        return { ...p, kind: 'unreadable', why: err instanceof Error ? err.message : String(err) };
+      const known = bySource.get(pickKey(p));
+      if (known && known.sha256 === sha256(bytes)) return { ...p, name: known.title, kind: 'same' };
+      if (!known && !p.sections.length) {
+        const held = hoard?.verdict(p.path, sha256(bytes));
+        if (held) return { ...p, kind: held };
       }
-      names.add(key(p.name));
-      return { ...p, kind: 'new', sha256: sha, page };
+      if (!known && names.has(key(p.name))) return { ...p, kind: 'clash' };
+      const made = this.#converted(p, bytes, finders);
+      if ('why' in made) return { ...p, kind: 'unreadable', why: made.why };
+      if (!known) {
+        names.add(key(p.name));
+        return { ...p, ...made, kind: 'new' };
+      }
+      if (bookId && this.#untouched(bookId, known.chId, written)) return { ...p, ...made, name: known.title, kind: 'update', chId: known.chId };
+      let name = `${p.name} (source changed ${day})`;
+      for (let n = 2; names.has(key(name)); n++) name = `${p.name} (source changed ${day}, ${n})`;
+      names.add(key(name));
+      return { ...p, ...made, name, kind: 'beside', chId: known.chId };
     });
-    return { verdicts };
+    return { verdicts, picks: [...picks].map((x) => (typeof x === 'string' ? { path: x } : x)) };
   }
 
   /**
@@ -229,10 +346,13 @@ export class WikiStore {
   }
 
   async #apply(sorted: Sorted, openBookId: string | null): Promise<Applied> {
-    const fresh = this.sort(sorted.verdicts.filter((v) => v.kind === 'new').map((v) => v.path));
-    const pages = fresh.verdicts.filter((v): v is Extract<Verdict, { kind: 'new' }> => v.kind === 'new');
+    type Act = Extract<Verdict, { kind: 'new' | 'update' | 'beside' }>;
+    const acts = (v: Verdict): v is Act => v.kind === 'new' || v.kind === 'update' || v.kind === 'beside';
+    const wanted = new Set(sorted.verdicts.filter(acts).map(pickKey));
+    const fresh = this.sort(sorted.picks ?? sorted.verdicts.filter(acts).map((v) => ({ path: v.path })));
+    const pages = fresh.verdicts.filter(acts).filter((v) => wanted.has(pickKey(v)));
     let bookId = this.wikiId();
-    const applied: Applied = { bookId, imported: [], marks: 0, keptAsText: 0 };
+    const applied: Applied = { bookId, imported: [], updated: [], marks: 0, keptAsText: 0, attachments: 0, missing: [] };
     if (pages.length === 0) return applied;
     if (bookId !== null && bookId === openBookId) {
       throw new Error('The wiki is open, so nothing was imported. Go back to the shelf and import again.');
@@ -247,50 +367,85 @@ export class WikiStore {
     bookId ??= this.#makeWiki();
     applied.bookId = bookId;
     const at = this.#now();
-    const chIds = pages.map(() => this.#id('ch'));
+    const chIds = pages.map((p) => (p.kind === 'update' ? p.chId : this.#id('ch')));
     const chapterFile = (chId: string) => path.join(this.#library, bookId!, 'chapters', `${oneName(chId, 'chId')}.html`);
     if (this.#o.commit) {
       pages.forEach((page, n) => writeWhole(chapterFile(chIds[n]!), pageHtml(page.page.blocks, 'author')));
       await this.#o.commit('author');
     }
-    const made: { chId: string; name: string; dest: string; src: string; srcSha: string; fileSha: string }[] = [];
+    const existing = pages.some((p) => p.kind === 'update') ? (await this.#o.marks.list(bookId)).chapters : {};
+    const changes: HoardChangeV1[] = [];
+    const missing = new Set<string>();
+    const made: { chId: string; name: string; after: string | null }[] = [];
     for (const [n, page] of pages.entries()) {
       const chId = chIds[n]!;
       const dest = `${bookId}/chapters/${chId}.html`;
       writeWhole(chapterFile(chId), page.page.html);
       const sidecar: HoardPageV1 = {
-        version: 1, source: { path: page.path, name: page.name, sha256: page.sha256 }, frontmatter: page.page.frontmatter, imported: at,
+        version: 1,
+        source: { path: page.path, name: page.name, sha256: page.sha256, ...(page.sections.length ? { sections: page.sections as [string, ...string[]] } : {}) },
+        frontmatter: page.page.frontmatter,
+        imported: at,
       };
       if (!validateHoardPageV1(sidecar)) throw new TypeError(`wiki: refusing to write a page sidecar: ${JSON.stringify(validateHoardPageV1.errors)}`);
       writeWhole(this.#pageFile(bookId, chId), `${JSON.stringify(sidecar, null, 2)}\n`);
-      const marks = this.#marks(page.page, base, at);
+      // An update keeps every mark there and adds only the source's marks it lacks.
+      const had = existing[chId] ?? [];
+      const sameMark = (a: Mark, b: Mark) => a.kind === b.kind && a.anchor.exact === b.anchor.exact
+        && a.proposed === b.proposed && a.thread[0]?.body === b.thread[0]?.body;
+      const marks = this.#marks(page.page, base, at).filter((m) => !had.some((h) => sameMark(h, m)));
       await this.#o.marks.addAll(bookId, chId, marks);
       applied.marks += marks.length;
       applied.keptAsText += page.page.keptAsText;
-      made.push({ chId, name: page.name, dest, src: page.path, srcSha: page.sha256, fileSha: sha256(page.page.html) });
+      for (const found of page.attachments) {
+        const copy = copyAttachment(this.#library, bookId, found.file);
+        records = appendRecord(records, {
+          src: found.file, dest: copy.dest, method: 'verbatim', src_sha256: copy.sha256, file_sha256: copy.sha256, ingested_at: at,
+        }).records;
+        if (!copy.copied) continue;
+        applied.attachments++;
+        changes.push({ version: 1, at, kind: 'attachment-imported', bookId, chId, dest: copy.dest, src: found.file });
+      }
+      for (const target of page.missing) missing.add(target);
+      records = appendRecord(records, {
+        src: page.path, dest, method: page.sections.length ? 'split' : 'converted', src_sha256: page.sha256, file_sha256: sha256(page.page.html), ingested_at: at,
+      }).records;
+      changes.push({ version: 1, at, kind: page.kind === 'update' ? 'page-updated' : 'page-imported', bookId, chId, dest, src: page.path });
+      if (page.kind === 'update') applied.updated.push({ chId, name: page.name });
+      else made.push({ chId, name: page.name, after: page.kind === 'beside' ? page.chId : null });
     }
 
-    const book = this.#readBook(bookId);
-    book.chapterOrder = [...book.chapterOrder, ...made.map((m) => m.chId)];
-    book.chapterTitles = { ...book.chapterTitles, ...Object.fromEntries(made.map((m) => [m.chId, m.name])) };
-    book.chapterKinds = { ...book.chapterKinds, ...Object.fromEntries(made.map((m) => [m.chId, 'unnumbered'])) };
-    book['modified'] = at;
-    writeJson(this.#bookFile(bookId), book);
-
-    for (const m of made) {
-      const record: ManifestRecordV1 = {
-        src: m.src, dest: m.dest, method: 'converted', src_sha256: m.srcSha, file_sha256: m.fileSha, ingested_at: at,
-      };
-      records = appendRecord(records, record).records;
+    if (made.length) {
+      const book = this.#readBook(bookId);
+      const order = [...book.chapterOrder];
+      for (const m of made) {
+        // A page that came in beside another goes after it, and after any beside it already.
+        let i = m.after === null ? -1 : order.indexOf(m.after);
+        if (i < 0) {
+          order.push(m.chId);
+          continue;
+        }
+        while (i + 1 < order.length && made.some((x) => x.chId === order[i + 1] && x.after === m.after)) i++;
+        order.splice(i + 1, 0, m.chId);
+      }
+      book.chapterOrder = order;
+      book.chapterTitles = { ...book.chapterTitles, ...Object.fromEntries(made.map((m) => [m.chId, m.name])) };
+      book.chapterKinds = { ...book.chapterKinds, ...Object.fromEntries(made.map((m) => [m.chId, 'unnumbered'])) };
+      book['modified'] = at;
+      writeJson(this.#bookFile(bookId), book);
     }
+
     writeWhole(manifestFile, records.map(serialiseRecord).join(''));
-    const changes = made.map((m): HoardChangeV1 => ({ version: 1, at, kind: 'page-imported', bookId: bookId!, chId: m.chId, dest: m.dest, src: m.src }));
     for (const c of changes) if (!validateHoardChangeV1(c)) throw new TypeError(`wiki: refusing to log a change: ${JSON.stringify(validateHoardChangeV1.errors)}`);
     const separator = changesBefore && !changesBefore.endsWith('\n') ? '\n' : '';
     writeWhole(changesFile, changesBefore + separator + changes.map((c) => `${JSON.stringify(c)}\n`).join(''));
 
     applied.imported = made.map(({ chId, name }) => ({ chId, name }));
-    this.#o.log('info', 'wiki.import', { bookId, pages: made.length, marks: applied.marks, keptAsText: applied.keptAsText });
+    applied.missing = [...missing];
+    this.#o.log('info', 'wiki.import', {
+      bookId, pages: made.length, updated: applied.updated.length, marks: applied.marks, keptAsText: applied.keptAsText,
+      attachments: applied.attachments, missing: applied.missing.length,
+    });
     this.#o.wrote?.(bookId);
     this.#o.wrote?.('.neo');
     await this.#o.commit?.('librarian');

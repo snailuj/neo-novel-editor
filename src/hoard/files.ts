@@ -11,7 +11,7 @@ export function oneName(name: unknown, what: string): string {
   return name;
 }
 
-export function writeWhole(file: string, text: string): void {
+export function writeWhole(file: string, text: string | Uint8Array): void {
   mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.tmp`;
   const buf = Buffer.from(text);
