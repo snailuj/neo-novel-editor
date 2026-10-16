@@ -13181,6 +13181,15 @@ async function backToShelf() {
 }
 $('#back-to-shelf').onclick = backToShelf;
 
+// A plugin opens a book (plugins.js, open) the way the writer would: back to
+// the shelf, which saves and closes the open book, then the book itself.
+async function openForPlugin(bookId) {
+  if (book && book.id === bookId) return true;
+  if (book) await backToShelf();
+  await openBook(bookId);
+  return !!book && book.id === bookId;
+}
+
 /* ================================================================== */
 /*  STRUCTURAL UNDO                                                    */
 /*  Typing has the native ⌘Z. This covers the big moves — chapter      */
@@ -18022,4 +18031,4 @@ function applyLook() {
 // decides what a plugin reads (openedBook), only the book the plugins heard
 // open. typewriterRest ends the page's following of the caret by keyboard
 // (until the next key), for an edit that moved the selection and put it back.
-if (window.NeoPlugins) NeoPlugins.attach({ book: () => book, chapterHTML: (id) => chapterHTML[id], currentTab: () => currentTab, switchTab, captureCaret, restoreCaret, resumePosition, typewriterRest: () => { typewriterByKeyboard = false; } });
+if (window.NeoPlugins) NeoPlugins.attach({ book: () => book, chapterHTML: (id) => chapterHTML[id], currentTab: () => currentTab, switchTab, captureCaret, restoreCaret, resumePosition, typewriterRest: () => { typewriterByKeyboard = false; }, openBook: openForPlugin });

@@ -817,7 +817,9 @@ test('broken plugin', async () => {
   // nor is the pane it added before it threw anywhere to be seen
   assert.equal(await js(`document.querySelector('.tab[data-tab^="plugin:broken:"]')`), null);
   assert.deepEqual(await js(`[...document.querySelectorAll('.plugin-pane')].map((el) => el === window.__probe.pane.element)`), [true]);
-  assert.deepEqual(await js(`[...document.querySelectorAll('.plugin-side')].map((el) => el.dataset.plugin)`), ['probe']);
+  // (a bundled plugin may add side sections of its own)
+  const sides = await js(`[...document.querySelectorAll('.plugin-side')].map((el) => el.dataset.plugin)`);
+  assert.ok(sides.includes('probe') && !sides.includes('broken'), String(sides));
   // nor its status
   assert.equal(await js(`document.querySelector('#counters .plugin-status[data-plugin="broken"]')`), null);
   // and its command, still in the menu from its plugin.json, runs nothing

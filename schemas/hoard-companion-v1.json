@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The librarian's watcher, version 1, kept at .neo/companion.json in the library: the wiki pages the writer asked it to stop flagging, by the page's chapter id, with the title it had then and when.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "quiet"],
+  "properties": {
+    "version": { "const": 1 },
+    "quiet": {
+      "type": "object",
+      "additionalProperties": {
+        "title": "QuietPage",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "at"],
+        "properties": {
+          "title": { "type": "string" },
+          "at": { "description": "An ISO 8601 time in UTC.", "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" }
+        }
+      }
+    }
+  }
+}

@@ -26,10 +26,12 @@ function sandbox(): string {
     cpSync(path.join(root, name), path.join(dir, name), { recursive: true });
   }
   copyFileSync(path.join(root, 'tsconfig.json'), path.join(dir, 'tsconfig.json'));
-  // The generated validators load Ajv's runtime helpers, and nothing above a temporary
-  // root holds a node_modules. A link to the repository's would reach back into it.
-  const runtime = path.join('node_modules', 'ajv', 'dist', 'runtime');
-  cpSync(path.join(root, runtime), path.join(dir, runtime), { recursive: true });
+  // The generated validators load Ajv's runtime helpers, and the wiki's import reads
+  // frontmatter with yaml; nothing above a temporary root holds a node_modules. A link
+  // to the repository's would reach back into it.
+  for (const name of [path.join('node_modules', 'ajv', 'dist', 'runtime'), path.join('node_modules', 'yaml')]) {
+    cpSync(path.join(root, name), path.join(dir, name), { recursive: true });
+  }
   return dir;
 }
 
@@ -97,13 +99,13 @@ test('packaging builds first', () => {
 test('clean build', () => {
   const dir = sandbox();
   const log = build(dir);
-  for (const file of ['renderer.js', 'main.cjs', 'plugin.json', 'textconv.cjs']) {
+  for (const file of ['renderer.js', 'main.cjs', 'plugin.json', 'search-worker.cjs', 'textconv.cjs', 'style.css']) {
     assert.ok(statSync(path.join(dir, 'plugins', 'hoard', file)).size > 0, `${file} is written`);
   }
   const events = log.trim().split('\n').map((line) => JSON.parse(line));
   assert.deepEqual(
     events.map((e) => e.name).sort(),
-    ['main', 'manifest', 'renderer', 'textconv'],
+    ['main', 'manifest', 'renderer', 'search-worker', 'style', 'textconv'],
   );
   // The bundled textconv, which blame runs in the packaged app, lines a chapter as tools/git's does.
   const chapter = path.join(dir, 'chapter.html');

@@ -19,7 +19,7 @@ const MANIFEST_KEYS = ['id', 'apiVersion', 'renderer', 'main', 'style', 'command
 const COMMAND_KEYS = ['id', 'title'];
 const PLUGIN_ID = /^[a-z][a-z0-9-]{1,31}$/;
 const FILE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]*\.(js|cjs|css)$/;
-const NEWEST_API = 3; // the newest plugin API this NEO knows (plugins.js has the list)
+const NEWEST_API = 4; // the newest plugin API this NEO knows (plugins.js has the list)
 const MAX_COMMANDS = 16;
 const MAX_TITLE = 64;
 // how long a main half's activate may take to settle (start)

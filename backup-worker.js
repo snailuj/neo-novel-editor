@@ -73,8 +73,9 @@ async function backup({ libraryDir, target, keep, fileLimitMs = FILE_LIMIT_MS })
     for (const name of names) {
       if (rel === '' && (name === 'Backups' || name === 'Exports')) continue;
       // only NEO's own things: a library kept in a busy folder (Dropbox,
-      // Documents) doesn't zip everything else in there every day
-      if (rel === '' && !(name.startsWith('book-') || name.startsWith('library.json') || name === '_catalog.txt')) continue;
+      // Documents) doesn't zip everything else in there every day. .neo holds
+      // what plugins keep beside the books (a writer's comments, say).
+      if (rel === '' && !(name.startsWith('book-') || name.startsWith('library.json') || name === '_catalog.txt' || name === '.neo')) continue;
       // a book's snapshots stay out: they're a history of their own
       if (name === 'snapshots' && rel.startsWith('book-') && !rel.includes('/')) continue;
       if (name === '.DS_Store' || /^\..+\.icloud$/.test(name)) continue; // Finder litter; iCloud's stand-in for a file

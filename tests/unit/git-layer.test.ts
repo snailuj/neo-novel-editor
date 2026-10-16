@@ -133,3 +133,48 @@ test('settings that do not fit the schema fall back to the defaults, with a warn
   assert.equal(ok.gitPath, '/opt/git');
   assert.deepEqual(ok.author, { name: 'P', email: 'p@x' });
 });
+
+// Rule: a mark records the commit its quote was read at when the library has one, and
+// null otherwise; asking never fails the caller.
+test('head names the last commit of a tracked library, and is null with no history', async (t) => {
+  isolateGitConfig(t, { name: 'Ada', email: 'ada@example.com' });
+  const untracked = tempLibrary(t);
+  const before = layerFor(t, untracked.git, untracked.library).layer;
+  await before.open();
+  assert.equal(await before.head(), null);
+  const lib = tempLibrary(t);
+  await lib.git.run(lib.library, ['init', '-q']);
+  const { layer } = layerFor(t, lib.git, lib.library);
+  await layer.open();
+  await layer.drained();
+  const [sha] = await log(lib.git, lib.library, '%H');
+  assert.match(sha, /^[0-9a-f]{40}$/);
+  assert.equal(await layer.head(), sha);
+});
+
+// Rule: an import is committed at once, in two checkpoints once each has landed: the
+// author's (what they wrote meanwhile, and their own words on the pages) and then the
+// librarian's, so blame credits each paragraph to whoever owns it. A library without
+// history makes no commit for it.
+test('an import is committed at once, the author\'s part and then the librarian\'s, and an untracked library makes none', async (t) => {
+  isolateGitConfig(t, { name: 'Ada', email: 'ada@example.com' });
+  const lib = tempLibrary(t);
+  await lib.git.run(lib.library, ['init', '-q']);
+  const { layer } = layerFor(t, lib.git, lib.library);
+  await layer.open();
+  await layer.drained();
+  lib.write('book-wiki-1/chapters/c1.html', '<p>Quoted.</p>');
+  await layer.commitNow('import-author');
+  lib.write('book-wiki-1/chapters/c1.html', '<p>Quoted.</p><p>Imported.</p>');
+  await layer.commitNow('import');
+  assert.deepEqual(await log(lib.git, lib.library, '%s|%an|%(trailers:key=Neo-Checkpoint,valueonly)'), [
+    'Pages imported to the wiki|Librarian|import',
+    'Pages imported to the wiki: quotations and code, as the author\'s|Ada|import-author',
+    'Writing found uncommitted at start|Ada|recovered',
+  ]);
+  const bare = tempLibrary(t);
+  const other = layerFor(t, bare.git, bare.library).layer;
+  await other.open();
+  await other.commitNow('import');
+  assert.equal(await other.head(), null);
+});

@@ -21,7 +21,9 @@ export type Reason =
   | 'close'
   | 'recovered'
   | 'librarian-before'
-  | 'librarian-after';
+  | 'librarian-after'
+  | 'import-author'
+  | 'import';
 
 const SUBJECTS: Record<Reason, string> = {
   start: 'Library history starts',
@@ -32,7 +34,13 @@ const SUBJECTS: Record<Reason, string> = {
   recovered: 'Writing found uncommitted at start',
   'librarian-before': 'Writing, before a librarian edit',
   'librarian-after': 'Librarian edit',
+  'import-author': 'Pages imported to the wiki: quotations and code, as the author\'s',
+  import: 'Pages imported to the wiki',
 };
+
+// Whose commit each reason is: the librarian's own changes are theirs, all else the author's.
+const LIBRARIANS: ReadonlySet<Reason> = new Set(['librarian-after', 'import']);
+export const whoFor = (reason: Reason): Who => (LIBRARIANS.has(reason) ? 'librarian' : 'author');
 
 export interface CommitOptions {
   who: Who;

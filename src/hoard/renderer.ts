@@ -6,10 +6,21 @@
 // For the library's history it tells the main half when the caret moves into another
 // chapter and when a book closes, so each asks for a commit once the last save lands,
 // and it runs Keep Library History from the Plugins menu.
+//
+// The writer's comments are drawn on the page and listed in a Comments section beside
+// the manuscript (marks/window.ts), which needs API 3's side sections. The wiki
+// (wiki/window.ts) imports pages, opens the wiki book and follows links into it, which
+// needs API 4's open. Search (search/window.ts) looks through every book and the wiki
+// from a Search section beside the book. The librarian reads each chapter the writer
+// leaves and comments on the wiki pages its new words name (companion/window.ts).
+import { startCompanion } from './companion/window.ts';
+import { startMarks } from './marks/window.ts';
+import { startSearch } from './search/window.ts';
+import { startWiki } from './wiki/window.ts';
 
 NeoPlugins.register({
   id: 'hoard',
-  apiVersion: 1,
+  apiVersion: 4,
   async activate(neo) {
     const ping = (payload: unknown) => neo.invoke('ping', payload);
     const sent = { n: 1 };
@@ -35,6 +46,13 @@ NeoPlugins.register({
 
     const blame = (bookId: string, chId: string) => neo.invoke('git.blame', { bookId, chId });
     const gitStatus = () => neo.invoke('git.status');
-    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus }) });
+    const marks = startMarks(neo, { follow: (target) => { wiki.follow(target); } });
+    const wiki = startWiki(neo);
+    const search = startSearch(neo, {
+      bookId: () => wiki.pages()?.bookId ?? null,
+      show: (chId, at) => wiki.pane.open(chId, at ?? undefined),
+    });
+    const companion = startCompanion(neo, { marks, wiki: () => wiki.pages() });
+    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, search, companion }) });
   },
 });
