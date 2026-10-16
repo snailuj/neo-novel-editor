@@ -201,11 +201,12 @@ test('a page is read for the pane by its chapter id, and only a page of the wiki
   assert.throws(() => wiki.page('../book.json'), TypeError);
 });
 
-// Rule: with history kept, an import is the author's commit (their words on the pages,
-// quotations and code, and nothing else of the pages) and then the librarian's (the
-// whole pages, their sidecars, the manifest and the change log), so blame credits each
-// paragraph to whoever owns it.
-test('an import commits the pages twice: the author\'s blocks, then the whole pages', async (t) => {
+// Rule: with history kept, an import is the author's commit (their words on the
+// librarian's pages, quotations and code, and the whole of each page that is theirs by
+// the rule suggest mode follows) and then the librarian's (the rest of its pages, their
+// sidecars, the manifest and the change log), so blame credits each paragraph to whoever
+// owns it, and agrees with which pages open in suggest mode.
+test('an import commits the pages twice: the author\'s blocks and pages, then the librarian\'s pages', async (t) => {
   const library = tempDir(t);
   const vault = tempDir(t);
   let n = 0;
@@ -226,12 +227,13 @@ test('an import commits the pages twice: the author\'s blocks, then the whole pa
     },
   });
   const file = path.join(vault, 'Quay.md');
-  writeFileSync(file, '# Quay\n> "Mind the step," she said.\n> -- [[Log]] (Ada)\nThe quay is old.\n');
+  writeFileSync(file, '---\ntype: lore\n---\n# Quay\n> "Mind the step," she said.\n> -- [[Log]] (Ada)\nThe quay is old.\n');
+  // no frontmatter: nothing says the librarian wrote it, so the page is the writer's
   const plain = path.join(vault, 'Plain.md');
   writeFileSync(plain, 'Nothing quoted.\n');
   await wiki.apply(wiki.sort([file, plain]), null);
   assert.deepEqual(seen, [
-    { part: 'author', html: ['<p><br></p>', '<p class="wiki-quote" data-depth="1">"Mind the step," she said.</p>'], manifest: false },
+    { part: 'author', html: ['<p>Nothing quoted.</p>', '<p class="wiki-quote" data-depth="1">"Mind the step," she said.</p>'], manifest: false },
     {
       part: 'librarian',
       html: ['<p>Nothing quoted.</p>', '<p class="wiki-h1">Quay</p><p class="wiki-quote" data-depth="1">"Mind the step," she said.</p><p class="wiki-quote" data-depth="1">-- [[Log]] (Ada)</p><p>The quay is old.</p>'],

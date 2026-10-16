@@ -188,5 +188,5 @@ export function startWiki(neo: NeoApiV4) {
   });
   neo.on('chapter-change', redrawSoon);
 
-  return { openWiki, follow, pages: () => wiki, drawLinks, pane };
+  return { openWiki, follow, pages: () => wiki, index, drawLinks, pane };
 }
