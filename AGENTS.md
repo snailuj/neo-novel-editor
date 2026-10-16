@@ -29,6 +29,7 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before adding a feature. The product is 
 | `art.js` | Painted covers in the main process. OpenAI only. Title and author are never sent to the image model |
 | `i18n.js` | `t()` / `tk()`, shared by main and the window. English source text is the key |
 | `spell-worker.js` | Hunspell WASM, forked with `utilityProcess`. Messages: `load`, `check`, `suggest`, `add` |
+| `backup-worker.js` | The day's backup zip, forked with `utilityProcess` by `dailyBackup` so a file that won't come off iCloud never holds the main process |
 | `spell-ro.js` | Romanian diacritics, used by the worker. Does not alter the manuscript |
 | `manuscript.js` | Standard manuscript format: the word count's rounding, the header's surname, the `.docx`'s parts and the PDF's page, from a model the window hands it. Plain JavaScript that also runs in Node (`window.NeoManuscript`, loaded by `index.html`) |
 | `locales/<code>.json` | One language. Regional files (`fr-CA.json`) hold only the strings that differ |
@@ -38,6 +39,20 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before adding a feature. The product is 
 `app.js` section banners look like `/*  SAVING  */`. Start there: bookshelf, bound shelves, editor open, typing, poetry, screenplays, placeholders, nav, tabs, outline, outline cards, darlings, counters, saving, refresh, structural undo, find, import, spellcheck, focus, goals, export, manuscript format.
 
 Menus are built in `buildMenu()` in `main.js`. A menu click sends `{ type, ... }` to the window; `app.js` handles it on `window.neo.onMenu`.
+
+## Simple NEO and Show More Features
+
+NEO opens simple. File → Show More Features (`library.moreFeatures`) brings back the rest: SIMPLE NEO near the end of `app.js`, and `moreState` / `simpleTemplate` in `main.js`.
+
+- A menu item behind the switch carries `more: true` in `buildMenu()`; `simpleTemplate` leaves it (and the separators it would strand) out. A key, right-click choice or pane behind it asks `moreOn()` in `app.js`.
+- Behind the switch now: alignment, poetry paragraphs, footnotes (⌘⇧N), Markdown emphasis (*italic* typed; off in simple NEO), Other Font…, non-breaking marks, pages views, page width, brighter interface, interface size, focus mode, vim keys, read aloud, Look Up, the tab keys, chapter notes pages, outline cards (loose cards, cards beside the page), New Books Open To, painted covers and Cover Art…, pen names, binding shelves, duplicate, Reshelve, scripts and Fountain/Final Draft import, Import Chapters, txt/md/html exports, Chapter Titles Only, the shelf anthology, Manuscript Format, and the two language menus.
+- Simple NEO treats those settings as NEO's defaults (`applyLook`) and never erases them: the writer's choices wait in library.json for the switch.
+- Nothing a book already holds is hidden. A script, footnote, poetry paragraph, bound shelf, painted cover, loose card or chapter notes page with notes on it opens and exports as before, and other pen names stay reachable.
+- A book's right-click in simple NEO is the larger cards (`optionModal`), with no cover menu: art is dragged onto the book; New cover and Remove cover art stand with the rest. Word goals are set in Goals, inside the book, never from the shelf.
+- The shortcuts window (`bookShortcutSections`) lists a key only when its feature is showing.
+- A library from before the switch is decided once (`decideMoreFeatures`): on when it uses something behind it, off otherwise (with one toast saying where things went).
+- Pocket (Android and iOS) is always simple and has no switch; its ⋯ sheet in `pocket/www/index.html` offers only simple NEO's choices.
+- A new feature goes behind the switch unless Hugh says it belongs in simple NEO. `scripts/simple-neo.test.js`, `npm run test:simple`.
 
 ## Outline cards
 
@@ -166,7 +181,7 @@ The window holds the open book in memory (`chapterHTML`, `book`, `stickies`, `da
 
 Structural undo (`snapshotStructure`, `structuralUndo`, banner STRUCTURAL UNDO) holds `UNDO_DEPTH` (50) actions. An undo puts back only what its action changed: writing made since stays, or, in a chapter the action also touched, goes to Darlings with a toast that says so. What an undo took back goes on `redoStack` (⇧⌘Z, Ctrl+Z's pair; Ctrl+Y off the Mac); any `input` event anywhere, or a new action, empties it. A redo is an undo of the undo, so it keeps the same protections.
 
-On a Mac, iCloud ("Optimize Mac Storage") can turn library files into placeholders: the size is there, the words aren't, and a read waits on iCloud, forever if iCloud is stuck. A synchronous read of one froze the main process at launch, with no window. So `cloudOnlyAmong` spots them (no blocks on disk, then the `dataless` flag), `requestDownload` asks `brctl` for them, and the read handlers wait for them with `afterLocal` without blocking, answering at once when nothing is in iCloud. `readJSON` throws `ECLOUD` for one rather than falling back on `.bak`, and no write goes over a placeholder. The daily backup leaves them out and names them. `scripts/icloud.test.js` plays iCloud with sparse files. Don't add a direct `readFileSync` of a library file.
+On a Mac, iCloud ("Optimize Mac Storage") can turn library files into placeholders: the size is there, the words aren't, and a read waits on iCloud, forever if iCloud is stuck. A synchronous read of one froze the main process at launch, with no window. So `cloudOnlyAmong` spots them (no blocks on disk, then the `dataless` flag), `requestDownload` asks `brctl` for them, and the read handlers wait for them with `afterLocal` without blocking, answering at once when nothing is in iCloud. `readJSON` throws `ECLOUD` for one rather than falling back on `.bak`, and no write goes over a placeholder. The daily backup runs in its own process (`backup-worker.js`), two minutes after launch: it leaves placeholders out and names them, gives each other file 20 seconds, and is ended after 15 minutes. 1.5.1 read every file in the main process at launch, and one stuck file kept NEO from opening, and from updating, which needs NEO open. `scripts/icloud.test.js` plays iCloud with sparse files, and a stuck file with a named pipe. Don't add a direct `readFileSync` of a library file, and never walk the whole library in the main process.
 
 Do not replace this with last-write-wins. The comments in `persistChapter` and `refreshFromDisk` explain cases that look redundant and are not.
 
@@ -204,6 +219,7 @@ npm run lint               # oxlint, Electron's standard-style JavaScript rules
 npm run test:spellcheck    # node --test scripts/spellcheck.test.js
 npm run test:dashes        # node --test scripts/dashes.test.js
 npm run bundle             # Hugh: brings in the newest .bundle from ~/Downloads and pushes main
+npm run try                # Hugh: opens the newest .bundle's NEO on a copy of the library, pushes nothing (-- fresh: an empty library)
 npm run release            # Hugh: next version (x.y.9 → x.(y+1).0), commit, push, tag (npm run release -- 2.0.0 for another)
 npm run package:mac        # macOS build; npm run package calls this
 npm run package:linux      # AppImage via electron-builder; also package, package:mac, package:win, package:all

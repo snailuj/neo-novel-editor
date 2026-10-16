@@ -38,7 +38,9 @@ if (process.platform === 'linux') app.commandLine.appendSwitch('enable-speech-di
 // ---------------------------------------------------------------------------
 // Resolved properly at startup via app.getPath('documents') — this default
 // covers any early access and non-redirected setups.
-let LIBRARY_DIR = path.join(os.homedir(), 'Documents', 'NEO Library');
+// (Electron's Documents from the start, not the home folder's: the tests stand
+// in a throwaway folder there, and never write into a writer's real library)
+let LIBRARY_DIR = path.join((() => { try { return app.getPath('documents'); } catch { return path.join(os.homedir(), 'Documents'); } })(), 'NEO Library');
 let LIBRARY_FILE = path.join(LIBRARY_DIR, 'library.json');
 // npm run try (scripts/try.js): NEO from source with settings of its own,
 // which point it at the throwaway copy of the library that script made, so
@@ -418,6 +420,10 @@ function writeCatalog() {
       t('(regenerated automatically; edits here do nothing)') + '\n\n' +
       lines.join('\n') + '\n';
     const file = path.join(LIBRARY_DIR, '_catalog.txt');
+    // the catalog itself still in iCloud: reading it would wait on iCloud
+    // (on every save), and it's never written over. It's asked for, and
+    // brought up to date on the next save once it's here.
+    if (isCloudOnly(file)) { requestDownload(new Set([file])); return; }
     // unchanged, it's left alone: a rewrite on every save is a file for
     // iCloud and Syncthing to send back and forth (and to clash over)
     let old = null;
@@ -2054,7 +2060,7 @@ ipcMain.handle('import:pick', async (_e, opts) => {
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {
     title: chapters ? t('Bring chapters into this book') : t('Bring your manuscripts home'),
     properties: ['openFile', 'multiSelections'],
-    filters: [{ name: t('Manuscripts'), extensions: chapters ? ['docx', 'txt', 'md'] : ['docx', 'txt', 'md', 'fountain', 'fdx'] }]
+    filters: [{ name: t('Manuscripts'), extensions: chapters || !moreState ? ['docx', 'txt', 'md'] : ['docx', 'txt', 'md', 'fountain', 'fdx'] }] // scripts: Show More Features
   });
   if (canceled || !filePaths.length) return [];
   const out = [];
@@ -2095,78 +2101,55 @@ ipcMain.handle('log:error', (_e, msg) => logError('renderer', msg));
 plugins.wire({ app, ipcMain, logError, appRoot: __dirname, readSettings: readSettingsFile, writeSettings, libraryDir: () => LIBRARY_DIR });
 
 // One zip of the whole library per day, keeping the last 14. Cheap insurance.
-async function dailyBackup() {
-  if (backupRunning) return; // one at a time (the hourly look can meet a slow one)
+// The day's backup is made in a process of its own (backup-worker.js). It
+// reads every file in the library, and a file iCloud (or a sync tool) won't
+// hand over used to hold NEO's main process with it: the window never came,
+// that day or any day after, since the backup ran at launch. Now a stuck
+// file holds up only the backup, which leaves it out and says so, and a
+// backup that overruns altogether is ended.
+let BACKUP_LIMIT_MS = 15 * 60 * 1000; // the whole job
+let BACKUP_FILE_LIMIT_MS = 20 * 1000; // one file
+function dailyBackup() {
+  if (backupRunning) return Promise.resolve(); // one at a time (the hourly look can meet a slow one)
+  let target;
   try {
     ensureLibrary();
     const backupsDir = path.join(LIBRARY_DIR, 'Backups');
     if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir, { recursive: true });
-    const today = new Date().toISOString().slice(0, 10);
-    const target = path.join(backupsDir, `neo-backup-${today}.zip`);
-    if (fs.existsSync(target)) return;
-    backupRunning = true;
-
-    const JSZip = require('jszip');
-    const zip = new JSZip();
-    const skip = new Set(['Backups', 'Exports']);
-    // One file the system won't hand over (in iCloud but not downloaded yet,
-    // held by a sync tool) used to throw, and cost the whole day's backup,
-    // every day. Now it's left out, named in the zip and in the error log.
-    const missed = [];
-    const walk = (dir, rel) => {
-      let names = [];
-      try { names = fs.readdirSync(dir); } catch (err) { missed.push(`${rel || '.'} (${err.code || err.message})`); return; }
-      for (const name of names) {
-        if (rel === '' && skip.has(name)) continue;
-        // only NEO's own things: a library kept in a busy folder (Dropbox,
-        // Documents) doesn't zip everything else in there every day
-        if (rel === '' && !(name.startsWith('book-') || name.startsWith('library.json') || name === '_catalog.txt')) continue;
-        // a book's snapshots stay out: the zip stays the size of the books,
-        // and the snapshots are already a history of their own
-        if (name === 'snapshots' && rel.startsWith('book-') && !rel.includes('/')) continue;
-        if (name === '.DS_Store' || /^\..+\.icloud$/.test(name)) continue; // Finder litter; iCloud's stand-in for a file not downloaded
-        const full = path.join(dir, name);
-        const relPath = rel ? rel + '/' + name : name;
-        try {
-          const stat = fs.statSync(full);
-          if (stat.isDirectory()) walk(full, relPath);
-          // perhaps still in iCloud: looked at together once the walk is done
-          else if (process.platform === 'darwin' && stat.size > 0 && stat.blocks === 0) maybeAway.push([full, relPath]);
-          else zip.file(relPath, fs.readFileSync(full));
-        } catch (err) {
-          missed.push(`${relPath} (${err.code || err.message})`);
-        }
-      }
-    };
-    const maybeAway = [];
-    walk(LIBRARY_DIR, '');
-    // a file still in iCloud would make the backup wait on iCloud (forever,
-    // when iCloud is stuck). It's safe up there; today's zip notes it.
-    const away = cloudOnlyAmong(maybeAway.map(([full]) => full));
-    for (const [full, relPath] of maybeAway) {
-      if (away.has(full)) { missed.push(`${relPath} (in iCloud, not on this Mac)`); continue; }
-      try { zip.file(relPath, fs.readFileSync(full)); } catch (err) { missed.push(`${relPath} (${err.code || err.message})`); }
-    }
-    if (away.size) requestDownload(away);
-    if (missed.length) {
-      zip.file('_left-out-of-this-backup.txt', missed.join('\n') + '\n');
-      logError('backup', new Error('left out of today\'s backup: ' + missed.join(', ')));
-    }
-    // written beside its real name and swapped in whole, so a backup cut
-    // short never stands in for the day's backup
-    const data = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
-    await JSZip.loadAsync(data); // reads back whole, or it doesn't count
-    writeFileDurable(target, data);
-
-    // prune old backups
-    const backups = fs.readdirSync(backupsDir).filter((f) => /^neo-backup-.*\.zip$/.test(f)).sort();
-    while (backups.length > 14) fs.unlinkSync(path.join(backupsDir, backups.shift()));
+    target = path.join(backupsDir, `neo-backup-${new Date().toISOString().slice(0, 10)}.zip`);
+    if (fs.existsSync(target)) return Promise.resolve();
   } catch (err) {
     logError('backup', err);
-    try { fs.unlinkSync(path.join(LIBRARY_DIR, 'Backups', `neo-backup-${new Date().toISOString().slice(0, 10)}.zip.tmp`)); } catch { /* none */ }
-  } finally {
-    backupRunning = false;
+    return Promise.resolve();
   }
+  backupRunning = true;
+  return new Promise((resolve) => {
+    let child = null;
+    let timer = null;
+    const finish = (err) => {
+      if (!backupRunning) return;
+      backupRunning = false;
+      clearTimeout(timer);
+      if (err) {
+        logError('backup', err);
+        try { fs.unlinkSync(target + '.tmp'); } catch { /* none */ }
+      }
+      try { if (child) child.kill(); } catch { /* gone */ }
+      resolve();
+    };
+    try {
+      child = utilityProcess.fork(path.join(__dirname, 'backup-worker.js'), [], { serviceName: 'NEO backup' });
+    } catch (err) { finish(err); return; }
+    timer = setTimeout(() => finish(new Error('the backup took longer than ' + BACKUP_LIMIT_MS / 60000 + ' minutes and was stopped')), BACKUP_LIMIT_MS);
+    child.on('message', (msg) => {
+      if (!msg || !msg.ok) { finish(new Error((msg && msg.error) || 'the backup failed')); return; }
+      if (msg.away && msg.away.length) requestDownload(new Set(msg.away));
+      if (msg.missed && msg.missed.length) logError('backup', new Error("left out of today's backup: " + msg.missed.join(', ')));
+      finish(null);
+    });
+    child.on('exit', (code) => finish(code ? new Error('the backup stopped (' + code + ')') : null));
+    child.postMessage({ libraryDir: LIBRARY_DIR, target, keep: 14, fileLimitMs: BACKUP_FILE_LIMIT_MS });
+  });
 }
 let backupRunning = false;
 
@@ -2550,6 +2533,31 @@ ipcMain.on('style:state', (_e, style) => {
   try { buildMenu(); } catch (err) { logError('menu', err); }
 });
 
+// File → Show More Features: off, simple NEO leaves out the menu items
+// marked `more` (the window keeps their keys and choices out of sight too)
+let moreState = false;
+ipcMain.on('more:state', (_e, on) => {
+  on = !!on;
+  if (on === moreState) return;
+  moreState = on;
+  try { buildMenu(); } catch (err) { logError('menu', err); }
+});
+// a template without the `more` items, and without the separators they leave
+// at an end or side by side
+function simpleTemplate(items, more) {
+  const kept = items.filter((it) => more || !it.more).map((it) => {
+    const { more: _, ...item } = it;
+    return Array.isArray(item.submenu) ? { ...item, submenu: simpleTemplate(item.submenu, more) } : item;
+  });
+  const shown = (it) => it.visible !== false;
+  return kept.filter((it, i) => {
+    if (it.type !== 'separator' || !shown(it)) return true;
+    const before = kept.slice(0, i).filter(shown).pop();
+    const after = kept.slice(i + 1).find(shown);
+    return !!before && !!after && before.type !== 'separator';
+  });
+}
+
 function buildMenu() {
   const isMac = process.platform === 'darwin';
   const isWin = process.platform === 'win32';
@@ -2606,17 +2614,18 @@ function buildMenu() {
             { label: 'Fountain (.fountain)', click: () => sendToWindow({ type: 'export', format: 'fountain' }) },
             { label: 'Final Draft (.fdx)', click: () => sendToWindow({ type: 'export', format: 'fdx' }) }
           ] : [
-            { label: t('Plain Text (.txt)'), click: () => sendToWindow({ type: 'export', format: 'txt' }) },
-            { label: 'Markdown (.md)', click: () => sendToWindow({ type: 'export', format: 'md' }) },
-            { label: t('Web Page (.html)'), click: () => sendToWindow({ type: 'export', format: 'html' }) },
+            { more: true, label: t('Plain Text (.txt)'), click: () => sendToWindow({ type: 'export', format: 'txt' }) },
+            { more: true, label: 'Markdown (.md)', click: () => sendToWindow({ type: 'export', format: 'md' }) },
+            { more: true, label: t('Web Page (.html)'), click: () => sendToWindow({ type: 'export', format: 'html' }) },
             { label: 'PDF (.pdf)', click: () => sendToWindow({ type: 'export', format: 'pdf' }) },
             { label: 'Word (.docx)', click: () => sendToWindow({ type: 'export', format: 'docx' }) },
             { label: 'EPUB (.epub)', click: () => sendToWindow({ type: 'export', format: 'epub' }) },
             { type: 'separator' },
             { label: t('Paperback for KDP…'), click: () => sendToWindow({ type: 'export', format: 'paperback' }) },
-            { label: t('Manuscript Format…'), click: () => sendToWindow({ type: 'export', format: 'manuscript' }) },
+            { more: true, label: t('Manuscript Format…'), click: () => sendToWindow({ type: 'export', format: 'manuscript' }) },
             { type: 'separator' },
             {
+              more: true,
               id: 'export-custom-chapter-titles',
               label: t('Chapter Titles Only'),
               type: 'checkbox',
@@ -2637,13 +2646,14 @@ function buildMenu() {
         // same in Pocket with a keyboard and never fires twice
         { label: t('Take Snapshot'), accelerator: 'CmdOrCtrl+S', registerAccelerator: false, click: () => sendToWindow({ type: 'snapshot' }) },
         { type: 'separator' },
-        { label: t('Cover Art…'), click: () => sendToWindow({ type: 'coverArt' }) },
+        { more: true, label: t('Cover Art…'), click: () => sendToWindow({ type: 'coverArt' }) },
         {
           label: t('Goals…'),
           accelerator: 'CmdOrCtrl+,',
           click: () => sendToWindow({ type: 'stats' })
         },
         {
+          more: true,
           label: t('New Books Open To'),
           submenu: [
             { label: t('Blank Page'), type: 'radio', checked: writingStyle !== 'plotter', click: () => sendToWindow({ type: 'writingStyle', value: 'pantser' }) },
@@ -2657,12 +2667,20 @@ function buildMenu() {
           click: () => sendToWindow({ type: 'import' })
         },
         {
+          more: true,
           label: t('Import Chapters…'),
           enabled: bookOpenState && !scriptState.on,
           click: () => sendToWindow({ type: 'importChapters' })
         },
-        { label: t('Reshelve a Book…'), click: () => sendToWindow({ type: 'reshelve' }) },
+        { more: true, label: t('Reshelve a Book…'), click: () => sendToWindow({ type: 'reshelve' }) },
         { label: t('Library Folder…'), click: () => { chooseLibraryFolder().catch((err) => logError('library folder', err)); } },
+        { type: 'separator' },
+        {
+          label: t('Show More Features'),
+          type: 'checkbox',
+          checked: moreState,
+          click: (item) => sendToWindow({ type: 'moreFeatures', checked: item.checked })
+        },
         { type: 'separator' },
         ...(isMac ? [{ role: 'close', label: t('Close Window') }] : [{ role: 'quit', label: t('Quit') }])
       ]
@@ -2694,6 +2712,7 @@ function buildMenu() {
           click: () => sendToWindow({ type: 'spellcheck' })
         },
         {
+          more: true,
           label: t('Spellcheck Language'),
           submenu: Object.entries(SPELL_LANGUAGES).map(([code, lang]) => ({
             label: lang.label,
@@ -2729,7 +2748,7 @@ function buildMenu() {
               click: () => sendToWindow({ type: 'bodyFont', value: f })
             })),
             { type: 'separator' },
-            { label: t('Other Font…'), click: () => sendToWindow({ type: 'bodyFontPick' }) }
+            { more: true, label: t('Other Font…'), click: () => sendToWindow({ type: 'bodyFontPick' }) }
           ]
         },
         {
@@ -2744,6 +2763,7 @@ function buildMenu() {
           ]
         },
         {
+          more: true,
           visible: !scriptState.on, // a script's elements are placed where they print
           label: t('Align Paragraph'),
           submenu: [
@@ -2759,6 +2779,7 @@ function buildMenu() {
         { label: t('Reset Text Size'), accelerator: 'CmdOrCtrl+0', click: () => sendToWindow({ type: 'fontSize', value: 0 }) },
         { type: 'separator', visible: !scriptState.on },
         {
+          more: true,
           visible: !scriptState.on, // a script has its own pages
           label: t('Show Pages'),
           type: 'checkbox',
@@ -2766,6 +2787,7 @@ function buildMenu() {
           click: () => sendToWindow({ type: 'pagedView' })
         },
         {
+          more: true,
           visible: !scriptState.on,
           label: t('Two Pages Side by Side'),
           type: 'checkbox',
@@ -2774,6 +2796,7 @@ function buildMenu() {
           click: () => sendToWindow({ type: 'twoPageView' })
         },
         {
+          more: true,
           visible: !scriptState.on, // a script is set to its own page
           label: t('Page Width'),
           submenu: [['regular', t('Regular')], ['wide', t('Wide')], ['wider', t('Wider')]].map(([value, label]) => ({
@@ -2792,6 +2815,7 @@ function buildMenu() {
           click: () => sendToWindow({ type: 'typewriter' })
         },
         {
+          more: true,
           label: t('Non-Breaking Marks'),
           type: 'checkbox',
           checked: nbspMarksState,
@@ -2825,6 +2849,7 @@ function buildMenu() {
           checked: flushState
         },
         {
+          more: true,
           visible: !scriptState.on,
           label: t('Poetry Paragraph'),
           ...pageKey('CmdOrCtrl+Shift+Enter', () => sendToWindow({ type: 'poetry' })),
@@ -2835,6 +2860,7 @@ function buildMenu() {
         // *italic* and **bold** as you type or paste; off for writers who
         // keep literal asterisks
         {
+          more: true,
           label: t('Markdown Emphasis'),
           type: 'checkbox',
           checked: !readJSON(LIBRARY_FILE, {}).markdownOff,
@@ -2861,6 +2887,7 @@ function buildMenu() {
           }
         },
         {
+          more: true,
           label: t('Focus Mode'),
           submenu: [
             { label: t('Cycle'), accelerator: 'CmdOrCtrl+Shift+O', click: () => sendToWindow({ type: 'focusCycle' }) },
@@ -2871,6 +2898,7 @@ function buildMenu() {
           ]
         },
         {
+          more: true,
           label: t('Vim Keys'),
           type: 'checkbox',
           checked: vimState,
@@ -2887,12 +2915,14 @@ function buildMenu() {
           ]
         },
         {
+          more: true,
           label: t('Brighter Interface'),
           type: 'checkbox',
           checked: viewState.uiBright,
           click: () => sendToWindow({ type: 'uiBright' })
         },
         {
+          more: true,
           // the size in use rides on the label; the steps are a tenth (#364),
           // from 90% up to the page zoom's own 300%
           label: t('Interface Size') + (uiZoomState === 1 ? '' : ' — ' + new Intl.NumberFormat(uiLanguage || 'en', { style: 'percent' }).format(uiZoomState)),
@@ -2905,6 +2935,7 @@ function buildMenu() {
         },
         { type: 'separator' },
         {
+          more: true,
           label: t('Language'),
           submenu: listLanguages().map((lang) => ({
             label: lang.name,
@@ -2946,7 +2977,7 @@ function buildMenu() {
       ]
     }
   ];
-  const menu = Menu.buildFromTemplate(template);
+  const menu = Menu.buildFromTemplate(simpleTemplate(template, moreState));
   editMenuState.edit = null; // the old menu bar is going: forget its Edit menu first
   Menu.setApplicationMenu(menu);
   if (isMac) {
@@ -3331,7 +3362,9 @@ app.whenReady().then(() => {
     try { announceLibraryFallback(); } catch (err) { logError('library notice', err); }
     try { initSpell(); } catch (err) { logError('spell', err); }
     try { buildMenu(); } catch (err) { logError('menu', err); }
-    try { dailyBackup(); } catch (err) { logError('backup', err); }
+    // the day's backup waits until NEO is up and the writer is writing (it
+    // used to start at launch, beside everything the window was waiting on)
+    setTimeout(() => { dailyBackup().catch((err) => logError('backup', err)); }, 2 * 60 * 1000).unref?.();
     // NEO left open for days still makes each day's backup (and retries one
     // that failed); an existing day's zip makes this a no-op
     setInterval(() => { dailyBackup().catch(() => {}); }, 60 * 60 * 1000).unref?.();

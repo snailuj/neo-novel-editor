@@ -276,6 +276,18 @@ const NO_HOVER = !!(window.matchMedia && window.matchMedia('(hover: none)').matc
 // NEO Pocket (the Android and iOS shell)
 const IS_POCKET = !!window.Capacitor;
 
+// Simple NEO, and File → Show More Features (library.moreFeatures). Simple is
+// the default: the features behind the switch keep their menu items, keys
+// and right-click choices out of sight, and their settings act as NEO's own
+// defaults while the writer's choices wait in library.json for the switch to
+// go back on. Nothing a book already holds is hidden: a script, a footnote,
+// a bound shelf, a painted cover open and export as before. Pocket (Android
+// and iOS) is always simple and has no switch. SIMPLE NEO near the end of
+// this file decides the switch for a library that predates it.
+const moreOn = () => !IS_POCKET && !!(library && library.moreFeatures);
+// *italic* and **bold** typed as Markdown are behind the switch too
+const markdownOff = () => !!library && (!moreOn() || !!library.markdownOff);
+
 // Touch has no right-click: a long press on a book, a shelf name or a chapter
 // heading opens the same menu. Not inside the text itself — there a long
 // press belongs to the system's own selection handles.
@@ -739,6 +751,7 @@ async function loadLibrary() {
   const untouched = (library.shelves || []).filter((s) => s.name === DEFAULT_SHELF && own !== DEFAULT_SHELF);
   for (const s of untouched) s.name = own;
   if (untouched.length) await writeLibrary(library);
+  await decideMoreFeatures();
   if (window.neo.writingStyleState) window.neo.writingStyleState(library.writingStyle);
   if (!library.firstRunDone) {
     showFirstRun();
@@ -996,7 +1009,7 @@ async function renderShelves() {
       e.preventDefault();
       if (isBound(shelf)) { await boundShelfMenu(shelf); return; }
       const choice = await optionModal(escHtml(t('Shelf “{name}”', { name: shelf.name })), null, [
-        {
+        ...(moreOn() ? [{
           label: t('Bind into one book'),
           desc: t('Its titles become one book, with a cover, front and back pages, and one table of contents.'),
           value: 'bind'
@@ -1007,7 +1020,7 @@ async function renderShelves() {
             ? t('Collect its {n} works, in shelf order, into a single book with a table of contents.', { n: shelf.bookIds.length })
             : t('Collect the works, in shelf order, into a single book with a table of contents.'),
           value: 'anthology'
-        },
+        }] : []),
         { label: t('Delete shelf'), desc: t('Books move to another shelf. Nothing is deleted from disk.'), danger: true, value: 'del' }
       ]);
       if (choice === 'bind') {
@@ -1123,6 +1136,7 @@ async function renderShelves() {
     if (!isBound(shelf)) {
       blank.addEventListener('contextmenu', async (e) => {
         e.preventDefault();
+        if (!moreOn()) return; // scripts are behind Show More Features
         const pick = await popMenu(e.clientX, e.clientY, [
           { label: t('New Book'), value: 'book' },
           { label: t('New Script'), value: 'script' }
@@ -1945,7 +1959,7 @@ function bookTile(meta, opts = {}) {
     const script = isScript(meta);
     const trashLabel = window.Capacitor ? t('Delete book')
       : navigator.platform.toLowerCase().includes('win') ? t('Move to Recycle Bin') : t('Move to Trash');
-    const canCopy = !!window.neo.duplicateBook && !isPageMeta(meta);
+    const canCopy = !!window.neo.duplicateBook && !isPageMeta(meta) && moreOn();
     // the cover's own choices, gathered in one place
     const coverItems = script ? [] : [
       ...(NO_HOVER ? [] : [{ label: meta.coverImage ? t('Replace cover art…') : t('Set cover art…'), value: 'cover' }]),
@@ -1954,17 +1968,23 @@ function bookTile(meta, opts = {}) {
       ...(meta.coverImage ? ['-', { label: t('Remove cover art'), value: 'uncover', danger: true }] : [])
     ];
     let choice;
-    if (NO_HOVER || window.Capacitor) {
-      // a touch screen: the larger cards, each saying what it does
+    // (a book's word goal is set in Goals, inside the book)
+    if (NO_HOVER || window.Capacitor || !moreOn()) {
+      // a touch screen, and simple NEO: the larger cards, each saying what it
+      // does. Simple NEO has no cover menu: art is dragged onto the book, and
+      // New cover and Remove cover art stand with the rest.
       const options = [];
       if (startPart) options.push({ label: t('Start a part here'), desc: t('A part page goes in before “{title}”.', { title: escHtml(shownTitle(meta.title)) }), value: 'part' });
       options.push(window.Capacitor
-        ? { label: t('Export…'), desc: script ? t('PDF, Fountain or Final Draft, through the share sheet.') : t('Text, Markdown, HTML, PDF, Word or EPUB, through the share sheet.'), value: 'export' }
-        : { label: t('Export…'), value: 'export' });
+        ? { label: t('Export…'), desc: script ? t('PDF, Fountain or Final Draft, through the share sheet.') : moreOn() ? t('Text, Markdown, HTML, PDF, Word or EPUB, through the share sheet.') : t('PDF, Word or EPUB, through the share sheet.'), value: 'export' }
+        : { label: t('Export…'), desc: script || moreOn() || isPageMeta(meta) ? '' : t('PDF, Word, EPUB, or a paperback for KDP.'), value: 'export' });
       if (canCopy) options.push({ label: t('Duplicate'), desc: t('A copy of the whole book on this shelf, to keep as a backup or try another version.'), value: 'duplicate' });
-      if (coverItems.length) options.push({ label: t('Cover'), desc: t('A new cover, your own art, or a saved image.'), value: 'coverMenu' });
+      if (coverItems.length && moreOn()) options.push({ label: t('Cover'), desc: t('A new cover, your own art, or a saved image.'), value: 'coverMenu' });
+      else if (coverItems.length) {
+        options.push({ label: t('New cover'), desc: t('A fresh abstract and a different title style.'), value: 'refresh' });
+        if (meta.coverImage) options.push({ label: t('Remove cover art'), desc: t('Deletes the image from the book folder. (To just hide it, use the ↻ on the book.)'), danger: true, value: 'uncover' });
+      }
       options.push(
-        { label: t('Set word goal…'), desc: t('Adds the subtle progress bar to the cover.'), value: 'goal' },
         { label: t('Remove from bookshelf'), desc: t('Takes it off your shelves. The files stay safe in your NEO Library folder on disk.'), value: 'remove' },
         { label: trashLabel, desc: window.Capacitor ? t('Moves the book folder to Deleted Books in your NEO Library, where you can recover it.') : t('Sends the book folder to your system trash, where you can recover it.'), danger: true, value: 'trash' }
       );
@@ -1976,7 +1996,6 @@ function bookTile(meta, opts = {}) {
       if (startPart) items.push({ label: t('Start a part here'), value: 'part' }, '-');
       items.push({ label: t('Export…'), value: 'export' });
       if (canCopy) items.push({ label: t('Duplicate'), value: 'duplicate' });
-      items.push({ label: t('Set word goal…'), value: 'goal' });
       if (coverItems.length) items.push({ label: t('Cover') + '  ›', value: 'coverMenu' });
       items.push('-', { label: t('Remove from bookshelf'), value: 'remove' }, { label: trashLabel, value: 'trash', danger: true });
       const x = e.clientX;
@@ -2000,7 +2019,7 @@ function bookTile(meta, opts = {}) {
       await doExport(fmt);
     } else if (choice === 'export') {
       const fmt = await optionModal(t('Export “{title}”', { title: escHtml(shownTitle(meta.title)) }), null, [
-        { label: t('Text (.txt)'), value: 'txt' }, { label: t('Markdown (.md)'), value: 'md' }, { label: t('HTML (.html)'), value: 'html' },
+        ...(moreOn() ? [{ label: t('Text (.txt)'), value: 'txt' }, { label: t('Markdown (.md)'), value: 'md' }, { label: t('HTML (.html)'), value: 'html' }] : []),
         { label: 'PDF (.pdf)', value: 'pdf' },
         { label: t('Word (.docx)'), value: 'docx' }, { label: t('EPUB (.epub)'), value: 'epub' },
         ...(window.Capacitor || isPageMeta(meta) ? [] : [{ label: t('Paperback for KDP…'), value: 'paperback' }])
@@ -2029,13 +2048,6 @@ function bookTile(meta, opts = {}) {
     } else if (choice === 'uncover') {
       await window.neo.removeCover(meta.id);
       meta.coverImage = null;
-      await writeBookMeta(meta.id, meta);
-      renderShelves();
-    } else if (choice === 'goal') {
-      const goal = await askInput(t('Word count goal for “{title}”', { title: escHtml(shownTitle(meta.title)) }), t('e.g. 80000 — blank removes the goal'),
-        meta.wordGoal ? String(meta.wordGoal) : '');
-      if (goal === null) return;
-      meta.wordGoal = parseInt(goal, 10) || 0;
       await writeBookMeta(meta.id, meta);
       renderShelves();
     } else if (choice === 'remove') {
@@ -2206,7 +2218,8 @@ async function refreshCover(meta, el) {
   const mode = coverMode(meta);
   const enough = (meta.wordCount || 0) >= PAINT_AT;
   // a bound book's cover has no text of its own to paint from
-  const hasKey = meta.kind !== 'cover' && await window.neo.hasSecret(coverProvider());
+  // (painting is behind Show More Features; a painting already made still shows)
+  const hasKey = meta.kind !== 'cover' && moreOn() && await window.neo.hasSecret(coverProvider());
   const options = [];
   if (meta.coverImage && mode !== 'image') options.push({ label: t('Show your cover art'), desc: t('The image you gave this book.'), value: 'image' });
   if (hasPainting(meta) && mode !== 'painted') options.push({ label: t('Show NEO’s painting'), desc: t('The cover painted from the text.'), value: 'painted' });
@@ -2439,7 +2452,8 @@ $('#author-chip').onclick = async () => {
     }
   }
   opts.push({ label: t('Rename {name}', { name: escHtml(cur.name) }), value: 'rename' });
-  opts.push({ label: t('Add a pen name…'), desc: t('A separate set of shelves under another name'), value: 'add' });
+  // a second name is behind Show More Features; names already made stay reachable
+  if (moreOn()) opts.push({ label: t('Add a pen name…'), desc: t('A separate set of shelves under another name'), value: 'add' });
   if (library.authors.length > 1) {
     opts.push({
       label: t('Remove {name}', { name: escHtml(cur.name) }),
@@ -2776,7 +2790,7 @@ async function chapterMenu(chId, x = 0, y = 0, from = null) {
   if (!choice || choice === kind) return null;
   if (choice === 'export') {
     const formats = [
-      { label: t('Text (.txt)'), value: 'txt' }, { label: t('Markdown (.md)'), value: 'md' }, { label: t('HTML (.html)'), value: 'html' },
+      ...(moreOn() ? [{ label: t('Text (.txt)'), value: 'txt' }, { label: t('Markdown (.md)'), value: 'md' }, { label: t('HTML (.html)'), value: 'html' }] : []),
       { label: 'PDF (.pdf)', value: 'pdf' },
       { label: t('Word (.docx)'), value: 'docx' }, { label: t('EPUB (.epub)'), value: 'epub' }
     ];
@@ -2917,7 +2931,7 @@ function wireChapterBody(body, chId) {
         const tail = i === parts.length - 1 && !edges.end && !edges.spacedAfter && /\s$/.test(p) ? ' ' : '';
         const line = lead + dialogueDashes(p.trim(), dashStyle(), { start: i > 0 || edges.start, end: i < parts.length - 1 || edges.end, spaced: i === 0 && edges.spaced }) + tail;
         // plain text written in Markdown keeps its *italics* and **bold**
-        const styled = library && library.markdownOff ? null : markdownInline(line);
+        const styled = markdownOff() ? null : markdownInline(line);
         if (styled) {
           document.execCommand('insertHTML', false, styled);
           stripJunkSpans(body); // the engine wraps inserted HTML in style spans
@@ -3935,6 +3949,8 @@ function handlePoetry(e, body, chId) {
   const mod = e.metaKey || e.ctrlKey;
   if (!mod && !block.classList.contains('poetry')) return false; // ⇧Enter alone: a flush paragraph
   e.preventDefault();
+  // a new poetry paragraph is behind Show More Features; one already there goes on
+  if (!moreOn() && !block.classList.contains('poetry')) return true;
   if (block.classList.contains('scene-break')) return true;
 
   if (block.classList.contains('poetry')) {
@@ -4421,7 +4437,7 @@ function selectChars(el, from, to) {
 let mdJustSet = null; // what was just turned into styling, for ⌘Z
 // ~~struck~~ as it's typed: the second closing ~ strikes the words through
 function markdownStrike(e, body, range) {
-  if (library && library.markdownOff) return false;
+  if (markdownOff()) return false;
   if (e.key !== '~' || !range.collapsed) return false;
   if (!body.matches || !body.matches('.chapter-body, #aux-editor')) return false;
   const start = range.startContainer.nodeType === Node.TEXT_NODE ? range.startContainer.parentElement : range.startContainer;
@@ -4449,7 +4465,7 @@ function markdownStrike(e, body, range) {
 }
 function markdownEmphasis(e, body, range) {
   if (markdownStrike(e, body, range)) return true;
-  if (library && library.markdownOff) return false;
+  if (markdownOff()) return false;
   if (e.key !== '*' && e.key !== '_') return false;
   if (!body.matches || !body.matches('.chapter-body, #aux-editor')) return false;
   if (!range.collapsed) return false;
@@ -4874,7 +4890,7 @@ const TAB_ORDER = ['manuscript', 'notes', 'outline', 'darlings'];
 window.addEventListener('keydown', (e) => {
   if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
   const cmd = IS_POCKET ? (e.metaKey !== e.ctrlKey) : (IS_MAC ? e.metaKey : e.ctrlKey);
-  if (!cmd || !e.altKey || e.shiftKey || e.isComposing) return;
+  if (!cmd || !e.altKey || e.shiftKey || e.isComposing || !moreOn()) return;
   if ($('#editor-view').hidden || document.querySelector('.modal-backdrop:not([hidden])')) return;
   e.preventDefault();
   e.stopPropagation();
@@ -4994,7 +5010,7 @@ document.addEventListener('keydown', (e) => {
   }
   if (cmd && e.shiftKey && !e.altKey && e.code === 'KeyN') {
     e.preventDefault();
-    if (currentTab === 'manuscript' && !fnBox) insertFootnote();
+    if (currentTab === 'manuscript' && !fnBox && moreOn()) insertFootnote();
   }
   // ⌘S takes a snapshot of the book (SNAPSHOTS)
   if (cmd && !e.altKey && !e.shiftKey && (e.code === 'KeyS' || e.key === 's')) {
@@ -7819,7 +7835,8 @@ function navDropInd() {
   return ind;
 }
 // files from Finder dropped on the pane become chapters where they land
-const navFileDrag = (e) => e.dataTransfer.types.includes('Files') && !!book && !isScript();
+// (documents dropped in as chapters are behind Show More Features)
+const navFileDrag = (e) => e.dataTransfer.types.includes('Files') && !!book && !isScript() && moreOn();
 navList.addEventListener('dragover', (e) => {
   if (!e.dataTransfer.types.includes('application/x-neo-chapter') && !navFileDrag(e)) return;
   e.preventDefault();
@@ -7976,7 +7993,9 @@ let notesPage = 'book';
 let notesPeeks = {}; // page → its text, for the left pane
 let notesPeeksBook = '';
 const notesKind = (page) => (page === 'book' ? 'notes' : 'notes-' + page);
-const notesPageOk = (page) => page === 'book' || (!!book && book.chapterOrder.includes(page) && isStory(page));
+// a chapter's own page is behind Show More Features; one with notes on it
+// already stays open to the writer
+const notesPageOk = (page) => page === 'book' || (!!book && book.chapterOrder.includes(page) && isStory(page) && (moreOn() || !!notesPeeks[page]));
 
 // what a page holds: the text waiting to be saved, else the file
 function readNotesPage(bookId, page) {
@@ -8066,13 +8085,16 @@ function renderNotesNav() {
     list.appendChild(item);
   };
   row('book', t('The Book'), notesPeeksBook);
+  // simple NEO lists only the chapter pages that have notes on them
+  const shown = (chId) => moreOn() || !!notesPeeks[chId];
+  if (!book.chapterOrder.some((c) => isStory(c) && shown(c))) return;
   const sep = document.createElement('div');
   sep.className = 'notes-sep';
   list.appendChild(sep);
   let parts = 0;
   for (const chId of book.chapterOrder) {
     const kind = chapterKind(chId);
-    if (kind === 'part') {
+    if (kind === 'part' && moreOn()) {
       parts += 1;
       const p = document.createElement('div');
       p.className = 'notes-part';
@@ -8081,7 +8103,7 @@ function renderNotesNav() {
       list.appendChild(p);
       continue;
     }
-    if (!isStory(chId)) continue;
+    if (!isStory(chId) || !shown(chId)) continue;
     row(chId, notesLabel(chId), notesPeeks[chId] || '');
   }
 }
@@ -9109,7 +9131,8 @@ function removeGhost(body, p) {
 /*  A script's cards are its scenes (book.sceneNotes holds their notes). */
 /* ================================================================== */
 
-const outlineCardsOn = () => !!book && (isScript() || (library.outlineView || 'cards') === 'cards');
+// (simple NEO's Outline is the list; the cards are behind Show More Features)
+const outlineCardsOn = () => !!book && (isScript() || (moreOn() && (library.outlineView || 'cards') === 'cards'));
 const chapterBodyEl = (chId) => document.querySelector(`.chapter[data-id="${chId}"] .chapter-body`);
 const newSectionId = () => 'sec-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
 
@@ -9226,7 +9249,7 @@ const PAGES_GAP = 28; // px between pages at 100%: styles.css --pg-gap-base
 // Per device, like the zoom.
 const PAGE_WIDTHS = { regular: { f: 1, pad: 72 }, wide: { f: 1.25, pad: 56 }, wider: { f: 1.5, pad: 40 } };
 function applyPageWidth() {
-  const key = PAGE_WIDTHS[library.pageWidth] ? library.pageWidth : 'regular';
+  const key = moreOn() && PAGE_WIDTHS[library.pageWidth] ? library.pageWidth : 'regular';
   const w = PAGE_WIDTHS[key];
   document.documentElement.style.setProperty('--page-wf', w.f);
   document.documentElement.style.setProperty('--page-pad-x', w.pad + 'px');
@@ -9450,7 +9473,7 @@ function viewSwitch() {
 function showOutlineView() {
   const sw = viewSwitch();
   const cards = outlineCardsOn();
-  sw.hidden = !book || isScript(); // a script has only the cards
+  sw.hidden = !book || isScript() || !moreOn(); // a script has only the cards
   for (const b of sw.querySelectorAll('button')) {
     const on = b.dataset.view === (cards ? 'cards' : 'list');
     b.classList.toggle('on', on);
@@ -11236,7 +11259,7 @@ function renderLooseCards() {
   add.className = 'loose-add';
   add.textContent = t('+ card');
   add.onclick = () => addLooseCard();
-  list.appendChild(add);
+  if (moreOn() || isScript()) list.appendChild(add);
   if (!(book.looseCards || []).length) {
     const tip = document.createElement('div');
     tip.className = 'loose-tip';
@@ -11442,7 +11465,8 @@ function sidePaneForTab(name) {
   const notes = name === 'notes' && !!book;
   $('#editor-view').classList.toggle('notes-tab', notes);
   if (notes) { renderNotesNav(); renderNotesSide(); }
-  const outline = name === 'outline' && !!book;
+  // loose cards are behind Show More Features; a book that has some keeps them in view
+  const outline = name === 'outline' && !!book && (moreOn() || isScript() || !!(book.looseCards || []).length);
   $('#editor-view').classList.toggle('outline-tab', outline);
   if (outline) renderLooseCards();
   // on Darlings the pane holds the book's snapshots, and stays open
@@ -11536,7 +11560,8 @@ function queueSideCards() {
 }
 function sideCardsUpdate(force) {
   const box = sideCardsBox();
-  if (!book || currentTab !== 'manuscript') { if (sideCardsKey) { box.innerHTML = ''; sideCardsKey = ''; } return; }
+  // (the cards beside the page are behind Show More Features)
+  if (!book || currentTab !== 'manuscript' || !moreOn()) { if (sideCardsKey) { box.innerHTML = ''; sideCardsKey = ''; } return; }
   if (box.contains(document.activeElement)) return; // being typed on
   const sel = window.getSelection();
   let el = sel.rangeCount ? sel.anchorNode : null;
@@ -13657,7 +13682,7 @@ document.addEventListener('keydown', (e) => {
   // on Linux, Ctrl+Shift+U belongs to the input method (it types a Unicode
   // character by its code), so Read Aloud there is Ctrl+Shift+K (#287)
   if (cmd && e.shiftKey && !e.altKey && e.code === (IS_LINUX ? 'KeyK' : 'KeyU')) {
-    if (!book || $('#editor-view').hidden) return;
+    if (!book || $('#editor-view').hidden || !moreOn()) return;
     e.preventDefault();
     e.stopPropagation();
     toggleReadAloud();
@@ -13909,6 +13934,11 @@ const escAttr = (s) => escHtml(s).replace(/"/g, '&quot;');
 // Turn parsed manuscripts into books on a shelf — used by the file picker
 // and by dropping files from Finder straight onto a shelf.
 async function addImportedBooks(results, shelf) {
+  // a Fountain or Final Draft file is a script: behind Show More Features
+  if (!moreOn()) {
+    results = results.filter((r) => !r.script);
+    if (!results.length) { toast(t('No .docx, .txt, or .md files in that drop')); return; }
+  }
   shelf = shelf || shelvesFor(currentAuthor().id)[0] || library.shelves[0];
   let ok = 0;
   let scripts = 0;
@@ -14428,7 +14458,7 @@ function lookUpWord(text) {
 // Safari and Books show (#179). The listener runs in the bubble phase, after the spellcheck menu,
 // and stands down when any other menu already answered the right-click.
 document.addEventListener('contextmenu', (e) => {
-  if (window.neo.platform !== 'darwin' || e.defaultPrevented) return;
+  if (window.neo.platform !== 'darwin' || e.defaultPrevented || !moreOn()) return;
   const editor = e.target.closest && e.target.closest('.chapter-body, #aux-editor');
   if (!editor) return;
   const sel = window.getSelection();
@@ -14555,6 +14585,7 @@ let viewStateSent = '';
 // the writer turns it down). The shelf goes with writing.
 const brightAside = () => !!book && !$('#editor-view').hidden && currentTab !== 'manuscript';
 function brightNow() {
+  if (!moreOn()) return brightAside() || SYSTEM_CONTRAST.matches; // the defaults
   if (brightAside()) return library.uiBrightAside === undefined ? true : !!library.uiBrightAside;
   return library.uiBright === undefined ? SYSTEM_CONTRAST.matches : !!library.uiBright;
 }
@@ -14982,7 +15013,7 @@ function applyFonts() {
   // chooses in the View menu
   applyBright();
   // View → Interface Size: everything but the page, in tenths (#364)
-  const uiZoom = snapZoom(library.uiZoom);
+  const uiZoom = moreOn() ? snapZoom(library.uiZoom) : 1;
   document.documentElement.style.setProperty('--ui-zoom', uiZoom);
   document.documentElement.classList.toggle('ui-zoomed', uiZoom > 1);
   if (window.neo.uiZoomState) window.neo.uiZoomState(uiZoom);
@@ -15200,25 +15231,29 @@ function shortcutSections() {
   return bookShortcutSections();
 }
 function bookShortcutSections() {
+  // the keys of features behind File → Show More Features show with them
+  const more = moreOn();
   return [
     { title: tk('Writing'), rows: [
       [tk('Enter ×2'), tk('Insert a section break')],
       [tk('Enter ×3'), tk('Start a new chapter')],
       [K('⇧Enter', 'Shift+Enter'), tk('A paragraph with no indent'), tk('Again for another; Enter goes back to prose.')],
-      [K('⌘⇧Enter', 'Ctrl+Shift+Enter'), tk('Start or continue a poetry paragraph'), tk('Also works from a chapter heading.')],
+      ...(more ? [[K('⌘⇧Enter', 'Ctrl+Shift+Enter'), tk('Start or continue a poetry paragraph'), tk('Also works from a chapter heading.')]] : []),
       [KPH, tk('Insert a placeholder note')],
-      [KFN, tk('Add a footnote'), tk('Type the note, then Enter to go back to writing. Click its number to change it.')],
+      ...(more ? [[KFN, tk('Add a footnote'), tk('Type the note, then Enter to go back to writing. Click its number to change it.')]] : []),
       [KDA, tk('Move selected text to Darlings')],
-      [K('⌘⇧U', IS_LINUX ? 'Ctrl+Shift+K' : 'Ctrl+Shift+U'), tk('Read aloud from the cursor'), tk('Again, Esc or any key stops it. Uses your computer’s own voice.')]
+      ...(more ? [[K('⌘⇧U', IS_LINUX ? 'Ctrl+Shift+K' : 'Ctrl+Shift+U'), tk('Read aloud from the cursor'), tk('Again, Esc or any key stops it. Uses your computer’s own voice.')]] : [])
     ] },
     { title: tk('Formatting'), rows: [
-      [['*…*', '**…**', '***…***'], tk('Italic, bold, the Markdown way'), tk('Typed around a word (or pasted). Undo right after keeps the asterisks. Format → Markdown Emphasis turns it off.')],
+      ...(more ? [[['*…*', '**…**', '***…***'], tk('Italic, bold, the Markdown way'), tk('Typed around a word (or pasted). Undo right after keeps the asterisks. Format → Markdown Emphasis turns it off.')]] : []),
       [K('⌘U', 'Ctrl+U'), tk('Underline')],
-      [K('⌘⇧S', 'Ctrl+Shift+S'), tk('Strikethrough'), tk('Or ~~…~~ around the words.')],
-      [K('⌘⇧L', 'Ctrl+Shift+L'), tk('Align paragraph left')],
-      [K('⌘⇧C', 'Ctrl+Shift+C'), tk('Center paragraph')],
-      [K('⌘⇧R', 'Ctrl+Shift+R'), tk('Align paragraph right')],
-      [K('⌘⇧J', 'Ctrl+Shift+J'), tk('Justify paragraph')],
+      [K('⌘⇧S', 'Ctrl+Shift+S'), tk('Strikethrough'), more ? tk('Or ~~…~~ around the words.') : undefined],
+      ...(more ? [
+        [K('⌘⇧L', 'Ctrl+Shift+L'), tk('Align paragraph left')],
+        [K('⌘⇧C', 'Ctrl+Shift+C'), tk('Center paragraph')],
+        [K('⌘⇧R', 'Ctrl+Shift+R'), tk('Align paragraph right')],
+        [K('⌘⇧J', 'Ctrl+Shift+J'), tk('Justify paragraph')]
+      ] : []),
       [K('⌘+', 'Ctrl++'), tk('Larger text')],
       [K('⌘−', 'Ctrl+−'), tk('Smaller text')],
       [K('⌘0', 'Ctrl+0'), tk('Reset text size and page zoom')]
@@ -15242,11 +15277,13 @@ function bookShortcutSections() {
     { title: tk('View & window'), rows: [
       [[K('⌘⇧F', 'Ctrl+Shift+F'), K('⌘Enter', 'Ctrl+Enter')], tk('Toggle full screen')],
       [K('⌘⇧T', 'Ctrl+Shift+T'), tk('Toggle typewriter scrolling')],
-      [K('⌘⇧O', 'Ctrl+Shift+O'), tk('Cycle focus mode'), tk('Off → paragraph → sentence → off.')],
+      ...(more ? [[K('⌘⇧O', 'Ctrl+Shift+O'), tk('Cycle focus mode'), tk('Off → paragraph → sentence → off.')]] : []),
       [IS_MAC ? '⌥⌘↓' : ['Ctrl+Alt+↓', 'Ctrl+Page Down'], tk('Go to the next chapter')],
       [IS_MAC ? '⌥⌘↑' : ['Ctrl+Alt+↑', 'Ctrl+Page Up'], tk('Go to the previous chapter')],
-      [K('⌥⌘→', 'Ctrl+Alt+→'), tk('Go to the next tab'), tk('Manuscript, Notes, Outline, Darlings, then round again.')],
-      [K('⌥⌘←', 'Ctrl+Alt+←'), tk('Go to the previous tab')],
+      ...(more ? [
+        [K('⌥⌘→', 'Ctrl+Alt+→'), tk('Go to the next tab'), tk('Manuscript, Notes, Outline, Darlings, then round again.')],
+        [K('⌥⌘←', 'Ctrl+Alt+←'), tk('Go to the previous tab')]
+      ] : []),
       [['F6', K('⌃Tab', 'Ctrl+Tab')], tk('Move between the page, the chapters, the notes and the bottom bar'), tk('Add Shift to go back. Esc returns to the page. On the shelf: the books, then the header.')],
       ...(IS_MAC ? [
         ['⌘H', tk('Hide NEO')],
@@ -17549,6 +17586,7 @@ window.neo.onMenu(async (msg) => {
   if (msg.type === 'scriptElement' && book && isScript()) spSetElement(msg.value);
   if (msg.type === 'scriptStyle') spToggleStyle(msg.value);
   if (msg.type === 'scriptPageBreak') spTogglePageBreak();
+  if (msg.type === 'moreFeatures') await setMoreFeatures(!!msg.checked);
   if (msg.type === 'markdownEmphasis') {
     if (msg.checked) delete library.markdownOff; else library.markdownOff = true;
     await writeLibrary(library);
@@ -17888,26 +17926,95 @@ $('#nav-list').addEventListener('keydown', (e) => {
 });
 
 /* ================================================================== */
+/*  SIMPLE NEO — File → Show More Features                             */
+/*  NEO opens simple. The switch brings back everything else: the      */
+/*  menu items main.js marks `more`, and the keys and right-click      */
+/*  choices here that ask moreOn(). A library from before the switch   */
+/*  is decided once: on for a writer already using something behind    */
+/*  it, so nothing they rely on goes out of sight; off for the rest,   */
+/*  who are told once where it went. A new library starts simple.      */
+/* ================================================================== */
+
+// what a library's own settings show the writer chose (the books are
+// looked at separately: a script, a painted cover)
+function usesMoreFeatures(lib) {
+  if (!lib) return false;
+  const lang = (code) => String(code || '').split('-')[0];
+  return (lib.authors || []).length > 1 ||
+    (lib.shelves || []).some((s) => isBound(s)) ||
+    !!lib.vimKeys || !!lib.nbspMarks || !!lib.pagedView ||
+    (!!lib.pageWidth && lib.pageWidth !== 'regular') ||
+    (lib.uiZoom !== undefined && snapZoom(lib.uiZoom) !== 1) ||
+    (!!lib.focus && lib.focus !== 'off') ||
+    lib.uiBright !== undefined || lib.uiBrightAside === false ||
+    !!lib.markdownOff || !!lib.exportCustomChapterTitles ||
+    (!!lib.spellLanguage && lang(lib.spellLanguage) !== lang(NeoI18n.getLocale()));
+}
+
+async function decideMoreFeatures() {
+  if (IS_POCKET || typeof library.moreFeatures === 'boolean') { reportMore(); return; }
+  let more = false;
+  if (library.firstRunDone) {
+    more = usesMoreFeatures(library);
+    for (const s of more ? [] : library.shelves || []) {
+      for (const id of s.bookIds || []) {
+        const meta = await shelfMeta(id);
+        if (meta && (isScript(meta) || hasPainting(meta))) { more = true; break; }
+      }
+      if (more) break;
+    }
+    if (!more) more = !!(await window.neo.hasSecret(coverProvider()).catch(() => false));
+    if (!more) setTimeout(() => toast(t('NEO is simpler now. File → Show More Features brings back the rest.'), 9000), 1500);
+  }
+  library.moreFeatures = more;
+  await writeLibrary(library);
+  reportMore();
+}
+
+function reportMore() {
+  if (window.neo.moreState) window.neo.moreState(moreOn());
+}
+
+async function setMoreFeatures(on) {
+  if (IS_POCKET || on === moreOn()) return; // (Pocket is always simple)
+  library.moreFeatures = on;
+  await writeLibrary(library);
+  reportMore();
+  applyLook();
+  if (book && !$('#editor-view').hidden) {
+    if (currentTab === 'manuscript') queueSideCards();
+    else switchTab(currentTab); // the Outline's view, the Notes pages, the right-hand pane
+  }
+  toast(on ? t('More features on') : t('Simple NEO. File → Show More Features brings back the rest.'));
+}
 
 loadLibrary().then(() => {
-  applyFonts();
+  applyLook();
   typewriterEnabled = !!library.typewriter;
   applyTypewriter();
-  nbspMarksEnabled = !!library.nbspMarks;
-  applyNbspMarks();
-  applyPageWidth();
-  pagedEnabled = !!library.pagedView;
-  twoPageEnabled = !!library.twoPageView;
-  applyPageZoom(); // the page zoom's range depends on the pages
-  applyPaged();
-  vimEnabled = !!library.vimKeys;
-  applyVim();
   // the voices load on the first ask, which on Linux can take a moment: ask
   // now, so they are there by the time Read Aloud is (#378)
   try { if (window.speechSynthesis) window.speechSynthesis.getVoices(); } catch { /* none to ask */ }
-  focusLevel = FOCUS_LEVELS.includes(library.focus) ? library.focus : 'off';
-  applyFocus();
 });
+
+// The look that Show More Features governs: at launch, and again whenever
+// the switch turns. Simple NEO takes NEO's defaults for these and leaves
+// the writer's own choices in the library for the switch's return.
+function applyLook() {
+  const more = moreOn();
+  applyFonts(); // the interface size and brightness
+  nbspMarksEnabled = more && !!library.nbspMarks;
+  applyNbspMarks();
+  applyPageWidth();
+  pagedEnabled = more && !!library.pagedView;
+  twoPageEnabled = more && !!library.twoPageView;
+  applyPageZoom(); // the page zoom's range depends on the pages
+  applyPaged();
+  vimEnabled = more && !!library.vimKeys;
+  applyVim();
+  focusLevel = more && FOCUS_LEVELS.includes(library.focus) ? library.focus : 'off';
+  applyFocus();
+}
 
 // Plugins (plugins.js) come last, once all of NEO is defined. Getters,
 // because book, chapterHTML and currentTab are reassigned. book is handed
