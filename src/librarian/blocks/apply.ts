@@ -39,7 +39,7 @@ function bookParagraphs(block: Block): string[] {
   const perLine = block.kind === 'list-item' || block.kind === 'fence' || block.kind === 'table';
   const paras = perLine ? lines.map((l) => l.trim()).filter(Boolean) : [lines.map((l) => l.trim()).join('\n')];
   // NEO's Import starts a chapter at any line opening with '#'; a zero-width space keeps it text.
-  return paras.map((p) => bookText(p).split('\n').map((l) => (/^#{1,6}(\s|$)/.test(l) ? `​${l}` : l)).join('\n')).filter((p) => p.trim());
+  return paras.map((p) => bookText(p).split('\n').map((l) => (/^#{1,6}(\s|$)/.test(l) ? `\u200B${l}` : l)).join('\n')).filter((p) => p.trim());
 }
 
 export function applySheet(vault: string, rows: readonly Row[], out: string, opts: ApplyOptions): ApplyResult {
