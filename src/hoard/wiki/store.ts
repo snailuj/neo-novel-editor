@@ -12,8 +12,9 @@
 // the wiki is open, because the window writes its own copy of it whole.
 //
 // With history kept, an import is two commits, so blame credits each paragraph to whoever
-// owns it: first the author's, holding what they wrote meanwhile and each page with only
-// its quotations and code (convert.ts), then the librarian's, with the whole pages.
+// owns it: first the author's, holding what they wrote meanwhile, the whole of each page
+// that is theirs (review/owner.ts, the rule suggest mode follows) and only the quotations
+// and code of the librarian's pages (convert.ts), then the librarian's, with the rest.
 //
 // A page's source that changed since it came in is never written over: the page may
 // hold words written in NEO since. It is listed instead.
@@ -31,6 +32,7 @@ import { oneName, writeJson, writeWhole } from '../files.ts';
 import { anchorAt, anchorPoint } from '../marks/anchor.ts';
 import { newMark } from '../marks/model.ts';
 import type { MarkStore } from '../marks/store.ts';
+import { ownerOf } from '../review/owner.ts';
 import { convertPage, pageHtml, type ConvertedPage } from './convert.ts';
 
 type Level = 'error' | 'warn' | 'info' | 'debug';
@@ -250,7 +252,10 @@ export class WikiStore {
     const chIds = pages.map(() => this.#id('ch'));
     const chapterFile = (chId: string) => path.join(this.#library, bookId!, 'chapters', `${oneName(chId, 'chId')}.html`);
     if (this.#o.commit) {
-      pages.forEach((page, n) => writeWhole(chapterFile(chIds[n]!), pageHtml(page.page.blocks, 'author')));
+      pages.forEach((page, n) => {
+        const theirs = ownerOf(page.page.frontmatter) === 'author';
+        writeWhole(chapterFile(chIds[n]!), theirs ? page.page.html : pageHtml(page.page.blocks, 'author'));
+      });
       await this.#o.commit('author');
     }
     const made: { chId: string; name: string; dest: string; src: string; srcSha: string; fileSha: string }[] = [];
