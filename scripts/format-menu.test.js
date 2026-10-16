@@ -19,7 +19,8 @@ const root = path.join(__dirname, '..');
 const localRequire = createRequire(path.join(root, 'main.js'));
 const source = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
 
-function menuOn(platform, { script = false } = {}) {
+// (with Show More Features on: Poetry Paragraph is one of its items)
+function menuOn(platform, { script = false, more = true } = {}) {
   const listeners = new Map();
   let template = null;
   const sent = [];
@@ -48,6 +49,7 @@ function menuOn(platform, { script = false } = {}) {
   context.library = library;
   vm.runInContext('LIBRARY_DIR = library; LIBRARY_FILE = require("path").join(library, "library.json");', context);
   try {
+    listeners.get('more:state')(null, more);
     if (script) listeners.get('script:state')(null, { on: true, book: true, element: 'action' });
     else vm.runInContext('buildMenu()', context);
   } finally {

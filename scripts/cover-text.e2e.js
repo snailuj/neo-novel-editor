@@ -23,7 +23,7 @@ app.setPath('documents', tmp);
 const lib = path.join(tmp, 'NEO Library');
 fs.mkdirSync(lib);
 fs.writeFileSync(path.join(lib, 'library.json'), JSON.stringify({
-  authorName: '', penNames: [], firstRunDone: true, pageTheme: 'night',
+  authorName: '', penNames: [], firstRunDone: true, moreFeatures: true, pageTheme: 'night',
   shelves: [{ id: 'shelf-1', name: 'Works in Progress', bookIds: [] }]
 }));
 const loadFile = BrowserWindow.prototype.loadFile;
