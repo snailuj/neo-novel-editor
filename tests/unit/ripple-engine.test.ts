@@ -6,12 +6,15 @@
 // - applying writes the librarian's page in a librarian edit and opens the next hop,
 //   comments on the author's page instead, and mints a page as the librarian's;
 // - nothing applies while the wiki is open, and a ruling made stays made;
-// - Ripple This Chapter packets a chapter of the manuscript.
+// - Ripple This Chapter packets a chapter of the manuscript;
+// - the meaning model's top-up writes a waiting packet again with its pages, once, and
+//   leaves a packet the judge has answered alone.
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { MarkStore } from '../../src/hoard/marks/store.ts';
+import { topUp } from '../../src/hoard/ripple/embed-cli.ts';
 import { DEFAULT_BRIEF, Ripple } from '../../src/hoard/ripple/engine.ts';
 import { sha256 } from '../../src/hoard/ripple/rulings.ts';
 import { WikiStore } from '../../src/hoard/wiki/store.ts';
@@ -177,4 +180,24 @@ test('Ripple This Chapter packets a chapter of the manuscript, once for the same
   const again = await ripple.ask({ bookId: 'book-novel-1', chId: 'c1', title: 'Dawn' });
   assert.deepEqual([again.made, again.job, again.packet], [false, asked.job, asked.packet]);
   await assert.rejects(ripple.ask({ bookId: 'book-novel-1', chId: 'c2', title: 'Later' }), /not saved yet/);
+});
+
+// letters counted: close enough in meaning for a test
+const letters = async (texts: string[]) => texts.map((t) => Array.from({ length: 26 }, (_, i) => t.toLowerCase().split(String.fromCharCode(97 + i)).length - 1));
+
+test('the meaning model\'s top-up adds its pages to a waiting packet, once', async (t) => {
+  const { library, ripple, importPages } = setup(t);
+  await importPages({ Harbour: '---\ntype: lore\n---\nThe harbour wall.\n', Mill: '---\ntype: lore\n---\nThe mill grinds corn by the river.\n' });
+  await ripple.run();
+  await importPages({ Quay: '---\ntype: lore\n---\nThe quay by the [[Harbour]] wall.\n' });
+  await ripple.run();
+  const [job] = ripple.overview().jobs;
+  assert.match(readFileSync(job!.packet, 'utf8'), /meaning model is not set up/);
+  assert.deepEqual(await topUp(library, letters), { waiting: 1, written: 1 });
+  const packet = readFileSync(job!.packet, 'utf8');
+  assert.match(packet, /then pages close in meaning\./);
+  assert.match(packet, /Mill/);
+  assert.deepEqual(await topUp(library, letters), { waiting: 1, written: 0 }, 'the same pages write nothing');
+  writeFileSync(job!.answer, answer([]));
+  assert.deepEqual(await topUp(library, letters), { waiting: 0, written: 0 }, 'an answered packet is left alone');
 });

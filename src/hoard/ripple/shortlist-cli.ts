@@ -6,8 +6,7 @@
 // inside the vault. `--score <folder> [--ticks <sheet.md> ...] [--union N]` then reads the
 // ticks back into score.md, with --union adding the roster plus N pages from each model.
 // A spike for choosing ripple's shortlist method; not part of the app.
-import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { readText } from '../../librarian/vault-fs.ts';
@@ -17,10 +16,20 @@ import {
   type Embed, type Source,
 } from './shortlist.ts';
 import { readSnapshot } from './snapshot.ts';
+import { EmbedderMissing, loadEmbedder as load, type EmbedOptions } from './embedder.ts';
 
 class UsageError extends Error {}
 
 const log = (message: string): void => { process.stderr.write(`ripple-shortlist: ${message}\n`); };
+
+async function loadEmbedder(o: EmbedOptions): Promise<Embed> {
+  try {
+    return await load(o, log);
+  } catch (err) {
+    if (err instanceof EmbedderMissing) throw new UsageError(`--embed ${err.message}`);
+    throw err;
+  }
+}
 
 function walk(root: string, rel = ''): string[] {
   return readdirSync(path.join(root, rel), { withFileTypes: true }).flatMap((e) => {
@@ -33,98 +42,6 @@ function walk(root: string, rel = ''): string[] {
 function inside(child: string, parent: string): boolean {
   const rel = path.relative(parent, child);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-}
-
-interface EmbedOptions { model: string; titles: boolean; pooling: string; dtype: string; device?: string; cacheFile: string }
-
-type Run = (texts: string[]) => Promise<number[][]>;
-const loaded = new Map<string, Promise<Run>>();
-
-// transformers.js is optional and never a dependency of the fork: a run on the author's
-// machine installs it with `npm i --no-save`. Vectors are cached by chunk hash, so cases
-// read at different commits embed only what changed.
-async function loadEmbedder(o: EmbedOptions): Promise<Embed> {
-  const gemma = /embeddinggemma/i.test(o.model);
-  // EmbeddingGemma's document prompt is "title: {title} | text: ", "none" when there is
-  // none (Google's model card). `#titles` gives it the page's name.
-  const prefix = (role: 'query' | 'document', title?: string): string => {
-    if (!gemma) return '';
-    return role === 'query' ? 'task: search result | query: ' : `title: ${(o.titles && title) || 'none'} | text: `;
-  };
-  if (!loaded.has(o.model)) loaded.set(o.model, loadModel(o, gemma));
-  const run = await loaded.get(o.model)!;
-  const cache = new Map<string, number[]>();
-  if (existsSync(o.cacheFile)) {
-    for (const line of readFileSync(o.cacheFile, 'utf8').split('\n')) {
-      if (!line) continue;
-      try {
-        const { h, v } = JSON.parse(line) as { h: string; v: number[] };
-        cache.set(h, v);
-      } catch {
-        log(`skipped a torn line in ${o.cacheFile}`);
-      }
-    }
-    log(`${cache.size} cached vectors`);
-  }
-  return async (texts, role, titles) => {
-    const keyed = texts.map((t, i) => {
-      const input = prefix(role, titles?.[i]) + t;
-      return { input, h: createHash('sha256').update(`${o.model}\0${o.dtype}\0${input}`).digest('hex') };
-    });
-    const missing = [...new Map(keyed.filter((k) => !cache.has(k.h)).map((k) => [k.h, k])).values()];
-    const t0 = Date.now();
-    for (let i = 0; i < missing.length; i += 16) {
-      const batch = missing.slice(i, i + 16);
-      const vectors = await run(batch.map((b) => b.input));
-      batch.forEach((b, j) => {
-        cache.set(b.h, vectors[j]!);
-        appendFileSync(o.cacheFile, `${JSON.stringify({ h: b.h, v: vectors[j] })}\n`);
-      });
-      if ((i / 16) % 30 === 29) log(`embedded ${i + batch.length} of ${missing.length}`);
-    }
-    if (missing.length) {
-      const ms = Date.now() - t0;
-      log(`embedded ${missing.length} ${role} chunks in ${ms} ms (${(missing.length / (ms / 1000 || 1)).toFixed(1)} a second)`);
-    }
-    return keyed.map((k) => cache.get(k.h)!);
-  };
-}
-
-async function loadModel(o: EmbedOptions, gemma: boolean): Promise<Run> {
-  let lib: any;
-  try {
-    const spec = '@huggingface/transformers';
-    lib = await import(spec);
-  } catch (err) {
-    throw new UsageError(`--embed needs transformers.js 4.3.1 or later: npm i --no-save @huggingface/transformers (${(err as Error).message})`);
-  }
-  const started = Date.now();
-  let run: Run;
-  if (gemma) {
-    // EmbeddingGemma 2 is multimodal; with the vision and audio encoders nulled in its
-    // config only the 270M text model loads (onnx-community/embeddinggemma-2-ONNX card).
-    // Google's card warns against fp16, so q8 or fp32. Needs transformers.js 4.3.1 or later.
-    const tokenizer = await lib.AutoTokenizer.from_pretrained(o.model);
-    let config: any;
-    try {
-      config = await lib.AutoConfig.from_pretrained(o.model);
-      if ('vision_config' in config) config.vision_config = null;
-      if ('audio_config' in config) config.audio_config = null;
-    } catch (err) {
-      log(`loading the whole model, as its config did not read: ${(err as Error).message}`);
-      config = undefined;
-    }
-    const model = await lib.AutoModel.from_pretrained(o.model, { dtype: o.dtype, device: o.device, config });
-    run = async (texts) => {
-      const inputs = await tokenizer(texts, { padding: true, truncation: true });
-      return (await model(inputs)).sentence_embedding.tolist();
-    };
-  } else {
-    const extract = await lib.pipeline('feature-extraction', o.model, { dtype: o.dtype, device: o.device });
-    run = async (texts) => (await extract(texts, { pooling: o.pooling, normalize: true })).tolist();
-  }
-  log(`loaded ${o.model} (${o.dtype}) in ${Date.now() - started} ms`);
-  return run;
 }
 
 async function main(argv: string[]): Promise<void> {

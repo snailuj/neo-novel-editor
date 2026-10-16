@@ -27,7 +27,7 @@ import { buildPacket } from './packet.ts';
 import { chapterRel, corpusPath, pageText, readWiki, wikiCorpus, type Wiki, type WikiPage } from './pages.ts';
 import { newJob, reconcile, superseded } from './reconcile.ts';
 import { LAST_HOP, proposalId, Rulings, sha256, type RippleJob, type RippleProposal, type RippleState } from './rulings.ts';
-import type { Embed } from './shortlist.ts';
+import type { Corpus, Embed } from './shortlist.ts';
 
 type Log = (level: 'error' | 'warn' | 'info' | 'debug', message: string, data?: unknown) => void;
 
@@ -137,11 +137,11 @@ export class Ripple {
   }
 
   #packetFile(job: string): string {
-    return this.#dir('packets', `${oneName(job, 'job')}.md`);
+    return rippleFiles(this.#lib, job).packet;
   }
 
   #inboxFile(job: string): string {
-    return this.#dir('inbox', `${oneName(job, 'job')}.jsonl`);
+    return rippleFiles(this.#lib, job).answer;
   }
 
   get #rulingsRel(): string {
@@ -248,13 +248,7 @@ export class Ripple {
         records.push({ ...rest, at: this.#now(), state: 'skipped', problem: 'The page is no longer in the library.' });
         continue;
       }
-      const name = job.source.title || job.source.chId;
-      const packet = await buildPacket({
-        job, sourceText: pageText(html),
-        sourcePath: job.source.bookId === wiki.bookId ? corpusPath(name) : `manuscript/${corpusPath(name)}`,
-        corpus, byPath,
-        briefFile: this.#dir('brief.md'), inboxFile: this.#inboxFile(job.id), library: this.#lib, embed,
-      });
+      const packet = await packetOf({ library: this.#lib, job, html, wiki, corpus, byPath, embed });
       writeWhole(this.#packetFile(job.id), packet.text);
       records.push({ ...rest, at: this.#now(), state: 'packeted' });
       n++;
@@ -435,6 +429,25 @@ export class Ripple {
       rejected: proposals.filter((p) => p.status === 'rejected' && p.kind !== 'nothing').length,
     };
   }
+}
+
+/** The paths ripple keeps its scratch at, in a library. */
+export const rippleFiles = (library: string, job: string) => ({
+  brief: path.join(library, '.neo', 'ripple', 'brief.md'),
+  packet: path.join(library, '.neo', 'ripple', 'packets', `${oneName(job, 'job')}.md`),
+  answer: path.join(library, '.neo', 'ripple', 'inbox', `${oneName(job, 'job')}.jsonl`),
+});
+
+/** A job's packet, for its source's HTML as it is now. */
+export function packetOf(o: { library: string; job: RippleJob; html: string; wiki: Wiki; corpus: Corpus; byPath: Map<string, WikiPage>; embed?: Embed }) {
+  const name = o.job.source.title || o.job.source.chId;
+  const files = rippleFiles(o.library, o.job.id);
+  return buildPacket({
+    job: o.job, sourceText: pageText(o.html),
+    sourcePath: o.job.source.bookId === o.wiki.bookId ? corpusPath(name) : `manuscript/${corpusPath(name)}`,
+    corpus: o.corpus, byPath: o.byPath,
+    briefFile: files.brief, inboxFile: files.answer, library: o.library, embed: o.embed,
+  });
 }
 
 /** A line of the judge's answer as a proposal of the job. */
