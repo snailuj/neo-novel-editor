@@ -38,7 +38,17 @@ function loadMain() {
     BrowserWindow: { getFocusedWindow: () => null, getAllWindows: () => [] },
     Menu: { buildFromTemplate: (items) => items, setApplicationMenu() {} },
     dialog: { showMessageBox: () => Promise.resolve({}) },
-    utilityProcess: { fork: () => ({ on() {}, postMessage() {} }) },
+    // the backup's own process: the real backup-worker.js, as a Node child
+    utilityProcess: {
+      fork: (file) => {
+        const child = require('node:child_process').fork(file, [], { env: { ...process.env, NEO_TEST_SPARSE_IS_CLOUD: '1' } });
+        return {
+          on: (ev, fn) => child.on(ev, ev === 'exit' ? (code) => fn(code || 0) : fn),
+          postMessage: (m) => child.send(m),
+          kill: () => child.kill()
+        };
+      }
+    },
     screen: {}
   };
   const asked = [];
@@ -48,6 +58,7 @@ function loadMain() {
     process: { platform: 'darwin', on() {} },
     console,
     setTimeout,
+    clearTimeout,
     libraryRoot: os.tmpdir(),
     asked,
     arrivals: new Map() // file → words iCloud brings down when asked
@@ -171,12 +182,36 @@ describe('files still in iCloud', {
     const { dir, bookDir } = libraryWithBook();
     sendToICloud(path.join(bookDir, 'chapters', 'ch-aaa.html'));
     await main.run('backupRunning = false; dailyBackup()');
-    const zips = fs.readdirSync(path.join(dir, 'Backups'));
+    const zips = fs.readdirSync(path.join(dir, 'Backups')).filter((f) => f.endsWith('.zip'));
     assert.equal(zips.length, 1);
     const JSZip = localRequire('jszip');
     const zip = await JSZip.loadAsync(fs.readFileSync(path.join(dir, 'Backups', zips[0])));
     const note = await zip.file('_left-out-of-this-backup.txt').async('string');
     assert.match(note, /ch-aaa\.html \(in iCloud, not on this Mac\)/);
     assert.ok(zip.file(path.basename(bookDir) + '/notes.html'), 'the rest is backed up');
+  });
+
+  // a file that never answers (a named pipe: a read of one waits for ever, as
+  // a stuck iCloud file does) once held NEO's whole main process, at launch
+  test('a file that never answers is left out of the backup, and NEO goes on meanwhile', async () => {
+    const { dir, bookDir } = libraryWithBook();
+    const stuck = path.join(bookDir, 'stickies.json');
+    fs.rmSync(stuck, { force: true });
+    require('node:child_process').execFileSync('mkfifo', [stuck]);
+    main.run('BACKUP_FILE_LIMIT_MS = 300');
+    let ticks = 0;
+    const beat = setInterval(() => { ticks++; }, 20);
+    const t0 = Date.now();
+    await main.run('backupRunning = false; dailyBackup()');
+    clearInterval(beat);
+    assert.ok(Date.now() - t0 < 10000, 'the backup finished');
+    assert.ok(ticks > 5, 'this process kept running while the backup waited');
+    const zips = fs.readdirSync(path.join(dir, 'Backups')).filter((f) => f.endsWith('.zip'));
+    assert.equal(zips.length, 1);
+    const JSZip = localRequire('jszip');
+    const zip = await JSZip.loadAsync(fs.readFileSync(path.join(dir, 'Backups', zips[0])));
+    assert.match(await zip.file('_left-out-of-this-backup.txt').async('string'), /stickies\.json \(not handed over in time\)/);
+    assert.ok(zip.file(path.basename(bookDir) + '/book.json'), 'the rest is backed up');
+    main.run('BACKUP_FILE_LIMIT_MS = 20000');
   });
 });
