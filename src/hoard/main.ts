@@ -4,7 +4,8 @@
 // book closing, and quitting makes one last commit. It keeps the writer's marks in
 // sidecars under .neo/, which the history commits with the chapters, brings hoard's
 // Markdown pages into the wiki book, searches the library's files, and reads each
-// chapter the writer leaves for wiki pages it names (companion/). The library's
+// chapter the writer leaves for wiki pages it names (companion/), and carries changes
+// through the wiki for a judge outside NEO, on the writer's word (ripple/). The library's
 // repository is looked at after activate returns, so NEO's start never waits on git.
 // Every commit runs the pre-commit gate (git/gate.ts) over what it stages.
 import { app, BrowserWindow, dialog, utilityProcess } from 'electron';
@@ -24,6 +25,7 @@ import { createGit } from './git/runner.ts';
 import { ATTRIBUTES } from './git/start.ts';
 import { MarkStore } from './marks/store.ts';
 import { startReview } from './review/main.ts';
+import { startRipple } from './ripple/main.ts';
 import { SearchClient, type WorkerProcess } from './search/client.ts';
 import { WikiStore } from './wiki/store.ts';
 import { describeSort } from './wiki/summary.ts';
@@ -218,6 +220,7 @@ export function activate(host: NeoMainHost): void {
   const wiki = startWiki(host, layer, marks);
   startCompanion(host, layer, marks, wiki);
   startReview(host, marks);
+  startRipple(host, layer, marks, wiki);
   startSearch(host);
   layer.open().catch((err: unknown) => host.log('error', 'git.open failed', String(err)));
 }

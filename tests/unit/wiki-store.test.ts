@@ -241,3 +241,28 @@ test('an import commits the pages twice: the author\'s blocks and pages, then th
     },
   ]);
 });
+
+// Rule (ripple's mint): a page the librarian makes comes after the wiki's last, as plain
+// blocks with a sidecar naming what made it; never while the wiki is open, before the
+// first import, untitled, or under a title a page or its source's name holds.
+test('mint makes a librarian page after the last, and refuses a title in use', async (t) => {
+  const { library, wiki, page } = setup(t);
+  const frontmatter = { type: 'lore' };
+  assert.throws(() => wiki.mint({ title: 'Quay', paragraphs: ['x'], frontmatter, origin: 'ripple:r-1' }, null), /no wiki yet/);
+  await wiki.apply(wiki.sort([page('Harbour.md', 'The harbour wall.\n')]), null);
+  const bookId = wiki.wikiId()!;
+  assert.throws(() => wiki.mint({ title: 'Quay', paragraphs: ['x'], frontmatter, origin: 'ripple:r-1' }, bookId), /The wiki is open/);
+  assert.throws(() => wiki.mint({ title: '  ', paragraphs: ['x'], frontmatter, origin: 'ripple:r-1' }, null), RangeError);
+  assert.throws(() => wiki.mint({ title: 'harbour', paragraphs: ['x'], frontmatter, origin: 'ripple:r-1' }, null), /already in the wiki/);
+  const made = wiki.mint({ title: 'Quay', paragraphs: ['The quay & the [[Harbour]].', ' ', 'Built of *stone*.'], frontmatter, origin: 'ripple:r-1' }, null);
+  const book = bookOf(library, bookId);
+  assert.equal(book.chapterOrder.at(-1), made.chId);
+  assert.equal(book.chapterTitles[made.chId], 'Quay');
+  assert.equal(book.chapterKinds[made.chId], 'unnumbered');
+  assert.equal(noIds(readFileSync(path.join(library, bookId, 'chapters', `${made.chId}.html`), 'utf8')), '<p>The quay &amp; the [[Harbour]].</p><p>Built of <i>stone</i>.</p>');
+  const sidecar = json(path.join(library, '.neo', bookId, 'pages', `${made.chId}.json`));
+  assert.ok(validateHoardPageV1(sidecar));
+  assert.deepEqual([sidecar.source.path, sidecar.source.name, sidecar.frontmatter], ['ripple:r-1', 'Quay', frontmatter]);
+  assert.deepEqual(made.files, [`${bookId}/chapters/${made.chId}.html`, `.neo/${bookId}/pages/${made.chId}.json`, `${bookId}/book.json`]);
+  assert.throws(() => wiki.mint({ title: 'Quay', paragraphs: ['y'], frontmatter, origin: 'ripple:r-2' }, null), /already in the wiki/);
+});

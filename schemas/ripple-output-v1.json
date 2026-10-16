@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "One line of the judge's answer to a ripple packet, version 1, written to .neo/ripple/inbox/<job>.jsonl. The first line is the preflight; each line after it is a proposal. Targets are wiki page titles as the packet gives them.",
+  "oneOf": [
+    { "$ref": "#/definitions/preflight" },
+    { "$ref": "#/definitions/nothing" },
+    { "$ref": "#/definitions/claim" },
+    { "$ref": "#/definitions/topic" },
+    { "$ref": "#/definitions/mint" }
+  ],
+  "definitions": {
+    "reason": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "quote": { "description": "The source's own words, at least 12 characters. [brackets] mark the judge's insertions and ... a gap.", "type": "string", "minLength": 12, "maxLength": 4000 },
+    "target": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "preflight": {
+      "title": "RipplePreflight",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "brief_sha256", "echo"],
+      "properties": {
+        "kind": { "const": "preflight" },
+        "brief_sha256": { "description": "The sha256 of the brief as read.", "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "echo": { "description": "At least 40 characters copied from the brief, which the packet does not hold.", "type": "string", "minLength": 40, "maxLength": 2000 }
+      }
+    },
+    "nothing": {
+      "title": "RippleNothing",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "target", "reason"],
+      "properties": { "kind": { "const": "nothing" }, "target": { "$ref": "#/definitions/target" }, "reason": { "$ref": "#/definitions/reason" } }
+    },
+    "claim": {
+      "title": "RippleClaim",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "target", "anchor", "text", "reason", "quote"],
+      "properties": {
+        "kind": { "const": "claim" },
+        "target": { "$ref": "#/definitions/target" },
+        "anchor": { "description": "Words on the target page now, inside one paragraph, that the claim rewrites.", "type": "string", "minLength": 1, "maxLength": 20000, "pattern": "^[^\\n]*$" },
+        "text": { "description": "What the anchor's words become.", "type": "string", "maxLength": 20000, "pattern": "^[^\\n]*$" },
+        "reason": { "$ref": "#/definitions/reason" },
+        "quote": { "$ref": "#/definitions/quote" }
+      }
+    },
+    "topic": {
+      "title": "RippleTopic",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "target", "line", "reason", "quote"],
+      "properties": {
+        "kind": { "const": "topic" },
+        "target": { "$ref": "#/definitions/target" },
+        "line": { "description": "A line for the target page, usually a link to the source with a few words on why.", "type": "string", "minLength": 1, "maxLength": 2000, "pattern": "^[^\\n]*$" },
+        "reason": { "$ref": "#/definitions/reason" },
+        "quote": { "$ref": "#/definitions/quote" }
+      }
+    },
+    "mint": {
+      "title": "RippleMint",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "title", "text", "reason", "quote"],
+      "properties": {
+        "kind": { "const": "mint" },
+        "title": { "description": "The new page's title, which no page or alias holds.", "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\n/\\\\\\[\\]|#^]*$" },
+        "text": { "description": "The new page's first passage; blank lines part its paragraphs.", "type": "string", "minLength": 1, "maxLength": 20000 },
+        "reason": { "$ref": "#/definitions/reason" },
+        "quote": { "$ref": "#/definitions/quote" }
+      }
+    }
+  }
+}

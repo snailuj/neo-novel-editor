@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Run Ripple, version 1: find new jobs, write their packets and read the judge's answers. openBookId is the window's open book, since nothing is written into the wiki's files while it is open. tell asks the main half to say what the run did in a message box, for a run from the Plugins menu with no book open to show it beside.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["openBookId"],
+  "properties": {
+    "openBookId": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
+    "tell": { "type": "boolean" }
+  }
+}

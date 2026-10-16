@@ -108,6 +108,23 @@ export function buildCorpus(notes: Iterable<readonly [string, string]>, zones: r
   return { docs, byRel, index, edges };
 }
 
+/** A page that is not a Markdown file, as a wiki page is: its relpath's stem is its name. */
+export interface PageDoc {
+  relpath: string;
+  aliases: readonly string[];
+  body: string;
+}
+
+/** A corpus of such pages, every one ranked: their aliases go in as frontmatter would hold them. */
+export function corpusOf(pages: Iterable<PageDoc>): Corpus {
+  const notes: [string, string][] = [];
+  for (const p of pages) {
+    const front = p.aliases.length ? `---\naliases: ${JSON.stringify(p.aliases)}\n---\n` : '';
+    notes.push([p.relpath, front + p.body]);
+  }
+  return buildCorpus(notes, ['']);
+}
+
 /** The source's prose with code blanked, so a name in a code span or fence is no mention. */
 function prose(text: string): string {
   let inFence = false;
@@ -283,6 +300,33 @@ export function blend(roster: Ranked[], fill: Ranked[], k: number): Ranked[] {
     if (out.length >= Math.max(k, direct.length) || seen.has(r.relpath)) continue;
     seen.add(r.relpath);
     out.push({ ...r, passage: r.passage ?? passages.get(r.relpath) });
+  }
+  return out;
+}
+
+/**
+ * Ripple's shortlist: the roster's first k, then each fill's first n pages not already
+ * held, in the order given. A page keeps the first passage any list found for it.
+ */
+export function withExtras(roster: Ranked[], k: number, fills: readonly { ranked: Ranked[]; n: number }[]): Ranked[] {
+  const out = roster.slice(0, k).map((r) => ({ ...r }));
+  const held = new Set(out.map((r) => r.relpath));
+  for (const { ranked, n } of fills) {
+    let added = 0;
+    for (const r of ranked) {
+      if (added >= n) break;
+      if (held.has(r.relpath)) continue;
+      held.add(r.relpath);
+      out.push({ ...r });
+      added++;
+    }
+  }
+  for (const r of out) {
+    if (r.passage) continue;
+    for (const { ranked } of fills) {
+      const found = ranked.find((f) => f.relpath === r.relpath && f.passage);
+      if (found) { r.passage = found.passage; break; }
+    }
   }
   return out;
 }

@@ -15,7 +15,9 @@
     { "id": "edit-directly", "title": "Suggest or Edit Directly" },
     { "id": "search-library", "title": "Search Library…" },
     { "id": "stop-flagging", "title": "Stop Flagging This Page" },
-    { "id": "flag-again", "title": "Flag This Page Again" }
+    { "id": "flag-again", "title": "Flag This Page Again" },
+    { "id": "run-ripple", "title": "Run Ripple" },
+    { "id": "ripple-chapter", "title": "Ripple This Chapter" }
   ],
   "style": "style.css"
 }

@@ -171,3 +171,23 @@ body[data-hoard-wiki] .chapter-body p { text-indent: 0; text-align: start; hyphe
 .hoard-search-words { display: block; overflow-wrap: anywhere; }
 .hoard-search-words mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; }
 ::highlight(hoard-wiki-found) { background-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+
+/* Ripple beside the book: two buttons, what waits for the judge, and a card per proposal
+   whose buttons show on hover or focus, as a comment's do. A change shows the old words
+   struck and the new underlined, so it reads without colour. */
+.hoard-ripple { margin-inline: 12px; }
+.hoard-ripple-head { display: flex; flex-wrap: wrap; gap: 6px; margin-block-end: 8px; }
+.hoard-ripple-head button { min-block-size: 32px; font: inherit; font-size: 12px; }
+.hoard-ripple-group { margin-block: 12px 4px; font-size: 12px; font-weight: 600; }
+.hoard-ripple-jobs { margin: 0; padding-inline-start: 1.2em; font-size: 12px; }
+.hoard-ripple-problem { display: block; margin: 2px 0 0; }
+.hoard-ripple-card { cursor: default; }
+.hoard-ripple-card[data-status="deferred"] { opacity: 0.75; border-inline-start-style: dashed; }
+.hoard-ripple-change { margin-block: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.hoard-ripple-change del { text-decoration: line-through; color: var(--muted); }
+.hoard-ripple-change ins { text-decoration: underline solid var(--accent); }
+.hoard-ripple-quote { margin: 6px 0 0; padding-inline-start: 8px; border-inline-start: 2px solid var(--muted); font-size: 11px; color: var(--muted); }
+.hoard-ripple .s-actions button { min-block-size: 44px; min-inline-size: 44px; }
+.hoard-ripple-card .s-actions { opacity: 0; }
+.hoard-ripple-card:hover .s-actions, .hoard-ripple-card:focus-within .s-actions { opacity: 1; }
+.hoard-ripple button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

@@ -13,12 +13,14 @@
 // (wiki/window.ts) imports pages, opens the wiki book and follows links into it, which
 // needs API 4's open. Search (search/window.ts) looks through every book and the wiki
 // from a Search section beside the book. The librarian reads each chapter the writer
-// leaves and comments on the wiki pages its new words name (companion/window.ts).
+// leaves and comments on the wiki pages its new words name (companion/window.ts). Ripple
+// (ripple/window.ts) lists what waits for its judge and the judge's proposals to rule on.
 import { startCompanion } from './companion/window.ts';
 import { startLibrarian } from './git/librarian.ts';
 import { startPaneMarks } from './marks/pane-marks.ts';
 import { startMarks } from './marks/window.ts';
 import { startReview } from './review/window.ts';
+import { startRipple } from './ripple/window.ts';
 import { startSearch } from './search/window.ts';
 import { startWiki } from './wiki/window.ts';
 
@@ -61,6 +63,7 @@ NeoPlugins.register({
       show: (chId, at) => wiki.pane.open(chId, at ?? undefined),
     });
     const companion = startCompanion(neo, { marks, wiki: () => wiki.pages() });
-    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, librarian, review, paneMarks, search, companion }) });
+    const ripple = startRipple(neo, { wikiId: () => wiki.pages()?.bookId ?? null, show: async (chId) => { await wiki.reindex(); await wiki.pane.open(chId); } });
+    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, librarian, review, paneMarks, search, companion, ripple }) });
   },
 });

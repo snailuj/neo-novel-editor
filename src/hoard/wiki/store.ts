@@ -33,7 +33,8 @@ import { anchorAt, anchorPoint } from '../marks/anchor.ts';
 import { newMark } from '../marks/model.ts';
 import type { MarkStore } from '../marks/store.ts';
 import { ownerOf } from '../review/owner.ts';
-import { convertPage, pageHtml, type ConvertedPage } from './convert.ts';
+import { convertPage, pageHtml, type Block, type ConvertedPage } from './convert.ts';
+import { inline } from './inline.ts';
 
 type Level = 'error' | 'warn' | 'info' | 'debug';
 
@@ -300,6 +301,48 @@ export class WikiStore {
     this.#o.wrote?.('.neo');
     await this.#o.commit?.('librarian');
     return applied;
+  }
+
+  /**
+   * A page the librarian makes, as ripple's mint does: each paragraph a plain block, the
+   * page after the wiki's last, and a page sidecar whose source names what made it
+   * (`origin`, such as a ripple proposal). Writes the chapter and the sidecar, then
+   * book.json, so a crash between leaves a file NEO never lists. Refuses while the wiki is
+   * the open book, before the first import, and for a title a page or alias holds.
+   * Returns the new chapter and every file it wrote, relative to the library.
+   */
+  mint(page: { title: string; paragraphs: readonly string[]; frontmatter: Record<string, unknown>; origin: string }, openBookId: string | null): { bookId: string; chId: string; files: string[] } {
+    const bookId = this.wikiId();
+    if (!bookId) throw new Error('There is no wiki yet: import pages first.');
+    if (bookId === openBookId) throw new Error('The wiki is open. Go back to the shelf or to another book first.');
+    const title = page.title.trim();
+    if (!title) throw new RangeError('a new page needs a title');
+    if (this.#known().names.has(key(title))) throw new RangeError(`a page called ${title} is already in the wiki`);
+    const blocks: Block[] = page.paragraphs.map((p) => p.trim()).filter(Boolean).map((p) => {
+      const { text, html } = inline(p);
+      return { kind: 'p', id: this.#id('b'), owner: 'librarian', text, inner: html, data: [] };
+    });
+    const html = pageHtml(blocks);
+    const chId = this.#id('ch');
+    const at = this.#now();
+    const chapterRel = `${bookId}/chapters/${oneName(chId, 'chId')}.html`;
+    const sidecarRel = `.neo/${bookId}/pages/${chId}.json`;
+    writeWhole(path.join(this.#library, chapterRel), html);
+    const sidecar: HoardPageV1 = {
+      version: 1, source: { path: page.origin, name: title, sha256: sha256(html) }, frontmatter: page.frontmatter, imported: at,
+    };
+    if (!validateHoardPageV1(sidecar)) throw new TypeError(`wiki: refusing to write a page sidecar: ${JSON.stringify(validateHoardPageV1.errors)}`);
+    writeWhole(this.#pageFile(bookId, chId), `${JSON.stringify(sidecar, null, 2)}\n`);
+    const book = this.#readBook(bookId);
+    book.chapterOrder = [...book.chapterOrder, chId];
+    book.chapterTitles = { ...book.chapterTitles, [chId]: title };
+    book.chapterKinds = { ...book.chapterKinds, [chId]: 'unnumbered' };
+    book['modified'] = at;
+    writeJson(this.#bookFile(bookId), book);
+    this.#o.log('info', 'wiki.mint', { bookId, chId, origin: page.origin });
+    this.#o.wrote?.(bookId);
+    this.#o.wrote?.('.neo');
+    return { bookId, chId, files: [chapterRel, sidecarRel, `${bookId}/book.json`] };
   }
 
   // The wiki book, made as NEO's own book:create makes a book, and named in wiki.json.
