@@ -1,7 +1,7 @@
 {
   "name": "neo",
   "productName": "NEO",
-  "version": "1.5.5",
+  "version": "1.5.7",
   "description": "A word processor for authors. Distraction-free by default.",
   "homepage": "https://github.com/hughhowey/neo",
   "main": "main.js",
@@ -23,6 +23,7 @@
     "test:plugin-edits": "electron scripts/plugin-edits.e2e.js",
     "test:manuscript": "electron scripts/manuscript.e2e.js",
     "test:pages": "electron scripts/pages.e2e.js",
+    "test:simple": "electron scripts/simple.e2e.js",
     "test": "node --test \"scripts/*.test.js\"",
     "test:unit": "node --test \"tests/unit/**/*.test.ts\"",
     "test:e2e": "npm run build && playwright test",
