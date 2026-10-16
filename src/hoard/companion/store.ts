@@ -20,7 +20,7 @@ import { oneName, writeWhole } from '../files.ts';
 import { paragraphTexts } from '../html.ts';
 import { anchorAt } from '../marks/anchor.ts';
 import { newMark } from '../marks/model.ts';
-import type { MarkStore } from '../marks/store.ts';
+import { MarkFileError, type MarkStore, sidecarPath } from '../marks/store.ts';
 import type { WikiPages } from '../wiki/store.ts';
 import { newParagraphs } from './delta.ts';
 import { findingWords, reported } from './finding.ts';
@@ -39,7 +39,14 @@ export interface CompanionOptions {
   log: (level: Level, message: string, data?: unknown) => void;
 }
 
-export interface ReadRequest { bookId: string; chId: string; before: string; after: string }
+export interface ReadRequest {
+  bookId: string;
+  chId: string;
+  before: string;
+  after: string;
+  /** Where the caret is, when the writer is still in the chapter: a name it is in or just after is left alone. */
+  caret?: { pIdx: number; off: number } | null;
+}
 
 export class CompanionFileError extends Error {
   constructor(file: string, why: string) {
@@ -47,6 +54,15 @@ export class CompanionFileError extends Error {
     this.name = 'CompanionFileError';
   }
 }
+
+const stampOf = (file: string): string => {
+  try {
+    const s = statSync(file);
+    return `${s.mtimeMs}:${s.size}`;
+  } catch {
+    return '';
+  }
+};
 
 const randomId = () => `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -59,6 +75,9 @@ export class Companion {
   // each page sidecar's frontmatter, read again only when its stamp changes
   readonly #meta = new Map<string, { stamp: string; aliases: string[]; pantsing: boolean }>();
   readonly #skipped = new Set<string>();
+  // a chapter's marks file that did not read, by its stamp then, so it is not read (and
+  // logged) again at every save until it changes
+  readonly #broken = new Map<string, string>();
 
   constructor(options: CompanionOptions) {
     this.#o = options;
@@ -82,7 +101,7 @@ export class Companion {
     return next;
   }
 
-  async #read({ bookId, chId, before, after }: ReadRequest): Promise<{ added: number }> {
+  async #read({ bookId, chId, before, after, caret }: ReadRequest): Promise<{ added: number }> {
     const started = Date.now();
     const wiki = this.#o.wiki();
     if (!wiki || bookId === wiki.bookId) return { added: 0 };
@@ -95,14 +114,21 @@ export class Companion {
       if (this.#skipped.has(title)) return;
       this.#skipped.add(title);
       this.#o.log('warn', `companion: the page "${title}" starts or ends with a hyphen or space, so it cannot be found by name`);
-    });
+    }).filter((m) => !caret || m.pIdx !== caret.pIdx || caret.off < m.off || caret.off > m.off + m.len);
     if (found.length === 0) return { added: 0 };
-    const listed = await this.#o.marks.list(bookId);
-    if (listed.unreadable.includes(chId)) {
-      this.#o.log('warn', 'companion: the chapter\'s marks file does not read, so no finding is added', { bookId, chId });
+    const sidecar = sidecarPath(this.#o.library(), bookId, chId);
+    if (this.#broken.has(sidecar) && this.#broken.get(sidecar) === stampOf(sidecar)) return { added: 0 };
+    let existing: Mark[];
+    try {
+      existing = await this.#o.marks.chapter(bookId, chId);
+      this.#broken.delete(sidecar);
+    } catch (err) {
+      if (!(err instanceof MarkFileError)) throw err;
+      this.#broken.set(sidecar, stampOf(sidecar));
+      this.#o.log('warn', 'companion: the chapter\'s marks file does not read, so no finding is added until it changes', { bookId, chId });
       return { added: 0 };
     }
-    const told = reported(listed.chapters[chId] ?? [], pages);
+    const told = reported(existing, pages);
     const commit = this.#o.head ? await this.#o.head() : null;
     const at = (this.#o.now?.() ?? new Date()).toISOString();
     const made: Mark[] = found.filter((m) => !told.has(m.page.id)).map((m) => newMark({
