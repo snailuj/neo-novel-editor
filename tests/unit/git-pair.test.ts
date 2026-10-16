@@ -57,11 +57,16 @@ const filesOf = async (git: Git, library: string, rev: string) => {
   return stdout.split('\n').filter(Boolean).sort();
 };
 
-async function tracked(t: { after(fn: () => void): void }, clock?: Clock) {
+// git as slow as it is on Windows, where each call starts a process at some cost
+const slowed = (git: Git, ms: number): Git => ({
+  run: (cwd, args, o) => new Promise((resolve) => setTimeout(resolve, ms)).then(() => git.run(cwd, args, o)),
+});
+
+async function tracked(t: { after(fn: () => void): void }, clock?: Clock, slowMs = 0) {
   isolateGitConfig(t, { name: 'Ada', email: 'ada@example.com' });
   const lib = tempLibrary(t);
   await lib.git.run(lib.library, ['init', '-q']);
-  const { layer, lines } = pairLayer(t, lib.git, lib.library, clock);
+  const { layer, lines } = pairLayer(t, slowMs ? slowed(lib.git, slowMs) : lib.git, lib.library, clock);
   await layer.open();
   await layer.drained();
   return { ...lib, layer, lines };
@@ -165,8 +170,8 @@ test('in a library with no history the edit runs alone, with no commits', async 
 // Rule: the pair's commits wait on the disk. The author's commit holds the writer's
 // last typing even when its save lands after the edit was asked for, and the
 // librarian's holds the edit even when its save lands after the window says it is done.
-async function pairsFor(t: { after(fn: () => void): void }, options: { settleMs?: number; abandonMs?: number } = {}) {
-  const lib = await tracked(t);
+async function pairsFor(t: { after(fn: () => void): void }, options: { settleMs?: number; abandonMs?: number; slowMs?: number } = {}) {
+  const lib = await tracked(t, undefined, options.slowMs);
   const pairs = new LibrarianPairs({
     layer: lib.layer, library: () => lib.library, log: () => {}, settleMs: 2_000, ...options,
   });
@@ -182,12 +187,13 @@ async function pairsFor(t: { after(fn: () => void): void }, options: { settleMs?
 const ask = (html: string) => ({ bookId: 'book-fox-1', chId: 'c1', html });
 
 test('a save landing after the edit is asked for still goes in the author\'s commit', async (t) => {
-  const { library, git, pairs, save } = await pairsFor(t);
+  // a time limit far longer than any git call, so only a wake can end the wait in time
+  const { library, git, pairs, save } = await pairsFor(t, { slowMs: 300, settleMs: 30_000 });
   const typed = '<p>One.</p><p>Two, typed.</p>';
   const asked = performance.now();
   const [begun] = await Promise.all([pairs.begin(ask(typed)), save(typed, 150)]);
   assert.ok('pair' in begun && begun.pair);
-  assert.ok(performance.now() - asked < 1_500, 'the landed write ends the wait, not the time limit');
+  assert.ok(performance.now() - asked < 15_000, 'the landed write ends the wait, not the time limit');
   const edited = '<p>One.</p><p>Two, amended.</p>';
   const [ended] = await Promise.all([pairs.end({ pair: begun.pair, html: edited }), save(edited, 150)]);
   assert.deepEqual((await history(git, library)).slice(0, 2), ['Librarian|librarian-after', 'Ada|librarian-before']);
@@ -207,7 +213,7 @@ test('a chapter whose save never lands refuses the edit, and makes no commit', a
 });
 
 test('an edit the window never ends is committed as the librarian\'s after a while', async (t) => {
-  const { library, git, layer, pairs, write } = await pairsFor(t, { abandonMs: 200 });
+  const { library, git, layer, pairs, write } = await pairsFor(t, { abandonMs: 200, slowMs: 300 });
   const begun = await pairs.begin(ask('<p>One.</p><p>Two.</p>'));
   assert.ok('pair' in begun && begun.pair);
   write(C1, '<p>Edited, then the window went away.</p>');

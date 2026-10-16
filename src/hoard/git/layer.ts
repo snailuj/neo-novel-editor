@@ -195,8 +195,13 @@ export class GitLayer {
     if (done === 'late') this.#o.log('warn', 'git.close: the last commit was still running; it is made at the next start');
   }
 
-  drained(): Promise<void> {
-    return this.#checkpoints.drained();
+  /** Resolves once no commit is running or queued, a librarian pair's included. */
+  async drained(): Promise<void> {
+    for (let pairs = this.#pairs; ; pairs = this.#pairs) {
+      await pairs;
+      await this.#checkpoints.drained();
+      if (pairs === this.#pairs) return;
+    }
   }
 
   stop(): void {
