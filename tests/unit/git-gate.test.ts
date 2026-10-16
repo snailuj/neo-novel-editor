@@ -2,7 +2,7 @@
 // Sidecar-Fits-Its-Schema: a sidecar of a known kind that will not parse or breaks its
 //   schema is a finding naming the file; a .neo file of no known kind is left alone.
 // Frontmatter-Fits-The-Scheme: a page sidecar's frontmatter is judged by lint's FM and
-//   PR rules against the library's scheme, or the neutral one without it.
+//   PR rules against the library's own scheme, and not at all when the library has none.
 // Block-Ids-Citable: every data-block id in a chapter is one a citation ([[Page#^id]])
 //   can name. A repeated id is allowed: the first paragraph holding it owns it, as Enter
 //   copies the attribute (wiki/convert.ts).
@@ -61,7 +61,7 @@ test('Sidecar-Fits-Its-Schema: a .neo file of no known kind, and any file outsid
 });
 
 test('Frontmatter-Fits-The-Scheme: a page\'s frontmatter breaking the scheme gives lint\'s finding for it', () => {
-  const found = checkFiles([{ path: PAGE, text: page({ type: 'lore', colour: 'red' }) }], { schemeText: () => null });
+  const found = checkFiles([{ path: PAGE, text: page({ type: 'lore', colour: 'red' }) }], { schemeText: () => '{}' });
   assert.deepEqual(found.map((f) => f.message), [
     "FM3 unknown key 'colour'",
     "FM10 'setting' required on lore (or the page is a 'subject')",
@@ -70,27 +70,33 @@ test('Frontmatter-Fits-The-Scheme: a page\'s frontmatter breaking the scheme giv
 });
 
 test('Frontmatter-Fits-The-Scheme: a page with no frontmatter is lint\'s FM1', () => {
-  const found = checkFiles([{ path: PAGE, text: page(null) }], { schemeText: () => null });
+  const found = checkFiles([{ path: PAGE, text: page(null) }], { schemeText: () => '{}' });
   assert.deepEqual(found.map((f) => f.message), ['FM1 missing frontmatter']);
 });
 
 test('Frontmatter-Fits-The-Scheme: lint\'s body and path rules stay out, so a generator is no finding', () => {
   const fm = { type: 'subject', provenance: { generator: 'librarian', method: 'converted' } };
-  assert.deepEqual(rules([{ path: PAGE, text: page(fm) }]), []);
+  assert.deepEqual(rules([{ path: PAGE, text: page(fm) }], '{}'), []);
 });
 
 test('Frontmatter-Fits-The-Scheme: the library\'s scheme decides what passes', () => {
   const files: StagedFile[] = [{ path: PAGE, text: page({ type: 'creature' }) }];
-  assert.deepEqual(rules(files), [`${PAGE}|Frontmatter-Fits-The-Scheme`]);
+  assert.deepEqual(rules(files, '{}'), [`${PAGE}|Frontmatter-Fits-The-Scheme`]);
   assert.deepEqual(rules(files, '{"types":["creature"]}'), []);
 });
 
-test('Frontmatter-Fits-The-Scheme: a scheme file that will not load is a finding, and the neutral scheme judges', () => {
+test('Frontmatter-Fits-The-Scheme: a library with no scheme has no frontmatter judged', () => {
+  const files: StagedFile[] = [
+    { path: PAGE, text: page(null) },
+    { path: '.neo/book-wiki-1/pages/ch-2.json', text: page({ type: 'lore', colour: 'red' }) },
+  ];
+  assert.equal(rules(files, '{}').length, 3, 'with a scheme the same pages have FM1, FM3 and FM10');
+  assert.deepEqual(rules(files), []);
+});
+
+test('Frontmatter-Fits-The-Scheme: a scheme file that will not load is a finding, and no frontmatter is judged', () => {
   const files: StagedFile[] = [{ path: PAGE, text: page({ type: 'creature' }) }];
-  assert.deepEqual(rules(files, '{"types":'), [
-    '.neo/scheme.json|Sidecar-Fits-Its-Schema',
-    `${PAGE}|Frontmatter-Fits-The-Scheme`,
-  ]);
+  assert.deepEqual(rules(files, '{"types":'), ['.neo/scheme.json|Sidecar-Fits-Its-Schema']);
 });
 
 test('Frontmatter-Fits-The-Scheme: the scheme is read only when a page is staged', () => {
