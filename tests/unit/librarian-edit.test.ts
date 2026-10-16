@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { librarianEdits } from '../../src/hoard/git/librarian.ts';
 import { Holds } from '../../src/hoard/holds.ts';
 
-function fakeNeo(options: { begin?: (payload: unknown) => unknown } = {}) {
+function fakeNeo(options: { begin?: (payload: unknown) => unknown; end?: (payload: unknown) => unknown } = {}) {
   const events: string[] = [];
   let html = '<p>One.</p>';
   const neo = {
@@ -16,7 +16,7 @@ function fakeNeo(options: { begin?: (payload: unknown) => unknown } = {}) {
     async invoke(channel: string, payload?: unknown) {
       events.push(`${channel} ${JSON.stringify(payload)}`);
       if (channel === 'git.librarian-begin') return options.begin ? options.begin(payload) : { pair: 'p1' };
-      if (channel === 'git.librarian-end') return { before: 'b', after: 'a' };
+      if (channel === 'git.librarian-end') return options.end ? options.end(payload) : { before: 'b', after: 'a' };
       throw new Error(`no channel ${channel}`);
     },
     async replace(place: { chId: string }, _expected: string, newText: string) {
@@ -69,6 +69,14 @@ test('an edit that fails still ends the pair with the chapter as it stands, then
     throw new Error('broke');
   }), /broke/);
   assert.deepEqual(events.slice(-2), ['git.librarian-end {"pair":"p1","html":"<p>Half.</p>"}', 'hold ']);
+});
+
+test('an edit the gate refuses says why, and the chapter is let go', async () => {
+  const findings = [{ path: 'book-fox-1/chapters/c1.html', rule: 'Block-Ids-Citable', message: "block id 'b 1' cannot be cited" }];
+  const { edits, events, edit } = fakeNeo({ end: () => ({ refused: findings }) });
+  const done = await edits.edit('c1', async () => { edit('<p data-block="b 1">Amended.</p>'); });
+  assert.deepEqual(done, { ok: false, reason: 'refused', findings });
+  assert.equal(events.at(-1), 'hold ');
 });
 
 test('a chapter not in the open book is not held and makes no pair', async () => {
