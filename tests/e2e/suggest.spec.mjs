@@ -149,6 +149,15 @@ test('the librarian\'s page takes suggestions, which the librarian accepts or fl
     await expect.poll(() => readMarks(library, bookId).at(-1)?.state).toBe('rejected');
     expect(readMarks(library, bookId).at(-1).proposed).toBe('[[Vell]]');
 
+    // Esc in the composer drops the suggestion, and NEO takes the writer back to the
+    // page: the book stays open
+    await select(page, 'Vell');
+    await page.keyboard.press('x');
+    await expect(page.locator('.hoard-suggest-composer')).toBeVisible();
+    await page.locator('#hoard-suggest-text').press('Escape');
+    await expect(page.locator('.hoard-suggest-composer')).toBeHidden();
+    await expect(page.locator('#editor-view')).toBeVisible();
+
     // Edit Directly lets typing through until the book closes
     await page.locator('.chapter-body p').nth(1).click();
     await page.evaluate(() => document.querySelector('.hoard-direct').click());
@@ -186,7 +195,7 @@ test('a comment made in the Wiki pane is drawn there and is the wiki book\'s own
     const line = page.locator('.hoard-wiki-page p').nth(0);
     await expect(line).toHaveText('The harbour of Vell faces west.');
 
-    await page.evaluate(() => {
+    const selectWest = () => page.evaluate(() => {
       const p = document.querySelector('.hoard-wiki-page p');
       const node = p.firstChild;
       const at = node.textContent.indexOf('west');
@@ -197,6 +206,14 @@ test('a comment made in the Wiki pane is drawn there and is the wiki book\'s own
       getSelection().addRange(range);
     });
     await paneSettled(page);
+    // Esc in the composer stops composing, and the book stays open
+    await selectWest();
+    await page.locator('.hoard-pane-add').click({ force: true });
+    await page.locator('#hoard-pane-compose-text').press('Escape');
+    await expect(page.locator('#hoard-pane-compose-text')).toBeHidden();
+    await expect(page.locator('#editor-view')).toBeVisible();
+
+    await selectWest();
     await watchCtrlEnter(page);
     await page.locator('.hoard-pane-add').click({ force: true });
     await page.locator('#hoard-pane-compose-text').fill('Why west?');
