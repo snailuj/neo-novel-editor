@@ -1,0 +1,149 @@
+// The review sheet: one CSV row per block, so the author can correct the classifier
+// before anything is imported. `proposed` is the classifier's label and stays as it was;
+// `label`, `include`, `dest` and `book` are the author's to edit. A re-run keeps every
+// row it already has (matched by page and block id) and only adds new blocks.
+import path from 'node:path';
+import type { Judged } from './judge.ts';
+import { type Label, MORNING_PAGES, ruleLabel } from './rules.ts';
+import type { Block } from './split.ts';
+
+export const COLUMNS = ['page', 'block', 'lines', 'heading', 'proposed', 'label', 'include', 'dest', 'book', 'pasted', 'by', 'reason', 'preview'] as const;
+export type Row = Record<(typeof COLUMNS)[number], string>;
+
+export interface Already {
+  /** The page's path with forward slashes, as written in the list. */
+  path: string;
+  section: string | null;
+  name: string | null;
+}
+
+/** An import list's lines: `path`, `path#Section` and either with ` -> Name`; `#` starts a comment. */
+export function parseAlready(text: string): Already[] {
+  const out: Already[] = [];
+  for (const raw of text.replace(/^﻿/, '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const arrow = line.indexOf(' -> ');
+    const target = (arrow >= 0 ? line.slice(0, arrow) : line).trim().replace(/\\/g, '/');
+    const name = arrow >= 0 ? line.slice(arrow + 4).trim() : null;
+    const hash = target.indexOf('.md#');
+    out.push(hash >= 0
+      ? { path: target.slice(0, hash + 3), section: target.slice(hash + 4), name }
+      : { path: target, section: null, name });
+  }
+  return out;
+}
+
+/** Whether a list path names this vault-relative page: equal, or ending in `/page`. */
+const samePage = (listed: string, page: string) => listed === page || listed.endsWith(`/${page}`);
+
+function alreadyFor(page: string, block: Block, list: readonly Already[]): Already | null {
+  for (const a of list) {
+    if (!samePage(a.path, page)) continue;
+    if (a.section === null || block.heading.includes(a.section)) return a;
+  }
+  return null;
+}
+
+const stemOf = (page: string) => path.posix.basename(page.replace(/\\/g, '/')).replace(/\.md$/i, '');
+const safe = (s: string) => s.replace(/[\\/:*?"<>|#^[\]]+/g, ' ').trim().replace(/\s+/g, '-').replace(/-{2,}/g, '-');
+const DATE = /\d{4}-\d{2}-\d{2}/;
+
+/** The default wiki page for a writing block: its page and innermost heading. */
+export function defaultDest(page: string, heading: string): string {
+  const inner = heading.split(' > ').pop() ?? '';
+  return `${[safe(stemOf(page)), safe(inner)].filter(Boolean).join('-')}-(snippets)`;
+}
+
+/** The default Morning Pages chapter: the page's date, else a heading's, else the page. */
+export function defaultBook(page: string, heading: string): string {
+  const stem = stemOf(page);
+  return DATE.exec(stem)?.[0] ?? heading.split(' > ').map((h) => DATE.exec(h)?.[0]).find(Boolean) ?? stem;
+}
+
+const preview = (text: string) => {
+  const flat = text.replace(/\s*\n\s*/g, ' ⏎ ').trim();
+  return flat.length > 300 ? `${flat.slice(0, 300)}…` : flat;
+};
+
+export function rowsFor(page: string, blocks: readonly Block[], judged: ReadonlyMap<string, Judged>, already: readonly Already[]): Row[] {
+  return blocks.map((b) => {
+    const heading = b.heading.join(' > ');
+    const ruled = ruleLabel(b);
+    const j = judged.get(b.id);
+    const label: Label = ruled?.label ?? j?.label ?? 'other';
+    const by = ruled ? 'rule' : j?.by ?? 'no-judge';
+    const pasted = !ruled && j?.pasted === true;
+    let reason = ruled?.reason ?? j?.reason ?? 'not judged';
+    let include = ruled ? 'no'
+      : by !== 'judge' ? 'check'
+      : label === 'morning-pages' || (label === 'writing' && !pasted) ? 'yes' : 'no';
+    const inMorningPages = b.heading.some((h) => MORNING_PAGES.test(h));
+    let dest = label === 'writing' ? defaultDest(page, heading) : '';
+    const book = label === 'morning-pages' || (label === 'writing' && inMorningPages) ? defaultBook(page, heading) : '';
+    const done = alreadyFor(page, b, already);
+    if (done && !ruled) {
+      include = 'no';
+      reason = `already imported as ${done.name ?? stemOf(done.path)}; ${reason}`;
+      if (label === 'writing') dest = done.name ?? stemOf(done.path);
+    }
+    return {
+      page, block: b.id, lines: `${b.start}-${b.end}`, heading,
+      proposed: label, label, include, dest, book,
+      pasted: pasted ? 'yes' : 'no', by, reason, preview: preview(b.text),
+    };
+  });
+}
+
+/** Fresh rows in order, each replaced by the old row for the same block when there is one. */
+export function mergeRows(old: readonly Row[], fresh: readonly Row[]): Row[] {
+  const byKey = new Map(old.map((r) => [`${r.page}\0${r.block}`, r]));
+  return fresh.map((r) => {
+    const kept = byKey.get(`${r.page}\0${r.block}`);
+    return kept ? { ...kept, lines: r.lines, heading: r.heading, preview: r.preview } : r;
+  });
+}
+
+const cell = (v: string) => (/[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+
+export function writeSheet(rows: readonly Row[]): string {
+  return `﻿${[COLUMNS.join(','), ...rows.map((r) => COLUMNS.map((c) => cell(r[c])).join(','))].join('\n')}\n`;
+}
+
+/** RFC 4180 rows; the header names the columns, so a sheet with them reordered reads too. */
+export function readSheet(text: string): Row[] {
+  const records: string[][] = [];
+  let rec: string[] = [];
+  let field = '';
+  let quoted = false;
+  const src = text.replace(/^﻿/, '');
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i]!;
+    if (quoted) {
+      if (ch === '"' && src[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else if (ch === '"') quoted = false;
+      // A cell's line breaks read as \n, whichever kind the editor saved.
+      else if (!(ch === '\r' && src[i + 1] === '\n')) field += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ',') {
+      rec.push(field);
+      field = '';
+    } else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && src[i + 1] === '\n') i++;
+      rec.push(field);
+      records.push(rec);
+      rec = [];
+      field = '';
+    } else field += ch;
+  }
+  if (field !== '' || rec.length) {
+    rec.push(field);
+    records.push(rec);
+  }
+  const [header, ...body] = records.filter((r) => r.some((f) => f !== ''));
+  if (!header) return [];
+  for (const c of COLUMNS) if (!header.includes(c)) throw new Error(`the sheet has no '${c}' column`);
+  return body.map((r) => Object.fromEntries(COLUMNS.map((c) => [c, r[header.indexOf(c)] ?? ''])) as Row);
+}
