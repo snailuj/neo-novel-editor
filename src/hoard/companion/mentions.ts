@@ -39,7 +39,10 @@ export interface Mention {
 
 export const MIN_NAME = 3;
 
-const WORD = String.raw`[\p{L}\p{N}\p{M}_]`;
+// A letter, digit, mark or underscore. The whole-word test is made by hand around each
+// match, not as a lookbehind in every pattern: V8 takes about a millisecond to ready a
+// pattern with Unicode classes in it, a second for a wiki of five hundred pages.
+const WORD = /[\p{L}\p{N}\p{M}_]/u;
 const SEPARATORS = /[-\s]+/u;
 const APOSTROPHES = /['‘’]/u;
 
@@ -54,6 +57,12 @@ function pattern(name: string): string | null {
   return name.split(SEPARATORS).filter(Boolean)
     .map((part) => [...dotless(part)].map((ch) => (APOSTROPHES.test(ch) ? "['‘’]" : escape(ch))).join(''))
     .join(String.raw`[-\s]+`);
+}
+
+/** Whether the letter just before (`dir` -1) or at (`dir` 1) offset `at` is part of a word. */
+function wordAt(text: string, at: number, dir: -1 | 1): boolean {
+  const ch = dir === 1 ? String.fromCodePoint(text.codePointAt(at) ?? 32) : [...text.slice(Math.max(0, at - 2), at)].pop() ?? ' ';
+  return WORD.test(ch);
 }
 
 /** The text with links and inline code blanked, every offset kept. */
@@ -76,9 +85,19 @@ function names(pages: readonly WikiPage[], skipped: (name: string) => void): { r
   for (const { name, page } of byKey.values()) {
     const p = pattern(name);
     if (p === null) skipped(name);
-    else out.push({ re: new RegExp(`(?<!${WORD})(?:${p})(?!${WORD})`, 'giu'), page });
+    else out.push({ re: new RegExp(p, 'giu'), page });
   }
   return out;
+}
+
+// The last pages' patterns, kept while the pages stay the same: a read at every save
+// would otherwise compile one pattern per page each time.
+let compiled: { sig: string; names: { re: RegExp; page: WikiPage }[] } | null = null;
+
+function namesFor(pages: readonly WikiPage[], skipped: (name: string) => void) {
+  const sig = JSON.stringify(pages.map((p) => [p.id, p.title, p.aliases, p.pantsing]));
+  if (compiled?.sig !== sig) compiled = { sig, names: names(pages, skipped) };
+  return compiled.names;
 }
 
 /** The pages named in the paragraphs `which` of a chapter, each at its first mention. */
@@ -88,15 +107,22 @@ export function mentionsIn(
   pages: readonly WikiPage[],
   skipped: (name: string) => void = () => {},
 ): Mention[] {
-  const patterns = names(pages, skipped);
+  const patterns = namesFor(pages, skipped);
   const hits: Mention[] = [];
   for (const pIdx of which) {
     const text = paragraphs[pIdx];
     if (!text) continue;
     const masked = prose(text);
     for (const { re, page } of patterns) {
-      for (const m of masked.matchAll(re)) {
-        hits.push({ page, pIdx, off: m.index, len: m[0].length, text: text.slice(m.index, m.index + m[0].length) });
+      re.lastIndex = 0;
+      for (let m = re.exec(masked); m; m = re.exec(masked)) {
+        const end = m.index + m[0].length;
+        if (wordAt(masked, m.index, -1) || wordAt(masked, end, 1)) {
+          // a match inside a word; one may still start within it
+          re.lastIndex = m.index + 1;
+          continue;
+        }
+        hits.push({ page, pIdx, off: m.index, len: m[0].length, text: text.slice(m.index, end) });
       }
     }
   }

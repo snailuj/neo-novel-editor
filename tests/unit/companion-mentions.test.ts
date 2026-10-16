@@ -85,3 +85,7 @@ test('of two pages with one name the first is kept, and a title beats another pa
   const two = [page('a', 'Harbour', ['Port']), page('b', 'harbour'), page('c', 'Port')];
   assert.deepEqual(found(['The harbour, the port.'], [0], two), [['a', 0, 4, 'harbour'], ['c', 0, 17, 'port']]);
 });
+
+test('a name that starts inside a word is passed over, and the same name just after it is still found', () => {
+  assert.deepEqual(found(['Ola la la.'], [0], [page('ll', 'La La')]), [['ll', 0, 4, 'la la']]);
+});

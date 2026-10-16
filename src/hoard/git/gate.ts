@@ -13,7 +13,7 @@ import {
 } from '../../generated/validators.cjs';
 import { checkNote } from '../../librarian/lint.ts';
 import { ManifestError, parseManifest } from '../../librarian/manifest.ts';
-import { DEFAULT_SCHEME, HOARD_LAYOUT, type Layout, type Scheme, schemeFrom } from '../../librarian/scheme.ts';
+import { HOARD_LAYOUT, type Layout, type Scheme, schemeFrom } from '../../librarian/scheme.ts';
 
 export type GateRule = 'Sidecar-Fits-Its-Schema' | 'Frontmatter-Fits-The-Scheme' | 'Block-Ids-Citable';
 
@@ -125,16 +125,18 @@ export function checkFiles(files: readonly StagedFile[], context: CheckContext):
   const sidecar = (path: string, message: string | null) => {
     if (message) findings.push({ path, rule: 'Sidecar-Fits-Its-Schema', message });
   };
-  let scheme: Scheme | null = null;
-  const schemeOnce = (): Scheme => {
-    if (scheme) return scheme;
-    scheme = DEFAULT_SCHEME;
+  // A library that names no scheme has made no promise about its frontmatter, so none is
+  // judged: the neutral scheme would flag every imported page's own vocabulary.
+  let scheme: Scheme | null | undefined;
+  const schemeOnce = (): Scheme | null => {
+    if (scheme !== undefined) return scheme;
+    scheme = null;
     const text = context.schemeText();
     if (text === null) return scheme;
     try {
       scheme = schemeFrom(JSON.parse(text), SCHEME_FILE);
     } catch (err) {
-      sidecar(SCHEME_FILE, `will not load, so the neutral scheme judges: ${(err as Error).message}`);
+      sidecar(SCHEME_FILE, `will not load, so no frontmatter is judged: ${(err as Error).message}`);
     }
     return scheme;
   };
@@ -162,8 +164,9 @@ export function checkFiles(files: readonly StagedFile[], context: CheckContext):
       const bad = checkSidecar(file, kind.validate);
       sidecar(file.path, bad);
       if (!bad && PAGE.test(file.path)) {
+        const judged = schemeOnce();
         const page = JSON.parse(file.text) as { frontmatter: unknown };
-        findings.push(...frontmatterFindings(file, page.frontmatter, schemeOnce()));
+        if (judged) findings.push(...frontmatterFindings(file, page.frontmatter, judged));
       }
     }
   }

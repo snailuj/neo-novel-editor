@@ -12,7 +12,8 @@
   text-decoration: underline solid var(--accent);
 }
 
-.hoard-marks-head { display: flex; align-items: center; gap: 8px; margin-inline: 12px; margin-block-end: 8px; }
+.hoard-marks-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-inline: 12px; margin-block-end: 8px; }
+.hoard-hidden-note { flex-basis: 100%; margin: 4px 0 0; font-size: 11px; color: var(--muted); }
 .hoard-blame { flex: 1; margin: 0; font-size: 11px; color: var(--muted); }
 .hoard-add {
   background: none; border: none; color: var(--muted); font-size: 11px;
