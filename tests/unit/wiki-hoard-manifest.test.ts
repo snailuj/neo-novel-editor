@@ -13,6 +13,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { HoardIndex, hoardRoot, vaultRoot } from '../../src/hoard/wiki/hoard-manifest.ts';
+import { readImportList } from '../../src/hoard/wiki/import-list.ts';
 import { tempDir } from './git-support.ts';
 
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -67,6 +68,14 @@ test('a page hoard recorded with the same bytes is held by hoard, with other byt
   assert.equal(index.verdict(path.join(hoard, 'lore', 'Kell.md'), sha('kell')), null, 'hoard\'s own page is never hoard\'s source');
   assert.equal(index.verdict(path.join(path.parse(vault).root, 'no-vault-here', 'x.md'), sha('kell')), 'through-hoard');
   assert.equal(index.verdict(path.join(path.parse(vault).root, 'no-vault-here', 'y.md'), sha('y')), null);
+});
+
+test('a page an import list names is matched with hoard\'s / paths, whatever the platform\'s separator', (t) => {
+  const { vault, hoard } = scene(t);
+  put(path.join(vault, '20_Atoms', 'Harbour.md'), 'harbour v1');
+  const list = readImportList(path.join(vault, 'move.txt'), '20_Atoms/Harbour.md\nWriting/Quay.md\n');
+  const index = HoardIndex.read([hoard], () => {});
+  assert.deepEqual(list.entries.map((e) => index.verdict(e.path, sha(e.path.endsWith('Harbour.md') ? 'harbour v1' : 'quay now'))), ['through-hoard', 'hoard-older']);
 });
 
 test('a hoard manifest that does not read is reported, and then nothing counts as hoard\'s', (t) => {

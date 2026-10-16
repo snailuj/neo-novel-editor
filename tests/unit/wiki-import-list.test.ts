@@ -12,6 +12,8 @@ import { test } from 'node:test';
 import { ListError, readImportList } from '../../src/hoard/wiki/import-list.ts';
 
 const dir = path.resolve('/vault');
+// The parser gives native paths ('lore\Harbour.md' on Windows); the tests compare in '/'.
+const rel = (p: string) => path.relative(dir, p).split(path.sep).join('/');
 
 test('each line of a text list names one page, read from the list\'s folder', () => {
   const list = readImportList(path.join(dir, 'move.txt'), [
@@ -36,7 +38,7 @@ test('a name after an arrow and a heading after .md are kept apart from the path
     'projects/tide-(project).md#Peoples and Places->tide-(era)',
     'lore/C# notes.md',
   ].join('\r\n'));
-  assert.deepEqual(list.entries.map(({ path: p, section, name }) => [path.relative(dir, p), section, name]), [
+  assert.deepEqual(list.entries.map(({ path: p, section, name }) => [rel(p), section, name]), [
     ['lore/Harbour.md', null, 'Harbour-(place)'],
     ['projects/tide-(project).md', 'Overview', 'tide-(era)'],
     ['projects/tide-(project).md', 'Peoples and Places', 'tide-(era)'],
@@ -54,7 +56,7 @@ test('a csv list takes the Move rows of its path column and says why it left the
     'inbox/Maybe.md,Hold,,,Ask.',
   ].join('\n');
   const list = readImportList(path.join(dir, 'keep-move.csv'), csv);
-  assert.deepEqual(list.entries.map((e) => [e.line, path.relative(dir, e.path)]), [[2, 'lore/Harbour.md'], [4, 'lore/The "Quay", North.md']]);
+  assert.deepEqual(list.entries.map((e) => [e.line, rel(e.path)]), [[2, 'lore/Harbour.md'], [4, 'lore/The "Quay", North.md']]);
   assert.deepEqual(list.left.map((l) => [l.line, l.why]), [
     [5, 'its verdict is Split: name its sections in a text list'],
     [6, 'its verdict is Hold'],
