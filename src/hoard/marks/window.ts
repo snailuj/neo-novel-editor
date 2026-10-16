@@ -14,6 +14,7 @@
 import type { Mark, MarkState } from '../../generated/hoard-marks-v1.js';
 import { alignBlame } from '../git/align.ts';
 import type { BlameLine } from '../git/blame.ts';
+import { claim, submitKey } from '../keys.ts';
 import { linksIn } from '../wiki/links.ts';
 import { anchorAt } from './anchor.ts';
 import { drawChapter, label, markAt, NAMES, orderForList, type Drawn, type Place } from './view.ts';
@@ -68,7 +69,6 @@ const when = (at: string | number) => new Date(at).toLocaleString(undefined, {
 });
 const who = (w: string) => (w === 'librarian' ? 'Librarian' : 'You');
 const clip = (text: string, n = 140) => (text.length > n ? `${text.slice(0, n - 1)}…` : text);
-const submitKey = (e: KeyboardEvent) => e.key === 'Enter' && (e.ctrlKey || e.metaKey);
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 // Show or Hide Comments: whether marks are drawn on the page, kept on this device, as
@@ -219,8 +219,7 @@ export function startMarks(neo: NeoApiV3, o: { follow?: (target: string) => void
     const send = () => sendReply(mark.id, reply);
     replyButton.addEventListener('click', send);
     reply.addEventListener('keydown', (e) => {
-      if (submitKey(e)) { e.preventDefault(); send(); }
-      if (e.key === 'Escape') { e.preventDefault(); reply.blur(); }
+      if (submitKey(e)) { claim(e); send(); }
     });
     stateButton.addEventListener('click', () => {
       const now = currentMark(mark.id);
@@ -486,9 +485,15 @@ export function startMarks(neo: NeoApiV3, o: { follow?: (target: string) => void
   composeAdd.addEventListener('click', () => { submitComment(); });
   composeCancel.addEventListener('click', () => stopComposing(true));
   composerText.addEventListener('keydown', (e) => {
-    if (submitKey(e)) { e.preventDefault(); submitComment(); }
-    if (e.key === 'Escape') { e.preventDefault(); stopComposing(true); }
+    if (submitKey(e)) { claim(e); submitComment(); }
   });
+  // NEO takes Esc in a pane on the document, before it reaches the box, and goes back
+  // to the page; in the composer it cancels the comment first, as its label says.
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || e.isComposing || e.target !== composerText) return;
+    claim(e);
+    stopComposing(true);
+  }, true);
   neo.addCommand('add-comment', addComment);
 
   // ---- events --------------------------------------------------------------------
