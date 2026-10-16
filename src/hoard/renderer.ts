@@ -12,7 +12,9 @@
 // the manuscript (marks/window.ts), which needs API 3's side sections. The wiki
 // (wiki/window.ts) imports pages, opens the wiki book and follows links into it, which
 // needs API 4's open. Search (search/window.ts) looks through every book and the wiki
-// from a Search section beside the book.
+// from a Search section beside the book. The librarian reads each chapter the writer
+// leaves and comments on the wiki pages its new words name (companion/window.ts).
+import { startCompanion } from './companion/window.ts';
 import { startLibrarian } from './git/librarian.ts';
 import { startPaneMarks } from './marks/pane-marks.ts';
 import { startMarks } from './marks/window.ts';
@@ -49,7 +51,7 @@ NeoPlugins.register({
 
     const blame = (bookId: string, chId: string) => neo.invoke('git.blame', { bookId, chId });
     const gitStatus = () => neo.invoke('git.status');
-    const marks = startMarks(neo);
+    const marks = startMarks(neo, { follow: (target) => { wiki.follow(target); } });
     const wiki = startWiki(neo);
     const librarian = startLibrarian(neo);
     const review = startReview(neo, marks, { pages: wiki.index, librarian });
@@ -58,6 +60,7 @@ NeoPlugins.register({
       bookId: () => wiki.pages()?.bookId ?? null,
       show: (chId, at) => wiki.pane.open(chId, at ?? undefined),
     });
-    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, librarian, review, paneMarks, search }) });
+    const companion = startCompanion(neo, { marks, wiki: () => wiki.pages() });
+    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, librarian, review, paneMarks, search, companion }) });
   },
 });

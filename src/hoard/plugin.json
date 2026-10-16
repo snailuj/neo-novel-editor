@@ -12,7 +12,9 @@
     { "id": "follow-link", "title": "Follow Link" },
     { "id": "suggest-change", "title": "Suggest Change" },
     { "id": "edit-directly", "title": "Suggest or Edit Directly" },
-    { "id": "search-library", "title": "Search Library…" }
+    { "id": "search-library", "title": "Search Library…" },
+    { "id": "stop-flagging", "title": "Stop Flagging This Page" },
+    { "id": "flag-again", "title": "Flag This Page Again" }
   ],
   "style": "style.css"
 }

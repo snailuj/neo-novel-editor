@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Stop Flagging This Page (quiet true) or Flag This Page Again (quiet false), version 1: page is the wiki page's chapter id.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["page", "quiet"],
+  "properties": {
+    "page": { "type": "string", "minLength": 1 },
+    "quiet": { "type": "boolean" }
+  }
+}
