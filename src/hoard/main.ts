@@ -17,6 +17,7 @@ import {
 import { startCompanion } from './companion/main.ts';
 import { textconvCommand } from './git/blame.ts';
 import { GitLayer, resolveSettings } from './git/layer.ts';
+import { startLibrarianPairs } from './git/librarian-main.ts';
 import { createGit } from './git/runner.ts';
 import { ATTRIBUTES } from './git/start.ts';
 import { MarkStore } from './marks/store.ts';
@@ -208,6 +209,7 @@ async function keepHistory(host: NeoMainHost, layer: GitLayer) {
 export function activate(host: NeoMainHost): void {
   host.handle('ping', ping);
   const layer = startHistory(host);
+  startLibrarianPairs(host, layer);
   const marks = startMarks(host, layer);
   const wiki = startWiki(host, layer, marks);
   startCompanion(host, layer, marks, wiki);
