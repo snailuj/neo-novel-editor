@@ -11,7 +11,8 @@
 // The writer's comments are drawn on the page and listed in a Comments section beside
 // the manuscript (marks/window.ts), which needs API 3's side sections. The wiki
 // (wiki/window.ts) imports pages, opens the wiki book and follows links into it, which
-// needs API 4's open. Search (search/window.ts) looks through every book and the wiki
+// needs API 4's open. Its pane edits the page shown in place (wiki/pane-edit.ts), with
+// API 5's wider pane while the writer types there. Search (search/window.ts) looks through every book and the wiki
 // from a Search section beside the book. The librarian reads each chapter the writer
 // leaves and comments on the wiki pages its new words name (companion/window.ts).
 import { startCompanion } from './companion/window.ts';
@@ -24,7 +25,7 @@ import { startWiki } from './wiki/window.ts';
 
 NeoPlugins.register({
   id: 'hoard',
-  apiVersion: 4,
+  apiVersion: 5,
   async activate(neo) {
     const ping = (payload: unknown) => neo.invoke('ping', payload);
     const sent = { n: 1 };
@@ -55,7 +56,7 @@ NeoPlugins.register({
     const wiki = startWiki(neo);
     const librarian = startLibrarian(neo);
     const review = startReview(neo, marks, { pages: wiki.index, librarian });
-    const paneMarks = startPaneMarks(neo, wiki.pane);
+    const paneMarks = startPaneMarks(neo, wiki.pane, { pages: wiki.index });
     const search = startSearch(neo, {
       bookId: () => wiki.pages()?.bookId ?? null,
       show: (chId, at) => wiki.pane.open(chId, at ?? undefined),
