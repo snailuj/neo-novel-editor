@@ -19,7 +19,7 @@ import { type LogRecord, getLogger, setLogSink } from './log.ts';
 import * as mf from './manifest.ts';
 import * as quotes from './quotes.ts';
 import * as relink from './relink.ts';
-import { DEFAULT_SCHEME, HOARD_LAYOUT, type Layout, type Scheme } from './scheme.ts';
+import { DEFAULT_SCHEME, HOARD_LAYOUT, type Layout, type Scheme, schemeFrom } from './scheme.ts';
 import { readText, readVault } from './vault-fs.ts';
 
 const log = getLogger('librarian.cli');
@@ -120,19 +120,7 @@ function parse(argv: readonly string[]): Args {
 
 /** A scheme file: JSON naming any of DEFAULT_SCHEME's keys, each the same shape. */
 function loadScheme(file: string): Scheme {
-  const raw: unknown = JSON.parse(readText(file));
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new Error(`${file}: a scheme is a JSON object`);
-  const scheme: Record<string, unknown> = { ...DEFAULT_SCHEME };
-  for (const [k, value] of Object.entries(raw)) {
-    const fallback = (DEFAULT_SCHEME as unknown as Record<string, unknown>)[k];
-    if (fallback === undefined) throw new Error(`${file}: unknown scheme key '${k}'`);
-    const ok = Array.isArray(fallback)
-      ? Array.isArray(value) && value.every((v) => typeof v === 'string')
-      : typeof value === 'string';
-    if (!ok) throw new Error(`${file}: scheme key '${k}' must be ${Array.isArray(fallback) ? 'a list of strings' : 'a string'}`);
-    scheme[k] = value;
-  }
-  return scheme as unknown as Scheme;
+  return schemeFrom(JSON.parse(readText(file)), file);
 }
 
 const sha256 = (data: string | Uint8Array) => createHash('sha256').update(data).digest('hex');

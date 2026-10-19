@@ -1,13 +1,34 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "description": "The writer resolves or reopens a comment or highlight, version 1. Accepting or rejecting a suggestion is not offered from the window yet.",
+  "description": "The writer changes a mark's state from the window, version 1: resolves or reopens a comment or highlight, or accepts or withdraws (rejected) a suggestion. Flagging is the librarian's (hoard-review-verdict-v1). The mark's life decides which changes are allowed.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["bookId", "chId", "markId", "state"],
+  "required": [
+    "bookId",
+    "chId",
+    "markId",
+    "state"
+  ],
   "properties": {
-    "bookId": { "type": "string", "minLength": 1 },
-    "chId": { "type": "string", "minLength": 1 },
-    "markId": { "type": "string", "minLength": 1 },
-    "state": { "enum": ["open", "resolved"] }
+    "bookId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "chId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "markId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "state": {
+      "enum": [
+        "open",
+        "resolved",
+        "accepted",
+        "rejected"
+      ]
+    }
   }
 }
