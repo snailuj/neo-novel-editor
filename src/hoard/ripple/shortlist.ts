@@ -194,7 +194,7 @@ export function rosterRank(corpus: Corpus, source: Source): Ranked[] {
  * A body cut at blank lines (a fence kept whole while it fits), each piece at most
  * `max` characters: longer ones are cut at a space where there is one.
  */
-export function chunks(body: string, max = 1200): string[] {
+export function chunks(body: string, max = 1200, merge = false): string[] {
   const paras: string[] = [];
   let current: string[] = [];
   let inFence = false;
@@ -219,8 +219,38 @@ export function chunks(body: string, max = 1200): string[] {
     }
     if (rest) out.push(rest);
   }
+  return merge ? merged(out, max) : out;
+}
+
+const SENTENCE_END = /[.!?\u2026]+["'\u201d\u2019)\]]*(?=\s|$)/g;
+
+/**
+ * Consecutive pieces joined until a chunk holds `sentences` sentences or `paragraphs`
+ * paragraphs, never past `max` characters. Fiction runs to one-line paragraphs, and a
+ * chunk of five words gives the model little to place. Sentences are counted by their
+ * ends, so a heading or fragment adds none and the paragraph limit stops the run.
+ */
+export function merged(pieces: readonly string[], max = 1200, sentences = 3, paragraphs = 3): string[] {
+  const count = (p: string): number => p.match(SENTENCE_END)?.length ?? 0;
+  const out: string[] = [];
+  let group: string[] = [];
+  let held = 0;
+  for (const p of pieces) {
+    const length = group.reduce((n, g) => n + g.length + 2, 0) + p.length;
+    if (group.length && (held >= sentences || group.length >= paragraphs || length > max)) {
+      out.push(group.join('\n\n'));
+      group = [];
+      held = 0;
+    }
+    group.push(p);
+    held += count(p);
+  }
+  if (group.length) out.push(group.join('\n\n'));
   return out;
 }
+
+/** How a corpus is cut for ranking: paragraphs, or short paragraphs merged. */
+export interface Chunking { merge?: boolean }
 
 const STOP = new Set(('the and for that with this from was were are but not his her she they them their '
   + 'had has have its into onto over then than when what which who whom will would there here been '
@@ -232,9 +262,9 @@ function terms(text: string): string[] {
 
 interface Chunked { relpath: string; name: string; text: string }
 
-function corpusChunks(corpus: Corpus, source: Source): Chunked[] {
+function corpusChunks(corpus: Corpus, source: Source, cut: Chunking = {}): Chunked[] {
   return corpus.docs.filter((d) => d.relpath !== source.relpath)
-    .flatMap((d) => chunks(d.body).map((text) => ({ relpath: d.relpath, name: d.name, text })));
+    .flatMap((d) => chunks(d.body, 1200, cut.merge).map((text) => ({ relpath: d.relpath, name: d.name, text })));
 }
 
 /** Best chunk per page, pages in score order, ties by path; zero scores dropped. */
@@ -248,8 +278,8 @@ function bestPerPage(scored: { relpath: string; text: string; score: number }[],
 }
 
 /** BM25 (k1 1.2, b 0.75) over paragraph chunks, the source's distinct words as the query. */
-export function lexicalRank(corpus: Corpus, source: Source): Ranked[] {
-  const units = corpusChunks(corpus, source).map((c) => ({ ...c, terms: terms(c.text) }));
+export function lexicalRank(corpus: Corpus, source: Source, cut: Chunking = {}): Ranked[] {
+  const units = corpusChunks(corpus, source, cut).map((c) => ({ ...c, terms: terms(c.text) }));
   const n = units.length;
   if (!n) return [];
   const avg = units.reduce((s, u) => s + u.terms.length, 0) / n;
@@ -280,9 +310,9 @@ function cosine(a: number[], b: number[]): number {
 }
 
 /** Each page scored by its chunk closest to any chunk of the source. */
-export async function embeddingRank(corpus: Corpus, source: Source, embed: Embed): Promise<Ranked[]> {
-  const units = corpusChunks(corpus, source);
-  const queries = chunks(prose(source.text));
+export async function embeddingRank(corpus: Corpus, source: Source, embed: Embed, cut: Chunking = {}): Promise<Ranked[]> {
+  const units = corpusChunks(corpus, source, cut);
+  const queries = chunks(prose(source.text), 1200, cut.merge);
   if (!units.length || !queries.length) return [];
   const qv = await embed(queries, 'query');
   const dv = await embed(units.map((u) => u.text), 'document', units.map((u) => u.name));

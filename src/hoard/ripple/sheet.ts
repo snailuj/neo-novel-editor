@@ -203,6 +203,22 @@ export function withFusion(key: Key, fill: number, rosterCut?: number, k = 60): 
 }
 
 /**
+ * This key's cases with another key's lists added under `prefix`, paired by source, so a
+ * run with another chunking or ranking scores page by page against the run it changes.
+ */
+export function mergeKeys(key: Key, other: Key, prefix: string): Key {
+  const theirs = new Map(other.cases.map((c) => [linkKey(c.source), c]));
+  return {
+    ...key,
+    cases: key.cases.map((c) => {
+      const match = theirs.get(linkKey(c.source));
+      if (!match) throw new Error(`the baseline key has no case for ${c.source}`);
+      return { ...c, lists: [...c.lists, ...match.lists.map((l) => ({ ...l, method: prefix + l.method }))] };
+    }),
+  };
+}
+
+/**
  * Exact two-sided McNemar test on the discordant pages: the chance of a split at least
  * this uneven if either list were as likely to catch a page the other missed.
  */

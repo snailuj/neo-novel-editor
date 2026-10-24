@@ -7,10 +7,10 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  blend, buildCorpus, card, chunks, embeddingRank, inRoster, lexicalRank, packetChars, rosterChars, rosterRank,
+  blend, buildCorpus, card, chunks, embeddingRank, merged, inRoster, lexicalRank, packetChars, rosterChars, rosterRank,
   type Embed, type Source,
 } from '../../src/hoard/ripple/shortlist.ts';
-import { buildSheet, pastTargets, pickSources, readSheet, renderScore, scoreSheet, withFusion, withUnions, rrf, mcnemar, type Key } from '../../src/hoard/ripple/sheet.ts';
+import { buildSheet, pastTargets, pickSources, readSheet, renderScore, scoreSheet, withFusion, withUnions, rrf, mcnemar, mergeKeys, type Key } from '../../src/hoard/ripple/sheet.ts';
 import { readSnapshot } from '../../src/hoard/ripple/snapshot.ts';
 import { isolateGitConfig, tempDir } from './git-support.ts';
 
@@ -83,6 +83,25 @@ test('chunks are paragraphs, none longer than the cap, and nothing is lost', () 
 });
 
 // Rule: a page sharing the source's rare words outranks one sharing none, whatever links say.
+// Rule: a merged chunk joins consecutive paragraphs until it holds three sentences or
+// three paragraphs, never passes the cap, and loses nothing.
+test('merged chunks gather short paragraphs to three sentences or three paragraphs, within the cap', () => {
+  assert.deepEqual(merged(['Rain.', 'She ran', 'It stopped. Then sun.', 'Next.']), ['Rain.\n\nShe ran\n\nIt stopped. Then sun.', 'Next.']);
+  assert.deepEqual(merged(['One. Two. Three.', 'Four.']), ['One. Two. Three.', 'Four.'], 'a paragraph of three sentences stands alone');
+  assert.deepEqual(merged(['A', 'B', 'C', 'D']), ['A\n\nB\n\nC', 'D'], 'three paragraphs end a chunk short of three sentences');
+  assert.deepEqual(merged(['x'.repeat(8), 'y'.repeat(8)], 12), ['x'.repeat(8), 'y'.repeat(8)], 'never past the cap');
+  const body = 'Rain.\n\nShe ran.\n\nIt stopped.\n\nNext one here.';
+  assert.deepEqual(chunks(body, 1200, true), merged(chunks(body)), 'chunks can merge');
+  assert.equal(chunks(body, 1200, true).join(' ').replace(/\s+/g, ' '), body.replace(/\s+/g, ' '));
+});
+
+test('lexical ranking with merged chunks quotes the merged passage', () => {
+  const small = buildCorpus([['lore/A.md', 'Gulls cried.\n\nThe ledger burned.\n\nSmoke rose.\n\nLater still.'], ['lore/B.md', 'Nothing here.']]);
+  const src: Source = { relpath: 'sources/S.md', text: 'The ledger burned at dawn.' };
+  assert.equal(lexicalRank(small, src)[0]!.passage, 'The ledger burned.', 'baseline: paragraph chunks quote one paragraph');
+  assert.equal(lexicalRank(small, src, { merge: true })[0]!.passage, 'Gulls cried.\n\nThe ledger burned.\n\nSmoke rose.');
+});
+
 test('lexical ranking finds the page that shares the source\'s words, and quotes the passage', () => {
   const ranked = lexicalRank(corpus, source);
   const brine = ranked.findIndex((r) => r.relpath === 'lore/Brine-Works.md');
@@ -326,6 +345,15 @@ test('scoring against a baseline counts the ticked pages each list gained and lo
   assert.deepEqual(score.paired!.rows.find((r) => r.method === 'base')!.gained, 0);
   assert.match(renderScore(score), /Against base/);
   assert.throws(() => scoreSheet(sheet, key, 'missing'), /missing/);
+});
+
+test('a baseline key joins this key case by case, its lists marked base', () => {
+  const list = (method: string, pages: string[]) => ({ method, pages, packetChars: 1, pastCaught: 0 });
+  const mine: Key = { note: '', cases: [{ source: 'sources/One.md', pastTargets: [], wholeRosterPacketChars: 1, lists: [list('lexical', ['a.md'])] }] };
+  const theirs: Key = { note: '', cases: [{ source: 'sources/one.md', pastTargets: [], wholeRosterPacketChars: 1, lists: [list('lexical', ['b.md'])] }] };
+  const both = mergeKeys(mine, theirs, 'base: ');
+  assert.deepEqual(both.cases[0]!.lists.map((l) => [l.method, l.pages[0]]), [['lexical', 'a.md'], ['base: lexical', 'b.md']]);
+  assert.throws(() => mergeKeys(mine, { note: '', cases: [] }, 'base: '), /sources\/One\.md/);
 });
 
 // Rule: a case is read as the vault stood before its source came in, so a link the
