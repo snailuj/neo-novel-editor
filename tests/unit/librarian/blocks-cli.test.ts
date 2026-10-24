@@ -240,3 +240,13 @@ test('a failed outline write leaves the last outline whole', async () => {
   assert.equal(r.code, 3);
   assert.equal(readFileSync(file, 'utf8'), last);
 });
+
+test('a page name that only starts with two dots still gets its outline', async () => {
+  const { dir, vault, judge } = setup();
+  writeFileSync(path.join(vault, '..draft.md'), 'An otter, dotted.');
+  const sheet = path.join(dir, 'sheet.csv');
+  await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, '..draft.md'], dir);
+  const r = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, '..draft.md'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(readFileSync(path.join(dir, 'outlines', '..draft.md'), 'utf8'), /dotted/);
+});

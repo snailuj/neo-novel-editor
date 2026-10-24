@@ -204,7 +204,8 @@ async function group(values: Map<string, string>, positional: string[], io: Io):
       topicRows(page, blocks, entries, topics, staged);
       // Mirrors the vault's folders, so no two pages share an outline.
       const outlineFile = path.join(outlines, `${page.replace(/\.md$/i, '')}.md`);
-      if (path.relative(outlines, outlineFile).startsWith('..')) throw new Error(`${page}: outside the vault`);
+      const rel = path.relative(outlines, outlineFile);
+      if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw new Error(`${page}: outside the vault`);
       mkdirSync(path.dirname(outlineFile), { recursive: true });
       writeAtomic(outlineFile, outline(page, blocks, entries, topics, staged));
       mine.forEach((r, i) => Object.assign(r, staged[i]));
