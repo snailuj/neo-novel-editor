@@ -173,30 +173,58 @@ export function rrf(lists: readonly (readonly string[])[], k = 60): string[] {
 }
 
 /**
- * Adds, per case and per model, two lists the size of the roster plus `extra` from each of
- * lexical and the model: the roster's pages then the fusion of lexical and the model, and
- * the fusion of all three cut to that size. Like a union, every page was on the sheet.
+ * Adds, per case and per model, the roster's first `rosterCut` pages (all of them by
+ * default) then `fill` pages from the fusion of lexical and the model, and the fusion of
+ * all three cut to the same size. A page cut from the roster may come back on its fused
+ * rank. Like a union, every page was on the sheet.
  */
-export function withFusion(key: Key, extra: number, k = 60): Key {
+export function withFusion(key: Key, fill: number, rosterCut?: number, k = 60): Key {
+  const label = rosterCut === undefined ? 'roster' : `roster ${rosterCut}`;
   return {
     ...key,
     cases: key.cases.map((c) => {
       const roster = c.lists.find((l) => l.method === 'roster');
       const lexical = c.lists.find((l) => l.method === 'lexical');
       if (!roster || !lexical) return c;
-      const size = roster.pages.length + 2 * extra;
+      const kept = roster.pages.slice(0, rosterCut ?? roster.pages.length);
+      const size = kept.length + fill;
       const packetChars = Math.round(roster.packetChars * size / (roster.pages.length || 1));
       const models = c.lists.filter((l) => l.method.startsWith('embedding '));
       const fused = models.flatMap((m): KeyList[] => {
-        const fill = rrf([lexical.pages, m.pages], k).filter((p) => !roster.pages.includes(p)).slice(0, 2 * extra);
+        const extra = rrf([lexical.pages, m.pages], k).filter((p) => !kept.includes(p)).slice(0, fill);
         return [
-          { method: `roster + ${2 * extra} rrf(lexical, ${m.method})`, pages: [...roster.pages, ...fill], packetChars, pastCaught: 0 },
-          { method: `rrf(roster, lexical, ${m.method}) to roster + ${2 * extra}`, pages: rrf([roster.pages, lexical.pages, m.pages], k).slice(0, size), packetChars, pastCaught: 0 },
+          { method: `${label} + ${fill} rrf(lexical, ${m.method})`, pages: [...kept, ...extra], packetChars, pastCaught: 0 },
+          { method: `rrf(roster, lexical, ${m.method}) to ${label} + ${fill}`, pages: rrf([roster.pages, lexical.pages, m.pages], k).slice(0, size), packetChars, pastCaught: 0 },
         ];
       });
       return { ...c, lists: [...c.lists, ...fused] };
     }),
   };
+}
+
+/**
+ * Exact two-sided McNemar test on the discordant pages: the chance of a split at least
+ * this uneven if either list were as likely to catch a page the other missed.
+ */
+export function mcnemar(gained: number, lost: number): number {
+  const n = gained + lost;
+  let tail = 0;
+  let choose = 1;
+  for (let i = 0; i <= Math.min(gained, lost); i++) {
+    tail += choose;
+    choose = choose * (n - i) / (i + 1);
+  }
+  return Math.min(1, 2 * tail / 2 ** n);
+}
+
+export interface PairedRow {
+  method: string;
+  size: number;
+  caught: number;
+  /** Ticked pages this list caught and the baseline missed, summed over cases. */
+  gained: number;
+  lost: number;
+  p: number;
 }
 
 export interface ListScore {
@@ -216,6 +244,7 @@ export interface ListScore {
 export interface Score {
   cases: { source: string; ticked: number; lists: ListScore[] }[];
   totals: ListScore[];
+  paired?: { baseline: string; rows: PairedRow[] };
 }
 
 // A row ends its path with "): " and the gloss follows, so a path holding brackets, as
@@ -256,7 +285,7 @@ export function readSheet(sheet: string): { sections: Map<string, Section>; head
  * The author's ticks against each list: recall over ticked pages, precision over the
  * pages shown. Cases pair by source, so a sheet ticked for one run scores another's key.
  */
-export function scoreSheet(sheet: string, key: Key): Score {
+export function scoreSheet(sheet: string, key: Key, baseline?: string): Score {
   const { sections, headings } = readSheet(sheet);
   const rate = (a: number, b: number): number => (b ? a / b : 0);
   const cases = key.cases.map((c) => {
@@ -287,7 +316,28 @@ export function scoreSheet(sheet: string, key: Key): Score {
       packetChars: Math.round(rate(sum((l) => l.packetChars), ls.length)),
     };
   });
-  return { cases, totals };
+  if (baseline === undefined) return { cases, totals };
+  if (!methods.includes(baseline)) throw new Error(`no list is named ${baseline} (lists: ${methods.join(', ')})`);
+  // Pages pair within a case: a page ticked for one source says nothing about another.
+  const rows = methods.map((method): PairedRow => {
+    let gained = 0;
+    let lost = 0;
+    let caught = 0;
+    let size = 0;
+    for (const c of key.cases) {
+      const ticked = sections.get(linkKey(c.source))!.ticked;
+      const pages = c.lists.find((l) => l.method === method)?.pages;
+      if (!pages) continue;
+      const mine = new Set(pages.filter((p) => ticked.has(p)));
+      const theirs = new Set((c.lists.find((l) => l.method === baseline)?.pages ?? []).filter((p) => ticked.has(p)));
+      gained += [...mine].filter((p) => !theirs.has(p)).length;
+      lost += [...theirs].filter((p) => !mine.has(p)).length;
+      caught += mine.size;
+      size += pages.length;
+    }
+    return { method, size, caught, gained, lost, p: mcnemar(gained, lost) };
+  });
+  return { cases, totals, paired: { baseline, rows } };
 }
 
 function table(rows: ListScore[]): string[] {
@@ -309,6 +359,12 @@ export function renderScore(score: Score): string {
     '',
     ...table(score.totals),
   ];
+  if (score.paired) {
+    out.push('', `## Against ${score.paired.baseline}`, '',
+      'Gained and lost count ticked pages this list caught and the baseline missed, or the reverse, case by case. p is the exact McNemar test on those pages: below 0.05 means a split that uneven is unlikely by chance.',
+      '', '| Method | Pages listed | Ticked pages caught | Gained | Lost | p |', '| --- | --- | --- | --- | --- | --- |',
+      ...score.paired.rows.map((r) => `| ${r.method} | ${r.size} | ${r.caught} | ${r.gained} | ${r.lost} | ${r.p < 0.001 ? '<0.001' : r.p.toFixed(3)} |`));
+  }
   score.cases.forEach((c, i) => out.push('', `## Case ${i + 1}: ${c.source}`, '', ...table(c.lists)));
   return `${out.join('\n')}\n`;
 }

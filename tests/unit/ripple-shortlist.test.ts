@@ -10,7 +10,7 @@ import {
   blend, buildCorpus, card, chunks, embeddingRank, inRoster, lexicalRank, packetChars, rosterChars, rosterRank,
   type Embed, type Source,
 } from '../../src/hoard/ripple/shortlist.ts';
-import { buildSheet, pastTargets, pickSources, readSheet, scoreSheet, withFusion, withUnions, rrf, type Key } from '../../src/hoard/ripple/sheet.ts';
+import { buildSheet, pastTargets, pickSources, readSheet, renderScore, scoreSheet, withFusion, withUnions, rrf, mcnemar, type Key } from '../../src/hoard/ripple/sheet.ts';
 import { readSnapshot } from '../../src/hoard/ripple/snapshot.ts';
 import { isolateGitConfig, tempDir } from './git-support.ts';
 
@@ -276,7 +276,7 @@ test('a fused list matches the extras list in size: the roster then fused fills,
     { method: 'embedding m', pages: ['d.md', 'c.md', 'b.md'], packetChars: 0, pastCaught: 0 },
     { method: 'blend m', pages: ['z.md'], packetChars: 0, pastCaught: 0 },
   ] }] };
-  const lists = withFusion(key, 1).cases[0]!.lists;
+  const lists = withFusion(key, 2).cases[0]!.lists;
   const fill = lists.find((l) => l.method === 'roster + 2 rrf(lexical, embedding m)')!;
   assert.deepEqual(fill.pages, ['a.md', 'b.md', 'c.md', 'd.md'], 'c is in both fills, so it comes first; the roster is never repeated');
   const all = lists.find((l) => l.method === 'rrf(roster, lexical, embedding m) to roster + 2')!;
@@ -284,6 +284,48 @@ test('a fused list matches the extras list in size: the roster then fused fills,
   assert.equal(fill.packetChars, 2000);
   assert.ok(!lists.some((l) => l.method.includes('blend m') && l.method.includes('rrf')), 'blends are not fused');
   assert.equal(key.cases[0]!.lists.length, 4, 'the key itself is unchanged');
+});
+
+test('a shorter roster keeps its first pages, and fusion may bring a cut roster page back', () => {
+  const key: Key = { note: '', cases: [{ source: 's.md', pastTargets: [], wholeRosterPacketChars: 0, lists: [
+    { method: 'roster', pages: ['a.md', 'b.md'], packetChars: 1000, pastCaught: 0 },
+    { method: 'lexical', pages: ['a.md', 'c.md', 'e.md'], packetChars: 0, pastCaught: 0 },
+    { method: 'embedding m', pages: ['d.md', 'c.md', 'b.md'], packetChars: 0, pastCaught: 0 },
+  ] }] };
+  const lists = withFusion(key, 3, 1).cases[0]!.lists;
+  const cut = lists.find((l) => l.method === 'roster 1 + 3 rrf(lexical, embedding m)')!;
+  assert.deepEqual(cut.pages, ['a.md', 'c.md', 'd.md', 'b.md'], 'b was cut from the roster and came back on its fused rank');
+  assert.equal(cut.packetChars, 2000);
+  assert.ok(lists.some((l) => l.method === 'rrf(roster, lexical, embedding m) to roster 1 + 3'));
+});
+
+// Rule: a paired comparison counts, case by case, the ticked pages one list caught and
+// the other missed; the exact McNemar test reads only those discordant pages.
+test('the exact McNemar p is 1 when gains and losses balance, and small only for one-sided runs', () => {
+  assert.equal(mcnemar(0, 0), 1);
+  assert.equal(mcnemar(1, 1), 1);
+  assert.equal(mcnemar(5, 0), 0.0625);
+  assert.equal(mcnemar(0, 5), 0.0625);
+  assert.ok(Math.abs(mcnemar(9, 1) - 0.021484375) < 1e-12);
+});
+
+test('scoring against a baseline counts the ticked pages each list gained and lost, case by case', () => {
+  const list = (method: string, pages: string[]) => ({ method, pages, packetChars: 1, pastCaught: 0 });
+  const key: Key = { note: '', cases: [
+    { source: 'sources/One.md', pastTargets: [], wholeRosterPacketChars: 1, lists: [list('base', ['a.md', 'b.md']), list('new', ['a.md', 'c.md'])] },
+    { source: 'sources/Two.md', pastTargets: [], wholeRosterPacketChars: 1, lists: [list('base', ['b.md']), list('new', ['b.md', 'c.md'])] },
+  ] };
+  // b is ticked only in case one and c only in case two, so a page caught in the wrong
+  // case must not count.
+  const sheet = '## Case 1: sources/One.md\n\n- [x] [[A]] (a.md): \n- [x] [[B]] (b.md): \n- [ ] [[C]] (c.md): \n'
+    + '## Case 2: sources/Two.md\n\n- [ ] [[B]] (b.md): \n- [x] [[C]] (c.md): \n';
+  const score = scoreSheet(sheet, key, 'base');
+  assert.equal(score.totals.find((t) => t.method === 'base')!.caught, 2, 'baseline: the ticks were read');
+  const row = score.paired!.rows.find((r) => r.method === 'new')!;
+  assert.deepEqual([row.gained, row.lost, row.p], [1, 1, 1]);
+  assert.deepEqual(score.paired!.rows.find((r) => r.method === 'base')!.gained, 0);
+  assert.match(renderScore(score), /Against base/);
+  assert.throws(() => scoreSheet(sheet, key, 'missing'), /missing/);
 });
 
 // Rule: a case is read as the vault stood before its source came in, so a link the

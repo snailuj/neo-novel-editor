@@ -3,7 +3,7 @@
 //   [--cases-from <earlier key.json> ...] [--seen <earlier sheet.md> ...] [--git] [--k 30]
 //   [--embed <model>[#titles] ...]
 // Writes sheet.md (each candidate once, to tick by hand) and key.json to --out, never
-// inside the vault. `--score <folder> [--ticks <sheet.md> ...] [--union N] [--fuse N]` then reads the
+// inside the vault. `--score <folder> [--ticks <sheet.md> ...] [--union N] [--fuse N[@R] ...] [--baseline <list>]` then reads the
 // ticks back into score.md, with --union adding the roster plus N pages from each model.
 // A spike for choosing ripple's shortlist method; not part of the app.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -62,7 +62,8 @@ async function main(argv: string[]): Promise<void> {
       score: { type: 'string' },
       ticks: { type: 'string', multiple: true },
       union: { type: 'string' },
-      fuse: { type: 'string' },
+      fuse: { type: 'string', multiple: true },
+      baseline: { type: 'string' },
       pooling: { type: 'string', default: 'mean' },
       dtype: { type: 'string', default: 'q8' },
       device: { type: 'string' },
@@ -78,16 +79,17 @@ async function main(argv: string[]): Promise<void> {
       if (!(n > 0)) throw new UsageError('--union takes a number');
       key = withUnions(key, n);
     }
-    // --fuse N scores rank fusion at the same size as the roster plus N lexical and N model pages.
-    if (values.fuse) {
-      const n = Number(values.fuse);
-      if (!(n > 0)) throw new UsageError('--fuse takes a number');
-      key = withFusion(key, n);
+    // --fuse N[@R] scores the roster's first R pages (all by default) then N pages fused
+    // from lexical and each model, and all three fused to that size.
+    for (const spec of values.fuse ?? []) {
+      const [n, r] = spec.split('@').map(Number);
+      if (!(n! > 0) || (spec.includes('@') && !(r! >= 0))) throw new UsageError(`--fuse ${spec}: give N or N@R`);
+      key = withFusion(key, n!, spec.includes('@') ? r : undefined);
     }
     // --ticks scores this run's lists against sheets ticked for earlier runs; several are
     // read as one, so a top-up sheet scores together with the sheet it tops up.
     const ticks = values.ticks?.length ? values.ticks.map((t) => path.resolve(t)) : [path.join(dir, 'sheet.md')];
-    const score = scoreSheet(ticks.map((t) => readFileSync(t, 'utf8')).join('\n'), key);
+    const score = scoreSheet(ticks.map((t) => readFileSync(t, 'utf8')).join('\n'), key, values.baseline);
     writeFileSync(path.join(dir, 'score.md'), renderScore(score));
     for (const t of score.totals) log(`${t.method}: caught ${t.caught} of ${t.ticked} ticked, ${t.size} listed`);
     log(`wrote ${path.join(dir, 'score.md')}`);
