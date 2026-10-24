@@ -4,8 +4,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Proposed } from '../../src/hoard/ripple/contract.ts';
-import { placeTicked, renderEval, scoreEval, scoreOutcome, type EvalCase, type Outcome } from '../../src/hoard/ripple/judge-eval.ts';
-import { mcnemar } from '../../src/hoard/ripple/sheet.ts';
+import { placeTicked, renderEval, scoreEval, scoreOutcome, wideShortlist, type EvalCase, type Outcome } from '../../src/hoard/ripple/judge-eval.ts';
+import { mcnemar, rrf } from '../../src/hoard/ripple/sheet.ts';
+import type { Ranked } from '../../src/hoard/ripple/shortlist.ts';
 
 const titles: Record<string, string> = { Alder: 'lore/Alder.md', Birch: 'lore/Birch.md', Cedar: 'lore/Cedar.md', Dogwood: 'lore/Dogwood.md', Elm: 'lore/Elm.md', Fir: 'lore/Fir.md' };
 const resolve = (t: string) => titles[t] ?? null;
@@ -95,4 +96,26 @@ test('the report renders totals, the pairing, placement and each case, in plain 
   assert.match(md, /\| base-1 \| 1 \| 1 of 3 \|/);
   assert.match(md, /the answer is empty/);
   assert.ok(!md.includes('**'), 'no bold');
+});
+
+const rk = (prefix: string, n: number, why: string, passage = true): Ranked[] =>
+  Array.from({ length: n }, (_, i) => ({ relpath: `${prefix}${String(i).padStart(2, '0')}.md`, score: n - i, why, ...(passage ? { passage: `${why} ${i}` } : {}) }));
+
+// Rule: the wide list is the roster's first 30 in order, then 25 pages from the fusion of
+// the two rankings that the roster lacks, each page once, each carrying a passage when
+// either ranking found one.
+test('the wide list is the first 30 of the roster then 25 fused pages it lacks', () => {
+  const roster = rk('r', 40, 'hop 1', false);
+  const lexical = [...rk('r', 5, 'lexical'), ...rk('l', 30, 'lexical')];
+  const model = [...rk('m', 30, 'embedding'), ...rk('l', 3, 'embedding')];
+  const wide = wideShortlist(roster, lexical, model);
+  assert.equal(wide.length, 55);
+  assert.deepEqual(wide.slice(0, 30).map((r) => r.relpath), roster.slice(0, 30).map((r) => r.relpath));
+  assert.equal(new Set(wide.map((r) => r.relpath)).size, 55, 'each page once');
+  const fused = rrf([lexical.map((r) => r.relpath), model.map((r) => r.relpath)]).filter((p) => !p.startsWith('r'));
+  assert.deepEqual(wide.slice(30).map((r) => r.relpath), fused.slice(0, 25));
+  assert.equal(wide[0]!.passage, 'lexical 0', 'a roster page takes a passage a ranking found');
+  for (const r of wide.slice(30)) assert.ok(r.passage, `${r.relpath} has a passage`);
+  assert.ok(wide.slice(30).some((r) => r.why === 'embedding') && wide.slice(30).some((r) => r.why === 'lexical'), 'baseline: both rankings feed it');
+  assert.equal(wideShortlist(roster, lexical, []).slice(30).every((r) => r.why === 'lexical'), true, 'without the model, lexical alone');
 });

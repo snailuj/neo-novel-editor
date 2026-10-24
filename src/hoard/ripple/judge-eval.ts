@@ -6,7 +6,29 @@
 // with the exact McNemar test. Pure; judge-eval-cli.ts runs the arms.
 import type { Proposed } from './contract.ts';
 import type { Screen } from './screen.ts';
-import { mcnemar } from './sheet.ts';
+import { mcnemar, rrf } from './sheet.ts';
+import type { Ranked } from './shortlist.ts';
+
+export const WIDE_ROSTER = 30;
+export const WIDE_FUSED = 25;
+
+/**
+ * The wide arm's list: the roster's first 30, then the first 25 pages the fusion of the
+ * lexical and model rankings holds that the roster lacks. A page keeps the passage of
+ * the first ranking that found one, lexical before the model.
+ */
+export function wideShortlist(roster: readonly Ranked[], lexical: readonly Ranked[], model: readonly Ranked[]): Ranked[] {
+  const found = new Map<string, Ranked>();
+  for (const r of [...lexical, ...model]) {
+    const held = found.get(r.relpath);
+    if (!held) found.set(r.relpath, { ...r });
+    else if (!held.passage && r.passage) held.passage = r.passage;
+  }
+  const out = roster.slice(0, WIDE_ROSTER).map((r) => ({ ...r, passage: r.passage ?? found.get(r.relpath)?.passage }));
+  const held = new Set(out.map((r) => r.relpath));
+  const fused = rrf([lexical.map((r) => r.relpath), model.map((r) => r.relpath)]).filter((p) => !held.has(p)).slice(0, WIDE_FUSED);
+  return [...out, ...fused.map((p) => found.get(p)!)];
+}
 
 export interface Usage {
   inputTokens: number;
