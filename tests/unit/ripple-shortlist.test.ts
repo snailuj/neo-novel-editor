@@ -7,7 +7,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  blend, buildCorpus, card, chunks, embeddingRank, merged, inRoster, lexicalRank, packetChars, rosterChars, rosterRank,
+  blend, buildCorpus, card, chunks, embeddingRank, merged, phraseRank, inRoster, lexicalRank, packetChars, rosterChars, rosterRank,
   type Embed, type Source,
 } from '../../src/hoard/ripple/shortlist.ts';
 import { buildSheet, pastTargets, pickSources, readSheet, renderScore, scoreSheet, withFusion, withUnions, rrf, mcnemar, mergeKeys, type Key } from '../../src/hoard/ripple/sheet.ts';
@@ -100,6 +100,25 @@ test('lexical ranking with merged chunks quotes the merged passage', () => {
   const src: Source = { relpath: 'sources/S.md', text: 'The ledger burned at dawn.' };
   assert.equal(lexicalRank(small, src)[0]!.passage, 'The ledger burned.', 'baseline: paragraph chunks quote one paragraph');
   assert.equal(lexicalRank(small, src, { merge: true })[0]!.passage, 'Gulls cried.\n\nThe ledger burned.\n\nSmoke rose.');
+});
+
+// Rule: a page that holds a phrase of the source word for word outranks one holding the
+// same words apart, and a phrase on many pages counts for nothing.
+test('phrase ranking finds pages that repeat the source\'s phrases word for word', () => {
+  const notes: [string, string][] = [
+    ['lore/A.md', 'Long ago the brine works closed for good.'],
+    ['lore/B.md', 'The works were salt and brine, and the gate closed.'],
+    ...Array.from({ length: 10 }, (_, i) => [`lore/F${i}.md`, `Filler ${i}: harbour master said so.`] as [string, string]),
+    // Enough unrelated pages that a word on two pages is not cut as common.
+    ...Array.from({ length: 20 }, (_, i) => [`lore/Q${i}.md`, `Quiet page ${i}.`] as [string, string]),
+  ];
+  const src: Source = { relpath: 'sources/S.md', text: 'The harbour master said the brine works closed.' };
+  const ranked = phraseRank(buildCorpus(notes), src);
+  assert.equal(ranked[0]!.relpath, 'lore/A.md');
+  assert.equal(ranked[0]!.why, 'phrase');
+  assert.match(ranked[0]!.passage!, /brine works closed/);
+  assert.ok(!ranked.some((r) => r.relpath === 'lore/B.md'), 'the same words apart are no phrase');
+  assert.ok(!ranked.some((r) => r.relpath.startsWith('lore/F')), 'a phrase on most pages counts for nothing');
 });
 
 test('lexical ranking finds the page that shares the source\'s words, and quotes the passage', () => {
@@ -390,7 +409,7 @@ test('the command writes a sheet and a key, scores the ticks, and refuses to wri
   assert.equal(ok.status, 0, ok.stderr);
   assert.ok(existsSync(path.join(out, 'sheet.md')));
   const key = JSON.parse(readFileSync(path.join(out, 'key.json'), 'utf8'));
-  assert.deepEqual(key.cases[0].lists.map((l: { method: string }) => l.method).sort(), ['blend', 'lexical', 'roster']);
+  assert.deepEqual(key.cases[0].lists.map((l: { method: string }) => l.method).sort(), ['blend', 'lexical', 'phrase', 'roster']);
   const sheetFile = path.join(out, 'sheet.md');
   writeFileSync(sheetFile, readFileSync(sheetFile, 'utf8').replace('- [ ] [[Wren-Calder]]', '- [x] [[Wren-Calder]]'));
   const scored = spawnSync(process.execPath, [cli, '--score', out], { encoding: 'utf8' });

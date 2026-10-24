@@ -301,6 +301,52 @@ export function lexicalRank(corpus: Corpus, source: Source, cut: Chunking = {}):
   return bestPerPage(scored, 'lexical');
 }
 
+function words(text: string): string[] {
+  return text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
+/** Each run of 2 to 4 words whose first and last words are terms, joined by spaces. */
+function phrases(ws: readonly string[]): Set<string> {
+  const edge = (w: string): boolean => w.length >= 3 && !STOP.has(w);
+  const out = new Set<string>();
+  for (let i = 0; i < ws.length; i++) {
+    if (!edge(ws[i]!)) continue;
+    for (let n = 2; n <= 4 && i + n <= ws.length; n++) if (edge(ws[i + n - 1]!)) out.add(ws.slice(i, i + n).join(' '));
+  }
+  return out;
+}
+
+/**
+ * Pages that hold the source's phrases word for word, each phrase worth its length times
+ * log(pages / pages holding it). A phrase on more than a tenth of the pages is dropped.
+ * Names are the roster's work; this finds the turns of phrase a page and source share.
+ */
+export function phraseRank(corpus: Corpus, source: Source): Ranked[] {
+  const docs = corpus.docs.filter((d) => d.relpath !== source.relpath);
+  const wanted = phrases(words(prose(source.text)));
+  const held = docs.map((d) => [...phrases(words(d.body))].filter((p) => wanted.has(p)));
+  const df = new Map<string, number>();
+  for (const ps of held) for (const p of ps) df.set(p, (df.get(p) ?? 0) + 1);
+  const n = docs.length;
+  const ranked: Ranked[] = [];
+  docs.forEach((d, i) => {
+    let score = 0;
+    let best = '';
+    let top = 0;
+    for (const p of held[i]!) {
+      const f = df.get(p)!;
+      if (f > Math.max(1, n / 10)) continue;
+      const w = p.split(' ').length * Math.log(n / f);
+      score += w;
+      if (w > top) [top, best] = [w, p];
+    }
+    if (score <= 0) return;
+    const passage = chunks(d.body).find((c) => ` ${words(c).join(' ')} `.includes(` ${best} `));
+    ranked.push({ relpath: d.relpath, score, why: 'phrase', passage });
+  });
+  return ranked.sort((a, b) => b.score - a.score || (a.relpath < b.relpath ? -1 : 1));
+}
+
 function cosine(a: number[], b: number[]): number {
   let dot = 0;
   let na = 0;

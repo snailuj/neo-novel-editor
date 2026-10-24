@@ -12,7 +12,7 @@ import { parseArgs } from 'node:util';
 import { readText } from '../../librarian/vault-fs.ts';
 import { buildSheet, pastTargets, pickSources, readSheet, renderScore, scoreSheet, mergeKeys, withFusion, withUnions, type Key, type SheetCase, type SheetList } from './sheet.ts';
 import {
-  ROSTER_ZONES, blend, buildCorpus, embeddingRank, inRoster, lexicalRank, rosterChars, rosterRank,
+  ROSTER_ZONES, blend, buildCorpus, embeddingRank, inRoster, lexicalRank, phraseRank, rosterChars, rosterRank,
   type Embed, type Source,
 } from './shortlist.ts';
 import { readSnapshot } from './snapshot.ts';
@@ -168,7 +168,10 @@ async function main(argv: string[]): Promise<void> {
     lap('roster');
     const lexical = lexicalRank(corpus!, source, cut);
     lap('lexical');
-    const lists: SheetList[] = [{ method: 'roster', ranked: roster.slice(0, k) }, { method: 'lexical', ranked: lexical.slice(0, k) }];
+    const phrase = phraseRank(corpus!, source);
+    lap('phrase');
+    const lists: SheetList[] = [{ method: 'roster', ranked: roster.slice(0, k) }, { method: 'lexical', ranked: lexical.slice(0, k) },
+      { method: 'phrase', ranked: phrase.slice(0, k) }];
     const blends: SheetList[] = [];
     for (const { model, embed } of embedders) {
       const embedded = await embeddingRank(corpus!, source, embed, cut);
