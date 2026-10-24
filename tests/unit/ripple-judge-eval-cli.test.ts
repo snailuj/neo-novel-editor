@@ -106,6 +106,12 @@ test('a judged run scores the judge and the screen, and a rerun skips what is do
   const screen = calls.filter((c) => c.args.includes('--max-turns'));
   assert.equal(judge.length, 2, 'base and screened each judged once');
   assert.equal(screen.length, 3, 'one screen call per candidate');
+  // The user's hooks, MCP servers and skills would add turns and tokens to every call.
+  for (const c of calls) {
+    assert.equal(c.args[c.args.indexOf('--setting-sources') + 1], 'project,local', 'user settings are left out');
+    assert.ok(c.args.includes('--strict-mcp-config') && !c.args.includes('--mcp-config'), 'no MCP server is loaded');
+    assert.ok(c.args.includes('--disable-slash-commands'), 'no skill is loaded');
+  }
   for (const c of judge) {
     assert.equal(c.cwd, lib);
     assert.deepEqual(c.args.slice(0, 7), ['-p', '--output-format', 'json', '--model', 'opus', '--permission-mode', 'acceptEdits']);

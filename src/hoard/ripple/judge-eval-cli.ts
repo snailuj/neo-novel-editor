@@ -47,6 +47,9 @@ export const spawnRunner: Runner = ({ command, args, stdin, cwd }) => new Promis
 
 const ARMS = ['base', 'screen', 'screened', 'budget', 'wide', 'map'] as const;
 type Arm = typeof ARMS[number];
+// Each call leaves out the user's own settings (hooks, plugins, `verbose`), MCP servers and
+// skills: a Stop hook adds turns, and the tool lists cost tokens on every call.
+const ISOLATE = ['--setting-sources', 'project,local', '--strict-mcp-config', '--disable-slash-commands', '--no-session-persistence'];
 // The judge must hash the brief for its preflight, so it may run a hash command and no other.
 const JUDGE_TOOLS = 'Read,Grep,Glob,Write,Bash(sha256sum:*),Bash(shasum:*)';
 
@@ -278,7 +281,7 @@ export async function main(argv: string[], deps: { runner?: Runner; log?: (messa
       try {
         const res = await runner({
           command: values.claude, cwd: screenDir, stdin: screenPrompt({ title: p.job.source.title, text: p.source.text }, { title: doc.name, body: doc.body, passage: r.passage }),
-          args: ['-p', '--output-format', 'json', '--model', values['screen-model'], '--max-turns', '1', '--tools', ''],
+          args: ['-p', '--output-format', 'json', '--model', values['screen-model'], '--max-turns', '1', '--tools', '', ...ISOLATE],
         });
         if (res.code !== 0) throw new Error(`claude exited ${res.code}: ${tail(res.stderr || res.stdout)}`);
         const json = resultOf(res.stdout);
@@ -356,7 +359,7 @@ export async function main(argv: string[], deps: { runner?: Runner; log?: (messa
       res = await runner({
         command: values.claude, cwd: p.lib, stdin: packet.text,
         args: ['-p', '--output-format', 'json', '--model', values.model, '--permission-mode', 'acceptEdits',
-          '--allowedTools', ...tools, '--add-dir', p.lib, '--add-dir', path.dirname(answer)],
+          '--allowedTools', ...tools, '--add-dir', p.lib, '--add-dir', path.dirname(answer), ...ISOLATE],
       });
     } catch (err) {
       record({ kind: 'failed', why: `claude did not start: ${(err as Error).message}` });
