@@ -1,18 +1,18 @@
 // npm run ripple:shortlist -- --vault <hoard> --out <folder> [--source <relpath> ...]
 //   [--pick N --rulings <RIPPLE.jsonl>] [--skip-key <earlier key.json> ...]
 //   [--cases-from <earlier key.json> ...] [--seen <earlier sheet.md> ...] [--git] [--k 30]
-//   [--embed <model>[#titles] ...]
+//   [--embed <model>[#titles] ...] [--chunks paragraph|merge]
 // Writes sheet.md (each candidate once, to tick by hand) and key.json to --out, never
-// inside the vault. `--score <folder> [--ticks <sheet.md> ...] [--union N]` then reads the
+// inside the vault. `--score <folder> [--ticks <sheet.md> ...] [--union N] [--fuse N[@R] ...] [--baseline <list>] [--baseline-from <folder>]` then reads the
 // ticks back into score.md, with --union adding the roster plus N pages from each model.
 // A spike for choosing ripple's shortlist method; not part of the app.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { readText } from '../../librarian/vault-fs.ts';
-import { buildSheet, pastTargets, pickSources, readSheet, renderScore, scoreSheet, withUnions, type Key, type SheetCase, type SheetList } from './sheet.ts';
+import { buildSheet, pastTargets, pickSources, readSheet, renderScore, scoreSheet, mergeKeys, withFusion, withUnions, type Key, type SheetCase, type SheetList } from './sheet.ts';
 import {
-  ROSTER_ZONES, blend, buildCorpus, embeddingRank, inRoster, lexicalRank, rosterChars, rosterRank,
+  ROSTER_ZONES, blend, buildCorpus, embeddingRank, inRoster, lexicalRank, phraseRank, rosterChars, rosterRank,
   type Embed, type Source,
 } from './shortlist.ts';
 import { readSnapshot } from './snapshot.ts';
@@ -62,6 +62,10 @@ async function main(argv: string[]): Promise<void> {
       score: { type: 'string' },
       ticks: { type: 'string', multiple: true },
       union: { type: 'string' },
+      fuse: { type: 'string', multiple: true },
+      baseline: { type: 'string' },
+      'baseline-from': { type: 'string' },
+      chunks: { type: 'string', default: 'paragraph' },
       pooling: { type: 'string', default: 'mean' },
       dtype: { type: 'string', default: 'q8' },
       device: { type: 'string' },
@@ -70,23 +74,34 @@ async function main(argv: string[]): Promise<void> {
   });
   if (values.score) {
     const dir = path.resolve(values.score);
-    let key = JSON.parse(readFileSync(path.join(dir, 'key.json'), 'utf8')) as Key;
-    // --union N also scores the roster plus each model's first N pages it lacks.
-    if (values.union) {
-      const n = Number(values.union);
-      if (!(n > 0)) throw new UsageError('--union takes a number');
-      key = withUnions(key, n);
-    }
+    const fuses = (values.fuse ?? []).map((spec) => {
+      const [n, r] = spec.split('@').map(Number);
+      if (!(n! > 0) || (spec.includes('@') && !(r! >= 0))) throw new UsageError(`--fuse ${spec}: give N or N@R`);
+      return { n: n!, r: spec.includes('@') ? r : undefined };
+    });
+    if (values.union && !(Number(values.union) > 0)) throw new UsageError('--union takes a number');
+    // --union N also scores the roster plus each model's first N pages it lacks; --fuse
+    // N[@R] the roster's first R pages (all by default) then N pages fused from lexical and
+    // each model, and all three fused to that size.
+    const derive = (k: Key): Key => fuses.reduce((acc, f) => withFusion(acc, f.n, f.r), values.union ? withUnions(k, Number(values.union)) : k);
+    const readKey = (d: string): Key => JSON.parse(readFileSync(path.join(path.resolve(d), 'key.json'), 'utf8')) as Key;
+    let key = derive(readKey(dir));
+    // --baseline-from adds another run's lists, marked "base: ", so a run with other
+    // chunking or ranking can name one of them as --baseline.
+    if (values['baseline-from']) key = mergeKeys(key, derive(readKey(values['baseline-from'])), 'base: ');
     // --ticks scores this run's lists against sheets ticked for earlier runs; several are
     // read as one, so a top-up sheet scores together with the sheet it tops up.
     const ticks = values.ticks?.length ? values.ticks.map((t) => path.resolve(t)) : [path.join(dir, 'sheet.md')];
-    const score = scoreSheet(ticks.map((t) => readFileSync(t, 'utf8')).join('\n'), key);
+    const score = scoreSheet(ticks.map((t) => readFileSync(t, 'utf8')).join('\n'), key, values.baseline);
     writeFileSync(path.join(dir, 'score.md'), renderScore(score));
     for (const t of score.totals) log(`${t.method}: caught ${t.caught} of ${t.ticked} ticked, ${t.size} listed`);
     log(`wrote ${path.join(dir, 'score.md')}`);
     return;
   }
   if (!values.vault || !values.out) throw new UsageError('--vault and --out are required');
+  // --chunks merge joins short paragraphs before ranking (shortlist.ts merged()).
+  if (values.chunks !== 'paragraph' && values.chunks !== 'merge') throw new UsageError('--chunks takes paragraph or merge');
+  const cut = { merge: values.chunks === 'merge' };
   const vault = path.resolve(values.vault);
   const out = path.resolve(values.out);
   if (inside(out, vault)) throw new UsageError(`refusing to write inside the vault: ${out}`);
@@ -151,12 +166,15 @@ async function main(argv: string[]): Promise<void> {
     lap('read');
     const roster = rosterRank(corpus!, source);
     lap('roster');
-    const lexical = lexicalRank(corpus!, source);
+    const lexical = lexicalRank(corpus!, source, cut);
     lap('lexical');
-    const lists: SheetList[] = [{ method: 'roster', ranked: roster.slice(0, k) }, { method: 'lexical', ranked: lexical.slice(0, k) }];
+    const phrase = phraseRank(corpus!, source);
+    lap('phrase');
+    const lists: SheetList[] = [{ method: 'roster', ranked: roster.slice(0, k) }, { method: 'lexical', ranked: lexical.slice(0, k) },
+      { method: 'phrase', ranked: phrase.slice(0, k) }];
     const blends: SheetList[] = [];
     for (const { model, embed } of embedders) {
-      const embedded = await embeddingRank(corpus!, source, embed);
+      const embedded = await embeddingRank(corpus!, source, embed, cut);
       lap(`embedding ${model}`);
       lists.push({ method: `embedding ${model}`, ranked: embedded.slice(0, k) });
       blends.push({ method: `blend ${model}`, ranked: blend(roster, embedded, k) });

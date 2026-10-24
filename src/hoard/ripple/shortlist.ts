@@ -194,7 +194,7 @@ export function rosterRank(corpus: Corpus, source: Source): Ranked[] {
  * A body cut at blank lines (a fence kept whole while it fits), each piece at most
  * `max` characters: longer ones are cut at a space where there is one.
  */
-export function chunks(body: string, max = 1200): string[] {
+export function chunks(body: string, max = 1200, merge = false): string[] {
   const paras: string[] = [];
   let current: string[] = [];
   let inFence = false;
@@ -219,8 +219,38 @@ export function chunks(body: string, max = 1200): string[] {
     }
     if (rest) out.push(rest);
   }
+  return merge ? merged(out, max) : out;
+}
+
+const SENTENCE_END = /[.!?\u2026]+["'\u201d\u2019)\]]*(?=\s|$)/g;
+
+/**
+ * Consecutive pieces joined until a chunk holds `sentences` sentences or `paragraphs`
+ * paragraphs, never past `max` characters. Fiction runs to one-line paragraphs, and a
+ * chunk of five words gives the model little to place. Sentences are counted by their
+ * ends, so a heading or fragment adds none and the paragraph limit stops the run.
+ */
+export function merged(pieces: readonly string[], max = 1200, sentences = 3, paragraphs = 3): string[] {
+  const count = (p: string): number => p.match(SENTENCE_END)?.length ?? 0;
+  const out: string[] = [];
+  let group: string[] = [];
+  let held = 0;
+  for (const p of pieces) {
+    const length = group.reduce((n, g) => n + g.length + 2, 0) + p.length;
+    if (group.length && (held >= sentences || group.length >= paragraphs || length > max)) {
+      out.push(group.join('\n\n'));
+      group = [];
+      held = 0;
+    }
+    group.push(p);
+    held += count(p);
+  }
+  if (group.length) out.push(group.join('\n\n'));
   return out;
 }
+
+/** How a corpus is cut for ranking: paragraphs, or short paragraphs merged. */
+export interface Chunking { merge?: boolean }
 
 const STOP = new Set(('the and for that with this from was were are but not his her she they them their '
   + 'had has have its into onto over then than when what which who whom will would there here been '
@@ -232,9 +262,9 @@ function terms(text: string): string[] {
 
 interface Chunked { relpath: string; name: string; text: string }
 
-function corpusChunks(corpus: Corpus, source: Source): Chunked[] {
+function corpusChunks(corpus: Corpus, source: Source, cut: Chunking = {}): Chunked[] {
   return corpus.docs.filter((d) => d.relpath !== source.relpath)
-    .flatMap((d) => chunks(d.body).map((text) => ({ relpath: d.relpath, name: d.name, text })));
+    .flatMap((d) => chunks(d.body, 1200, cut.merge).map((text) => ({ relpath: d.relpath, name: d.name, text })));
 }
 
 /** Best chunk per page, pages in score order, ties by path; zero scores dropped. */
@@ -248,8 +278,8 @@ function bestPerPage(scored: { relpath: string; text: string; score: number }[],
 }
 
 /** BM25 (k1 1.2, b 0.75) over paragraph chunks, the source's distinct words as the query. */
-export function lexicalRank(corpus: Corpus, source: Source): Ranked[] {
-  const units = corpusChunks(corpus, source).map((c) => ({ ...c, terms: terms(c.text) }));
+export function lexicalRank(corpus: Corpus, source: Source, cut: Chunking = {}): Ranked[] {
+  const units = corpusChunks(corpus, source, cut).map((c) => ({ ...c, terms: terms(c.text) }));
   const n = units.length;
   if (!n) return [];
   const avg = units.reduce((s, u) => s + u.terms.length, 0) / n;
@@ -271,6 +301,52 @@ export function lexicalRank(corpus: Corpus, source: Source): Ranked[] {
   return bestPerPage(scored, 'lexical');
 }
 
+function words(text: string): string[] {
+  return text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
+/** Each run of 2 to 4 words whose first and last words are terms, joined by spaces. */
+function phrases(ws: readonly string[]): Set<string> {
+  const edge = (w: string): boolean => w.length >= 3 && !STOP.has(w);
+  const out = new Set<string>();
+  for (let i = 0; i < ws.length; i++) {
+    if (!edge(ws[i]!)) continue;
+    for (let n = 2; n <= 4 && i + n <= ws.length; n++) if (edge(ws[i + n - 1]!)) out.add(ws.slice(i, i + n).join(' '));
+  }
+  return out;
+}
+
+/**
+ * Pages that hold the source's phrases word for word, each phrase worth its length times
+ * log(pages / pages holding it). A phrase on more than a tenth of the pages is dropped.
+ * Names are the roster's work; this finds the turns of phrase a page and source share.
+ */
+export function phraseRank(corpus: Corpus, source: Source): Ranked[] {
+  const docs = corpus.docs.filter((d) => d.relpath !== source.relpath);
+  const wanted = phrases(words(prose(source.text)));
+  const held = docs.map((d) => [...phrases(words(d.body))].filter((p) => wanted.has(p)));
+  const df = new Map<string, number>();
+  for (const ps of held) for (const p of ps) df.set(p, (df.get(p) ?? 0) + 1);
+  const n = docs.length;
+  const ranked: Ranked[] = [];
+  docs.forEach((d, i) => {
+    let score = 0;
+    let best = '';
+    let top = 0;
+    for (const p of held[i]!) {
+      const f = df.get(p)!;
+      if (f > Math.max(1, n / 10)) continue;
+      const w = p.split(' ').length * Math.log(n / f);
+      score += w;
+      if (w > top) [top, best] = [w, p];
+    }
+    if (score <= 0) return;
+    const passage = chunks(d.body).find((c) => ` ${words(c).join(' ')} `.includes(` ${best} `));
+    ranked.push({ relpath: d.relpath, score, why: 'phrase', passage });
+  });
+  return ranked.sort((a, b) => b.score - a.score || (a.relpath < b.relpath ? -1 : 1));
+}
+
 function cosine(a: number[], b: number[]): number {
   let dot = 0;
   let na = 0;
@@ -280,14 +356,36 @@ function cosine(a: number[], b: number[]): number {
 }
 
 /** Each page scored by its chunk closest to any chunk of the source. */
-export async function embeddingRank(corpus: Corpus, source: Source, embed: Embed): Promise<Ranked[]> {
-  const units = corpusChunks(corpus, source);
-  const queries = chunks(prose(source.text));
+export async function embeddingRank(corpus: Corpus, source: Source, embed: Embed, cut: Chunking = {}): Promise<Ranked[]> {
+  const units = corpusChunks(corpus, source, cut);
+  const queries = chunks(prose(source.text), 1200, cut.merge);
   if (!units.length || !queries.length) return [];
   const qv = await embed(queries, 'query');
   const dv = await embed(units.map((u) => u.text), 'document', units.map((u) => u.name));
   const scored = units.map((u, i) => ({ ...u, score: Math.max(...qv.map((q) => cosine(q, dv[i]!))) }));
   return bestPerPage(scored, 'embedding');
+}
+
+/**
+ * Reciprocal rank fusion (Cormack et al. 2009): each page scores the sum of 1/(k + rank)
+ * over the lists that hold it, rank from 1. k = 60 is the paper's constant. Ties by path.
+ */
+export function rrf(lists: readonly (readonly string[])[], k = 60): string[] {
+  const score = new Map<string, number>();
+  for (const list of lists) list.forEach((p, i) => score.set(p, (score.get(p) ?? 0) + 1 / (k + i + 1)));
+  return [...score].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([p]) => p);
+}
+
+/** Ranked lists fused by `rrf`; each page keeps the reason and passage of the list that ranked it highest. */
+export function fuse(lists: readonly (readonly Ranked[])[], k = 60): Ranked[] {
+  const best = new Map<string, { rank: number; r: Ranked }>();
+  for (const list of lists) {
+    list.forEach((r, rank) => {
+      const held = best.get(r.relpath);
+      if (!held || rank < held.rank) best.set(r.relpath, { rank, r });
+    });
+  }
+  return rrf(lists.map((l) => l.map((r) => r.relpath)), k).map((p, i, all) => ({ ...best.get(p)!.r, score: all.length - i }));
 }
 
 /** Every page the source names or links directly, then `fill` in its order, to `k`. */

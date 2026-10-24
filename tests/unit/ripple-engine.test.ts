@@ -196,7 +196,7 @@ test('the meaning model\'s top-up adds its pages to a waiting packet, once', asy
   assert.match(readFileSync(job!.packet, 'utf8'), /meaning model is not set up/);
   assert.deepEqual(await topUp(library, letters), { waiting: 1, written: 1 });
   const packet = readFileSync(job!.packet, 'utf8');
-  assert.match(packet, /then pages close in meaning\./);
+  assert.match(packet, /then pages that share its words or are close in meaning\./);
   assert.match(packet, /Mill/);
   assert.deepEqual(await topUp(library, letters), { waiting: 1, written: 0 }, 'the same pages write nothing');
   writeFileSync(job!.answer, answer([]));

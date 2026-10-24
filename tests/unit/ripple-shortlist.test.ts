@@ -7,11 +7,12 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  blend, buildCorpus, card, chunks, embeddingRank, inRoster, lexicalRank, packetChars, rosterChars, rosterRank,
+  blend, buildCorpus, card, chunks, embeddingRank, fuse, merged, phraseRank, inRoster, lexicalRank, packetChars, rosterChars, rosterRank,
   type Embed, type Source,
 } from '../../src/hoard/ripple/shortlist.ts';
-import { buildSheet, pastTargets, pickSources, readSheet, scoreSheet, withUnions, type Key } from '../../src/hoard/ripple/sheet.ts';
+import { buildSheet, pastTargets, pickSources, readSheet, renderScore, scoreSheet, withFusion, withUnions, rrf, mcnemar, mergeKeys, type Key } from '../../src/hoard/ripple/sheet.ts';
 import { readSnapshot } from '../../src/hoard/ripple/snapshot.ts';
+import { FUSED_EXTRAS, LEXICAL_EXTRAS, ROSTER_CARDS, shortlistFor } from '../../src/hoard/ripple/packet.ts';
 import { isolateGitConfig, tempDir } from './git-support.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -83,6 +84,44 @@ test('chunks are paragraphs, none longer than the cap, and nothing is lost', () 
 });
 
 // Rule: a page sharing the source's rare words outranks one sharing none, whatever links say.
+// Rule: a merged chunk joins consecutive paragraphs until it holds three sentences or
+// three paragraphs, never passes the cap, and loses nothing.
+test('merged chunks gather short paragraphs to three sentences or three paragraphs, within the cap', () => {
+  assert.deepEqual(merged(['Rain.', 'She ran', 'It stopped. Then sun.', 'Next.']), ['Rain.\n\nShe ran\n\nIt stopped. Then sun.', 'Next.']);
+  assert.deepEqual(merged(['One. Two. Three.', 'Four.']), ['One. Two. Three.', 'Four.'], 'a paragraph of three sentences stands alone');
+  assert.deepEqual(merged(['A', 'B', 'C', 'D']), ['A\n\nB\n\nC', 'D'], 'three paragraphs end a chunk short of three sentences');
+  assert.deepEqual(merged(['x'.repeat(8), 'y'.repeat(8)], 12), ['x'.repeat(8), 'y'.repeat(8)], 'never past the cap');
+  const body = 'Rain.\n\nShe ran.\n\nIt stopped.\n\nNext one here.';
+  assert.deepEqual(chunks(body, 1200, true), merged(chunks(body)), 'chunks can merge');
+  assert.equal(chunks(body, 1200, true).join(' ').replace(/\s+/g, ' '), body.replace(/\s+/g, ' '));
+});
+
+test('lexical ranking with merged chunks quotes the merged passage', () => {
+  const small = buildCorpus([['lore/A.md', 'Gulls cried.\n\nThe ledger burned.\n\nSmoke rose.\n\nLater still.'], ['lore/B.md', 'Nothing here.']]);
+  const src: Source = { relpath: 'sources/S.md', text: 'The ledger burned at dawn.' };
+  assert.equal(lexicalRank(small, src)[0]!.passage, 'The ledger burned.', 'baseline: paragraph chunks quote one paragraph');
+  assert.equal(lexicalRank(small, src, { merge: true })[0]!.passage, 'Gulls cried.\n\nThe ledger burned.\n\nSmoke rose.');
+});
+
+// Rule: a page that holds a phrase of the source word for word outranks one holding the
+// same words apart, and a phrase on many pages counts for nothing.
+test('phrase ranking finds pages that repeat the source\'s phrases word for word', () => {
+  const notes: [string, string][] = [
+    ['lore/A.md', 'Long ago the brine works closed for good.'],
+    ['lore/B.md', 'The works were salt and brine, and the gate closed.'],
+    ...Array.from({ length: 10 }, (_, i) => [`lore/F${i}.md`, `Filler ${i}: harbour master said so.`] as [string, string]),
+    // Enough unrelated pages that a word on two pages is not cut as common.
+    ...Array.from({ length: 20 }, (_, i) => [`lore/Q${i}.md`, `Quiet page ${i}.`] as [string, string]),
+  ];
+  const src: Source = { relpath: 'sources/S.md', text: 'The harbour master said the brine works closed.' };
+  const ranked = phraseRank(buildCorpus(notes), src);
+  assert.equal(ranked[0]!.relpath, 'lore/A.md');
+  assert.equal(ranked[0]!.why, 'phrase');
+  assert.match(ranked[0]!.passage!, /brine works closed/);
+  assert.ok(!ranked.some((r) => r.relpath === 'lore/B.md'), 'the same words apart are no phrase');
+  assert.ok(!ranked.some((r) => r.relpath.startsWith('lore/F')), 'a phrase on most pages counts for nothing');
+});
+
 test('lexical ranking finds the page that shares the source\'s words, and quotes the passage', () => {
   const ranked = lexicalRank(corpus, source);
   const brine = ranked.findIndex((r) => r.relpath === 'lore/Brine-Works.md');
@@ -261,6 +300,122 @@ test('a union adds another list\'s first pages the roster lacks, and leaves blen
   assert.equal(key.cases[0]!.lists.length, 3, 'the key itself is unchanged');
 });
 
+// Rule: reciprocal rank fusion scores a page by the sum of 1/(k + rank) over every list
+// that holds it, so agreement between lists counts, not only how high one list put it.
+test('fusion ranks a page two lists hold above one that a single list ranks first', () => {
+  const fused = rrf([['a.md', 'b.md', 'c.md'], ['b.md', 'd.md']], 60);
+  assert.deepEqual(fused, ['b.md', 'a.md', 'd.md', 'c.md']);
+  assert.deepEqual(rrf([['x.md'], ['y.md']], 60), ['x.md', 'y.md'], 'a tie goes by path');
+});
+
+test('a fused list matches the extras list in size: the roster then fused fills, or all three fused', () => {
+  const key: Key = { note: '', cases: [{ source: 's.md', pastTargets: [], wholeRosterPacketChars: 0, lists: [
+    { method: 'roster', pages: ['a.md', 'b.md'], packetChars: 1000, pastCaught: 0 },
+    { method: 'lexical', pages: ['a.md', 'c.md', 'e.md'], packetChars: 0, pastCaught: 0 },
+    { method: 'embedding m', pages: ['d.md', 'c.md', 'b.md'], packetChars: 0, pastCaught: 0 },
+    { method: 'blend m', pages: ['z.md'], packetChars: 0, pastCaught: 0 },
+  ] }] };
+  const lists = withFusion(key, 2).cases[0]!.lists;
+  const fill = lists.find((l) => l.method === 'roster + 2 rrf(lexical, embedding m)')!;
+  assert.deepEqual(fill.pages, ['a.md', 'b.md', 'c.md', 'd.md'], 'c is in both fills, so it comes first; the roster is never repeated');
+  const all = lists.find((l) => l.method === 'rrf(roster, lexical, embedding m) to roster + 2')!;
+  assert.deepEqual(all.pages, ['a.md', 'c.md', 'b.md', 'd.md'], 'a page every list holds can outrank a roster page');
+  assert.equal(fill.packetChars, 2000);
+  assert.ok(!lists.some((l) => l.method.includes('blend m') && l.method.includes('rrf')), 'blends are not fused');
+  assert.equal(key.cases[0]!.lists.length, 4, 'the key itself is unchanged');
+});
+
+test('a shorter roster keeps its first pages, and fusion may bring a cut roster page back', () => {
+  const key: Key = { note: '', cases: [{ source: 's.md', pastTargets: [], wholeRosterPacketChars: 0, lists: [
+    { method: 'roster', pages: ['a.md', 'b.md'], packetChars: 1000, pastCaught: 0 },
+    { method: 'lexical', pages: ['a.md', 'c.md', 'e.md'], packetChars: 0, pastCaught: 0 },
+    { method: 'embedding m', pages: ['d.md', 'c.md', 'b.md'], packetChars: 0, pastCaught: 0 },
+  ] }] };
+  const lists = withFusion(key, 3, 1).cases[0]!.lists;
+  const cut = lists.find((l) => l.method === 'roster 1 + 3 rrf(lexical, embedding m)')!;
+  assert.deepEqual(cut.pages, ['a.md', 'c.md', 'd.md', 'b.md'], 'b was cut from the roster and came back on its fused rank');
+  assert.equal(cut.packetChars, 2000);
+  assert.ok(lists.some((l) => l.method === 'rrf(roster, lexical, embedding m) to roster 1 + 3'));
+});
+
+// Rule: a paired comparison counts, case by case, the ticked pages one list caught and
+// the other missed; the exact McNemar test reads only those discordant pages.
+test('the exact McNemar p is 1 when gains and losses balance, and small only for one-sided runs', () => {
+  assert.equal(mcnemar(0, 0), 1);
+  assert.equal(mcnemar(1, 1), 1);
+  assert.equal(mcnemar(5, 0), 0.0625);
+  assert.equal(mcnemar(0, 5), 0.0625);
+  assert.ok(Math.abs(mcnemar(9, 1) - 0.021484375) < 1e-12);
+});
+
+test('scoring against a baseline counts the ticked pages each list gained and lost, case by case', () => {
+  const list = (method: string, pages: string[]) => ({ method, pages, packetChars: 1, pastCaught: 0 });
+  const key: Key = { note: '', cases: [
+    { source: 'sources/One.md', pastTargets: [], wholeRosterPacketChars: 1, lists: [list('base', ['a.md', 'b.md']), list('new', ['a.md', 'c.md'])] },
+    { source: 'sources/Two.md', pastTargets: [], wholeRosterPacketChars: 1, lists: [list('base', ['b.md']), list('new', ['b.md', 'c.md'])] },
+  ] };
+  // b is ticked only in case one and c only in case two, so a page caught in the wrong
+  // case must not count.
+  const sheet = '## Case 1: sources/One.md\n\n- [x] [[A]] (a.md): \n- [x] [[B]] (b.md): \n- [ ] [[C]] (c.md): \n'
+    + '## Case 2: sources/Two.md\n\n- [ ] [[B]] (b.md): \n- [x] [[C]] (c.md): \n';
+  const score = scoreSheet(sheet, key, 'base');
+  assert.equal(score.totals.find((t) => t.method === 'base')!.caught, 2, 'baseline: the ticks were read');
+  const row = score.paired!.rows.find((r) => r.method === 'new')!;
+  assert.deepEqual([row.gained, row.lost, row.p], [1, 1, 1]);
+  assert.deepEqual(score.paired!.rows.find((r) => r.method === 'base')!.gained, 0);
+  assert.match(renderScore(score), /Against base/);
+  assert.throws(() => scoreSheet(sheet, key, 'missing'), /missing/);
+});
+
+test('a baseline key joins this key case by case, its lists marked base', () => {
+  const list = (method: string, pages: string[]) => ({ method, pages, packetChars: 1, pastCaught: 0 });
+  const mine: Key = { note: '', cases: [{ source: 'sources/One.md', pastTargets: [], wholeRosterPacketChars: 1, lists: [list('lexical', ['a.md'])] }] };
+  const theirs: Key = { note: '', cases: [{ source: 'sources/one.md', pastTargets: [], wholeRosterPacketChars: 1, lists: [list('lexical', ['b.md'])] }] };
+  const both = mergeKeys(mine, theirs, 'base: ');
+  assert.deepEqual(both.cases[0]!.lists.map((l) => [l.method, l.pages[0]]), [['lexical', 'a.md'], ['base: lexical', 'b.md']]);
+  assert.throws(() => mergeKeys(mine, { note: '', cases: [] }, 'base: '), /sources\/One\.md/);
+});
+
+test('fusing ranked lists keeps the best leg\'s reason and passage for each page', () => {
+  const lex = [{ relpath: 'a.md', score: 9, why: 'lexical', passage: 'A words' }, { relpath: 'b.md', score: 5, why: 'lexical', passage: 'B words' }];
+  const emb = [{ relpath: 'b.md', score: 0.9, why: 'embedding', passage: 'B meaning' }, { relpath: 'c.md', score: 0.8, why: 'embedding', passage: 'C meaning' }];
+  const fused = fuse([lex, emb]);
+  assert.deepEqual(fused.map((r) => r.relpath), ['b.md', 'a.md', 'c.md']);
+  assert.deepEqual([fused[0]!.why, fused[0]!.passage], ['embedding', 'B meaning'], 'b ranked first for the model');
+  assert.deepEqual([fused[1]!.why, fused[1]!.passage], ['lexical', 'A words']);
+});
+
+// Rule (24 Oct ruling): with the model, the packet's shortlist is the roster's 30, then
+// the 15 pages the roster lacks that fusing BM25 and the model ranks highest, both on
+// merged chunks; without the model it is the roster's 30 then 10 BM25 pages.
+test('the in-app shortlist fuses BM25 and the model on merged chunks, or falls back to BM25 alone', async () => {
+  const pad = (i: number): string => String(i).padStart(2, '0');
+  const notes: [string, string][] = Array.from({ length: 60 }, (_, i) => [`lore/P${pad(i)}.md`, `Page ${pad(i)} tells of nets.`] as [string, string]);
+  notes[50] = ['lore/P50.md', 'Short line.\n\nThe kelp ledger burned.\n\nSmoke rose.'];
+  notes[55] = ['lore/P55.md', 'A kelp tithe was paid.'];
+  const big = buildCorpus(notes);
+  const src: Source = { relpath: 'sources/S.md', text: 'The kelp ledger burned at dawn.' };
+  const roster = rosterRank(big, src).slice(0, ROSTER_CARDS).map((r) => r.relpath);
+  assert.equal(roster.length, 30, 'baseline: the roster fills its 30');
+  assert.ok(!roster.includes('lore/P50.md') && !roster.includes('lore/P55.md'), 'baseline: the two pages are past the roster');
+  const words = await shortlistFor(big, src);
+  assert.equal(words.modelled, false);
+  assert.ok(LEXICAL_EXTRAS >= 2);
+  assert.deepEqual(words.ranked.slice(ROSTER_CARDS).map((r) => r.relpath), ['lore/P50.md', 'lore/P55.md'], 'only two pages share words');
+  assert.equal(words.ranked.find((r) => r.relpath === 'lore/P50.md')!.passage, 'The kelp ledger burned.', 'words alone read paragraphs');
+  // The model also leans the source (it says dawn) towards pages 30 to 59, so its first 30
+  // reach past the roster.
+  const kelp = async (texts: string[]) => texts.map((t) => [/kelp/i.test(t) ? 1 : 0, /ledger/i.test(t) ? 1 : 0, 0.01, /dawn|Page [3-5]\d/.test(t) ? 1 : 0]);
+  const both = await shortlistFor(big, src, kelp);
+  assert.equal(both.modelled, true);
+  assert.equal(both.ranked.length, ROSTER_CARDS + FUSED_EXTRAS);
+  assert.deepEqual(both.ranked.slice(0, ROSTER_CARDS).map((r) => r.relpath), roster);
+  assert.equal(new Set(both.ranked.map((r) => r.relpath)).size, both.ranked.length, 'no page twice');
+  const extras = both.ranked.slice(ROSTER_CARDS).map((r) => r.relpath);
+  assert.deepEqual(extras.slice(0, 2), ['lore/P50.md', 'lore/P55.md'], 'the page both legs find leads');
+  assert.match(both.ranked[ROSTER_CARDS]!.passage!, /Short line\.\n\nThe kelp ledger burned\./, 'the model reads merged chunks');
+});
+
 // Rule: a case is read as the vault stood before its source came in, so a link the
 // ripple wrote afterwards cannot make its own target look near.
 test('a git snapshot reads the corpus at the parent of the commit that added the source', (t) => {
@@ -295,7 +450,7 @@ test('the command writes a sheet and a key, scores the ticks, and refuses to wri
   assert.equal(ok.status, 0, ok.stderr);
   assert.ok(existsSync(path.join(out, 'sheet.md')));
   const key = JSON.parse(readFileSync(path.join(out, 'key.json'), 'utf8'));
-  assert.deepEqual(key.cases[0].lists.map((l: { method: string }) => l.method).sort(), ['blend', 'lexical', 'roster']);
+  assert.deepEqual(key.cases[0].lists.map((l: { method: string }) => l.method).sort(), ['blend', 'lexical', 'phrase', 'roster']);
   const sheetFile = path.join(out, 'sheet.md');
   writeFileSync(sheetFile, readFileSync(sheetFile, 'utf8').replace('- [ ] [[Wren-Calder]]', '- [x] [[Wren-Calder]]'));
   const scored = spawnSync(process.execPath, [cli, '--score', out], { encoding: 'utf8' });
