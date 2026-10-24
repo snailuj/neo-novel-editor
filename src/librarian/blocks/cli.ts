@@ -198,9 +198,12 @@ async function group(values: Map<string, string>, positional: string[], io: Io):
     try {
       const entries = await findEntries(page, blocks, judge, {});
       const topics = await groupEntries(page, blocks, entries, judge, { votes });
-      topicRows(page, blocks, entries, topics, rows);
-      // The outline first: the sheet marks the page grouped, so it is saved last.
-      writeFileSync(path.join(outlines, `${page.replace(/\.md$/i, '').replace(/[\\/]/g, ' - ')}.md`), outline(page, blocks, entries, topics, rows));
+      // Grouped on copies, kept only once the outline is written: the sheet marks a page
+      // grouped, and another page's save must not carry this one's half-done grouping.
+      const staged = mine.map((r) => ({ ...r }));
+      topicRows(page, blocks, entries, topics, staged);
+      writeFileSync(path.join(outlines, `${page.replace(/\.md$/i, '').replace(/[\\/]/g, ' - ')}.md`), outline(page, blocks, entries, topics, staged));
+      mine.forEach((r, i) => Object.assign(r, staged[i]));
       writeAtomic(sheetFile, writeSheet(rows));
       const doubts = topics.filter((t) => t.by !== 'judge').length;
       log.info(`${page}: ${entries.length} entries, ${new Set(topics.map((t) => t.topic)).size} topics, ${doubts} to check, ${Math.round(performance.now() - started)}ms`);

@@ -216,7 +216,8 @@ export function topicRows(page: string, blocks: readonly Block[], entries: reado
     const t = topics[i]!;
     for (const r of rowsOf(e)) {
       const untouched = r.wiki_page === defaultDest(page, r.heading) || (r.topic !== '' && r.wiki_page === topicDest(r.topic));
-      if (r.wiki_page && untouched) r.wiki_page = (wikiEntries.get(t.topic) ?? 0) >= 2 ? topicDest(t.topic) : defaultDest(page, r.heading);
+      const shared = t.by !== 'judge-failed' && (wikiEntries.get(t.topic) ?? 0) >= 2;
+      if (r.wiki_page && untouched) r.wiki_page = shared ? topicDest(t.topic) : defaultDest(page, r.heading);
       r.entry = `e${i + 1}`;
       r.topic = t.topic;
       r.topic_by = t.by;

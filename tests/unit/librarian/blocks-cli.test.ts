@@ -206,4 +206,11 @@ test('when the outline cannot be written the page is not marked grouped', async 
   const r = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Scratch.md'], dir);
   assert.equal(r.code, 3);
   assert.ok(readSheet(readFileSync(sheet, 'utf8')).every((x) => x.entry === ''), 'a re-run will group it');
+  // A page grouped after it saves the sheet, but not the failed page's grouping.
+  await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, '--pages', 'pages.txt'], dir);
+  const both = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Scratch.md', 'Daily/2026-01-01.md'], dir);
+  assert.equal(both.code, 3);
+  const rows = readSheet(readFileSync(sheet, 'utf8'));
+  assert.ok(rows.filter((x) => x.page === 'Scratch.md').every((x) => x.entry === ''));
+  assert.ok(rows.filter((x) => x.page !== 'Scratch.md').every((x) => x.entry !== ''));
 });

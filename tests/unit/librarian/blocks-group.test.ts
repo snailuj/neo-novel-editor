@@ -173,6 +173,13 @@ test('entries left alone by a failed judge never share a page, even with the sam
   topicRows('Scratch.md', blocks, entries, entries.map(() => ({ topic: 'Notes', by: 'judge-failed', others: [] })), rows);
   assert.deepEqual([rows[0]!.wiki_page, rows[6]!.wiki_page], ['Scratch-3-May-(snippets)', 'Scratch-Later-(snippets)']);
   assert.equal(rows[0]!.topic_by, 'judge-failed');
+  // Nor does a failed entry join a real topic that happens to share its title.
+  const again = rowsFor('Scratch.md', blocks, judged(['writing', 'writing', 'tasks', 'tasks', 'writing', 'writing', 'writing']), []);
+  topicRows('Scratch.md', blocks, entries, [
+    { topic: 'Notes', by: 'judge-failed', others: [] }, { topic: 'Errands', by: 'judge', others: [] },
+    { topic: 'Notes', by: 'judge', others: [] }, { topic: 'Notes', by: 'judge', others: [] },
+  ], again);
+  assert.deepEqual([again[0]!.wiki_page, again[4]!.wiki_page, again[6]!.wiki_page], ['Scratch-3-May-(snippets)', 'Notes-(snippets)', 'Notes-(snippets)']);
 });
 
 test('topicDest is one safe path segment', () => {
