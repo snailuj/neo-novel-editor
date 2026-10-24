@@ -164,3 +164,15 @@ test('claude printing its verbose message list scores and costs the same as its 
   assert.equal(totals[0].costUsd, 0.02, 'the judge\'s cost is read from the result entry');
   assert.equal(totals[0].outputTokens, 20);
 });
+
+// Rule: the ruled arm cards the screen's yes pages in full and asks a line for each of them.
+test('the ruled arm asks the judge to rule on each page the screen said yes to', async (t) => {
+  const { vault, scored, out } = setup(t);
+  const calls: { args: string[]; cwd: string }[] = [];
+  await main(['--vault', vault, '--scored', scored, '--out', out, '--arms', 'base,screen,ruled', '--claude', 'fake-claude'], { runner: fakeClaude(calls), log: () => {} });
+  assert.equal(calls.filter((c) => !c.args.includes('--max-turns')).length, 2, 'base and ruled each judged once');
+  const ruled = readFileSync(path.join(out, 'packets', 'ruled-1', '01-gale-log.md'), 'utf8');
+  assert.match(ruled, /^1 in full and 2 by name only\./m, 'only the screen\'s yes page is full');
+  assert.match(ruled, /^## Pages to rule on \(1\)\n\n.+\n\n- \[\[Net-Loft\]\]\n/m);
+  assert.match(readFileSync(path.join(out, 'eval.md'), 'utf8'), /^\| ruled-1 \| 1 \| 1 of 1 \|/m);
+});

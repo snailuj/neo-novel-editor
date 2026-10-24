@@ -1,5 +1,5 @@
 // npm run ripple:judge-eval -- --vault <hoard> --scored <folder holding key.json>
-//   [--ticks <sheet.md> ...] --out <folder> [--arms base,base,screen,screened,budget,wide,map]
+//   [--ticks <sheet.md> ...] --out <folder> [--arms base,base,screen,screened,ruled,budget,wide,map]
 //   [--dry-run] [--model opus] [--screen-model opus] [--embed <model>[#titles]]
 //   [--map-chars 12000] [--jobs 4] [--cases <n>] [--claude <command>] [--tools <list>]
 // Runs the judge arms of plans/ripple-judge-tweaks.md over the scorer's cases and scores
@@ -45,7 +45,7 @@ export const spawnRunner: Runner = ({ command, args, stdin, cwd }) => new Promis
   child.stdin.end(stdin);
 });
 
-const ARMS = ['base', 'screen', 'screened', 'budget', 'wide', 'map'] as const;
+const ARMS = ['base', 'screen', 'screened', 'ruled', 'budget', 'wide', 'map'] as const;
 type Arm = typeof ARMS[number];
 // Each call leaves out the user's own settings (hooks, plugins, `verbose`), MCP servers and
 // skills: a Stop hook adds turns, and the tool lists cost tokens on every call.
@@ -244,11 +244,12 @@ export async function main(argv: string[], deps: { runner?: Runner; log?: (messa
       : arm === 'wide' ? { ...common, shortlist: { ranked: p.wide, modelled: p.base.modelled }, budgetChars: p.baseChars }
         : arm === 'map' ? { ...common, map: p.map.text }
           : arm === 'screened' ? { ...common, fullOnly: yes }
+            : arm === 'ruled' ? { ...common, fullOnly: yes, mustRule: yes ?? new Set() }
             : common;
     return buildPacket(input);
   }
 
-  // The screen first: the screened arm reads its answers.
+  // The screen first: the screened and ruled arms read its answers.
   const screens = new Map<string, { results: Map<string, Screen>; usage?: Usage; failed: number }>();
   const screenDir = path.join(out, 'screen');
   for (const p of prepared) {
@@ -309,8 +310,8 @@ export async function main(argv: string[], deps: { runner?: Runner; log?: (messa
         if (!dry) outcomes.get(run.name)!.set(p.c.slug, s.results.size ? { kind: 'screen', results: s.results, usage: s.usage } : { kind: 'failed', why: 'no screen answer came back', usage: s.usage });
         continue;
       }
-      if (run.arm === 'screened' && !s.results.size) {
-        log(`${run.name} ${p.c.slug}: no screen answers yet, so no screened packet; run the screen arm first`);
+      if ((run.arm === 'screened' || run.arm === 'ruled') && !s.results.size) {
+        log(`${run.name} ${p.c.slug}: no screen answers yet, so no ${run.arm} packet; run the screen arm first`);
         if (!dry) outcomes.get(run.name)!.set(p.c.slug, { kind: 'failed', why: 'no screen answers for this case; run the screen arm first' });
         continue;
       }
