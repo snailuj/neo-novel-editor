@@ -131,6 +131,16 @@ Built 16 October 2026 (roadmap step 7, Librarian-Watches-Edits, the half beside 
 - A `[[link]]` in any comment's words is a button that shows its page in the Wiki section.
 - Not built yet: continuity findings (hoard's canon lists candidate pairs only, for a person or a semantic reviewer); watching the wiki's own pages; a button for Stop Flagging on the comment's card (step 8's card actions); committing the librarian's comments under its own name (they ride the next checkpoint, each mark saying who made it, until the commit pair is in).
 
+## Block classifier as built
+
+Built 16 October 2026 for pages that became scratchpads, where writing sits among journaling, tasks and personal notes; the plan is `port-plan/plans/block-classifier.md` in the project files. It is a command-line tool under `src/librarian/blocks/`, run before an import, not part of the app (`npm run blocks -- classify|apply`).
+
+- A block is one top-level Markdown block: a paragraph, a top-level list item with everything nested under it, a fence, a quote, a table, a comment or the frontmatter (`split.ts`). Headings and separators are its context. Its id is the first 10 hex of its text's SHA-256.
+- Frontmatter, comments, embeds alone and `Field:: value` lines are labelled by rule (`rules.ts`). Every other block goes to a judge, any command that reads a prompt on stdin and prints JSON (`judge.ts`), one call per page or 120 blocks so it sees the headings and neighbours. Labels: writing (creative work or notes for it, however small), morning-pages, tasks, other, and a pasted flag. `--votes 2` asks twice; a block whose votes differ is marked for the author.
+- classify writes a review sheet (`sheet.ts`), one CSV row per block, after every page. Each block has two homes: `wiki` (yes, no, check) with `wiki_page`, and `book`, a chapter of the Morning Pages book. Writing goes to the wiki unless pasted; a Morning Pages section goes to the book whole, writing in it included, so the journal keeps each day. Sections already on an import list (`--already`) are not proposed again. A re-run keeps every row it has and judges only new blocks.
+- apply (`apply.ts`) writes a wiki page per `wiki_page` with its sources in frontmatter, `Morning Pages.md` with a `# date` heading per day for NEO's own Import, and `import-list.txt` for Import List to Wiki. A block that changed since review is not written and is named. The vault is only read.
+- The sheet holds page text, so it lives with the writer's private files, never in the repository.
+
 ## Suggestion and review model
 
 The author's requirement, in their words (10 October 2026):
