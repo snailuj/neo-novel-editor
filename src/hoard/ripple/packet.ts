@@ -48,6 +48,8 @@ export interface Packet {
   /** Corpus paths carded in full, and those given a locator line only. */
   full: string[];
   locator: string[];
+  /** The full cards' characters, a newline each, as a budget counts them. */
+  fullChars: number;
 }
 
 const CONTRACT = `## How to answer
@@ -124,5 +126,5 @@ export async function buildPacket(input: PacketInput): Promise<Packet> {
     '',
     ...map,
   ].join('\n');
-  return { text, candidates: cards.candidates, modelled, full: cards.full, locator: cards.locator };
+  return { text, candidates: cards.candidates, modelled, full: cards.full, locator: cards.locator, fullChars: cards.fullChars };
 }

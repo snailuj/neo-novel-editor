@@ -108,6 +108,7 @@ test('a packet with a budget and a map says what is full and gives the map after
   assert.match(packet.text, new RegExp(`^${packet.full.length} in full and ${packet.locator.length} by name only\\.`, 'm'));
   assert.ok(packet.full.length > 0 && packet.locator.length > 0, 'baseline: the budget splits the list');
   assert.equal(packet.full.length + packet.locator.length, packet.candidates.length);
+  assert.ok(packet.fullChars > 0 && packet.fullChars <= 300, 'the full cards keep the budget');
   const cands = packet.text.indexOf('## Candidates');
   const map = packet.text.indexOf('## Wiki map');
   assert.ok(cands > 0 && map > cands, 'the map comes after the candidates');
