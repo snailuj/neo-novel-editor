@@ -2,18 +2,21 @@
 // it, so the preflight's echo proves the brief was read; it holds the source, the output
 // contract, and a shortlist of candidate pages in place of hoard's whole roster.
 //
-// The shortlist is the one snailuj's reading chose (16 Oct, plan "Full precision and
-// mixes"): the roster's first 30 (pages the source names, then pages near it in the link
-// graph), then the first 10 pages BM25 finds that those lack, then the first 10 an
-// on-device model finds that all of those lack. Without the model the model's ten are
-// left out and the packet says so. Pure, but for the embedder it is handed.
+// The shortlist (ruling Shortlist-Fused-From-Merged-Chunks, 24 Oct, scored on 173 ticks):
+// the roster's first 30 (pages the source names, then pages near it in the link graph),
+// then the 15 pages those lack that rank fusion of BM25 and the on-device model ranks
+// highest, both reading merged chunks. Without the model it is the 16 Oct list: the
+// roster's 30 then the first 10 pages BM25 finds on paragraph chunks, and the packet
+// says the model is missing. Pure, but for the embedder it is handed.
 import type { RippleJob } from './rulings.ts';
-import { card, embeddingRank, lexicalRank, rosterRank, withExtras, type Corpus, type Embed, type Ranked, type Source } from './shortlist.ts';
+import { card, embeddingRank, fuse, lexicalRank, rosterRank, withExtras, type Corpus, type Embed, type Ranked, type Source } from './shortlist.ts';
 import type { WikiPage } from './pages.ts';
 
 export const ROSTER_CARDS = 30;
 export const LEXICAL_EXTRAS = 10;
-export const MODEL_EXTRAS = 10;
+export const FUSED_EXTRAS = 15;
+/** Each leg is cut to this before fusing, as on the sheets the ruling was scored on. */
+export const FUSE_DEPTH = 30;
 
 export interface PacketInput {
   job: RippleJob;
@@ -65,9 +68,11 @@ function why(r: Ranked): string {
 
 /** The shortlist, as the ruling has it. */
 export async function shortlistFor(corpus: Corpus, source: Source, embed?: Embed): Promise<{ ranked: Ranked[]; modelled: boolean }> {
-  const fills = [{ ranked: lexicalRank(corpus, source), n: LEXICAL_EXTRAS }];
-  if (embed) fills.push({ ranked: await embeddingRank(corpus, source, embed), n: MODEL_EXTRAS });
-  return { ranked: withExtras(rosterRank(corpus, source), ROSTER_CARDS, fills), modelled: Boolean(embed) };
+  const roster = rosterRank(corpus, source);
+  if (!embed) return { ranked: withExtras(roster, ROSTER_CARDS, [{ ranked: lexicalRank(corpus, source), n: LEXICAL_EXTRAS }]), modelled: false };
+  const cut = { merge: true };
+  const legs = [lexicalRank(corpus, source, cut), await embeddingRank(corpus, source, embed, cut)].map((l) => l.slice(0, FUSE_DEPTH));
+  return { ranked: withExtras(roster, ROSTER_CARDS, [{ ranked: fuse(legs), n: FUSED_EXTRAS }]), modelled: true };
 }
 
 export async function buildPacket(input: PacketInput): Promise<Packet> {
@@ -105,8 +110,8 @@ export async function buildPacket(input: PacketInput): Promise<Packet> {
     `## Candidates (${cards.length})`,
     '',
     modelled
-      ? 'The pages the source names or sits near in the links, then pages that share its words, then pages close in meaning.'
-      : 'The pages the source names or sits near in the links, then pages that share its words. (The meaning model is not set up, so its ten are missing.)',
+      ? 'The pages the source names or sits near in the links, then pages that share its words or are close in meaning.'
+      : 'The pages the source names or sits near in the links, then pages that share its words. (The meaning model is not set up, so its pages are missing.)',
     '',
     ...cards,
     '',

@@ -366,6 +366,28 @@ export async function embeddingRank(corpus: Corpus, source: Source, embed: Embed
   return bestPerPage(scored, 'embedding');
 }
 
+/**
+ * Reciprocal rank fusion (Cormack et al. 2009): each page scores the sum of 1/(k + rank)
+ * over the lists that hold it, rank from 1. k = 60 is the paper's constant. Ties by path.
+ */
+export function rrf(lists: readonly (readonly string[])[], k = 60): string[] {
+  const score = new Map<string, number>();
+  for (const list of lists) list.forEach((p, i) => score.set(p, (score.get(p) ?? 0) + 1 / (k + i + 1)));
+  return [...score].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([p]) => p);
+}
+
+/** Ranked lists fused by `rrf`; each page keeps the reason and passage of the list that ranked it highest. */
+export function fuse(lists: readonly (readonly Ranked[])[], k = 60): Ranked[] {
+  const best = new Map<string, { rank: number; r: Ranked }>();
+  for (const list of lists) {
+    list.forEach((r, rank) => {
+      const held = best.get(r.relpath);
+      if (!held || rank < held.rank) best.set(r.relpath, { rank, r });
+    });
+  }
+  return rrf(lists.map((l) => l.map((r) => r.relpath)), k).map((p, i, all) => ({ ...best.get(p)!.r, score: all.length - i }));
+}
+
 /** Every page the source names or links directly, then `fill` in its order, to `k`. */
 export function blend(roster: Ranked[], fill: Ranked[], k: number): Ranked[] {
   const out: Ranked[] = [];

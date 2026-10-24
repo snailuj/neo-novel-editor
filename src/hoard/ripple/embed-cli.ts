@@ -1,5 +1,5 @@
 // npm run ripple:embed -- --library <NEO Library> [--device cpu|dml|cuda] [--cache <folder>]
-// Adds the meaning model's ten pages to each packet still waiting for the judge, on the
+// Adds the meaning model's pages to each packet still waiting for the judge, on the
 // author's machine and outside NEO (snailuj's 16 Oct ruling: roster, then ten BM25
 // pages, then ten from EmbeddingGemma 2 at full precision with page titles). Run it
 // after Run Ripple and before the judge reads the packets. Only packets with no answer

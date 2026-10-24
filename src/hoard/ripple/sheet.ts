@@ -2,7 +2,9 @@
 // noisy key (two runs of one judge agreed on 8 of 24 targets by kind), so the author
 // reads the candidates instead. The sheet hides which list held a page; the key says.
 import { key as linkKey } from '../../librarian/links.ts';
-import { card, packetChars, type Corpus, type Ranked } from './shortlist.ts';
+import { card, packetChars, rrf, type Corpus, type Ranked } from './shortlist.ts';
+
+export { rrf };
 
 export interface SheetList {
   method: string;
@@ -160,16 +162,6 @@ export function withUnions(key: Key, extra: number): Key {
       return { ...c, lists: [...c.lists, ...singles.map((l) => join([l])), ...pairs.map(join)] };
     }),
   };
-}
-
-/**
- * Reciprocal rank fusion (Cormack et al. 2009): each page scores the sum of 1/(k + rank)
- * over the lists that hold it, rank from 1. k = 60 is the paper's constant. Ties by path.
- */
-export function rrf(lists: readonly (readonly string[])[], k = 60): string[] {
-  const score = new Map<string, number>();
-  for (const list of lists) list.forEach((p, i) => score.set(p, (score.get(p) ?? 0) + 1 / (k + i + 1)));
-  return [...score].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([p]) => p);
 }
 
 /**
