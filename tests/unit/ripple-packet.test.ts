@@ -4,10 +4,11 @@ import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { renderCards } from '../../src/hoard/ripple/cards.ts';
 import { buildPacket, type PacketInput } from '../../src/hoard/ripple/packet.ts';
 import type { WikiPage } from '../../src/hoard/ripple/pages.ts';
 import type { RippleJob } from '../../src/hoard/ripple/rulings.ts';
-import { buildCorpus, type Embed } from '../../src/hoard/ripple/shortlist.ts';
+import { buildCorpus, rosterRank, type Embed } from '../../src/hoard/ripple/shortlist.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixtures = path.resolve(here, '../fixtures/ripple');
@@ -51,4 +52,64 @@ test('a packet built without the new options is byte-identical to the pinned pac
     assert.ok(packet.candidates.length > 3, 'baseline: the packet holds candidates');
     assert.equal(packet.text, readFileSync(path.join(fixtures, name), 'utf8'), name);
   }
+  // With no candidates the packet ends on the list's opening sentence, as it always did.
+  const empty = await buildPacket(input({ corpus: buildCorpus([]) }));
+  assert.equal(empty.candidates.length, 0);
+  assert.ok(empty.text.endsWith('## Candidates (0)\n\nThe pages the source names or sits near in the links, then pages that share its words. (The meaning model is not set up, so its ten are missing.)\n\n'));
+});
+
+const ranked = rosterRank(corpus, { relpath: sourceRel, text: sourceText });
+const all = ranked.map((r) => r.relpath);
+const fullLines = (text: string) => text.split('\n').filter((l) => /^- \[\[/.test(l));
+
+// Rule: under a budget, the full cards never pass it, and every candidate appears once,
+// in rank order, either as a full card or as a locator line, as the counts line says.
+test('budgeted cards keep the budget and list every candidate once, in rank order', () => {
+  const whole = renderCards(corpus, ranked);
+  assert.equal(whole.locator.length, 0, 'baseline: with no budget every card is full');
+  assert.ok(whole.fullChars > 100);
+  let mixed = 0;
+  for (let budget = 0; budget <= whole.fullChars + 20; budget += 7) {
+    const c = renderCards(corpus, ranked, { budgetChars: budget });
+    assert.ok(c.fullChars <= budget, `full cards fit ${budget}`);
+    assert.deepEqual([...c.full, ...c.locator].sort(), [...all].sort(), 'each candidate once');
+    assert.deepEqual(c.full, all.slice(0, c.full.length), 'full cards are the first in rank order');
+    const titles = fullLines(c.text).map((l) => /^- \[\[([^\]]+)\]\]/.exec(l)![1]);
+    assert.deepEqual(titles, all.map((r) => corpus.byRel.get(r)!.name), 'the text lists them in rank order');
+    for (const rel of c.locator) assert.match(c.text, new RegExp(`^- \\[\\[${corpus.byRel.get(rel)!.name}\\]\\][^\\n]* file: ${rel}$`, 'm'));
+    assert.match(c.text, new RegExp(`^${c.full.length} in full and ${c.locator.length} by name only\\.`, 'm'));
+    if (c.full.length && c.locator.length) mixed++;
+  }
+  assert.ok(mixed > 2, 'baseline: some budgets split the list');
+});
+
+test('a locator line is the title, why and file; a full card keeps its gloss and passage', () => {
+  const c = renderCards(corpus, ranked, { budgetChars: 0, pageOf: (rel) => ({ title: `T ${corpus.byRel.get(rel)!.name}`, file: `x/${rel}` }) });
+  assert.equal(c.full.length, 0);
+  assert.match(c.text, /^- \[\[T Harbour-Light\]\] \(named\) file: x\/lore\/Harbour-Light\.md$/m);
+  assert.match(c.text, /^- \[\[T Old-Mill\]\] file: x\/lore\/Old-Mill\.md$/m, 'no why, no brackets');
+});
+
+// Rule: a page outside the screened set is a locator whatever the budget.
+test('pages outside the full-only set become locators, the rest stay full', () => {
+  const keep = new Set([all[1]!, all[4]!]);
+  const c = renderCards(corpus, ranked, { fullOnly: keep });
+  assert.deepEqual(c.full, [all[1], all[4]]);
+  assert.equal(c.locator.length, all.length - 2);
+  assert.match(c.text, new RegExp(`^2 in full and ${all.length - 2} by name only\\.`, 'm'));
+  const tight = renderCards(corpus, ranked, { fullOnly: keep, budgetChars: 1 });
+  assert.equal(tight.full.length, 0, 'the budget still holds');
+});
+
+test('a packet with a budget and a map says what is full and gives the map after the candidates', async () => {
+  const plain = await buildPacket(input());
+  const packet = await buildPacket(input({ budgetChars: 300, map: 'lore/\n- Harbour-Light' }));
+  assert.deepEqual(packet.candidates, plain.candidates, 'the same candidates');
+  assert.match(packet.text, /^\d+ in full and \d+ by name only\./m);
+  const cands = packet.text.indexOf('## Candidates');
+  const map = packet.text.indexOf('## Wiki map');
+  assert.ok(cands > 0 && map > cands, 'the map comes after the candidates');
+  assert.match(packet.text.slice(map), /target any page/);
+  assert.ok(packet.text.trimEnd().endsWith('- Harbour-Light'));
+  assert.ok(!plain.text.includes('## Wiki map'));
 });
