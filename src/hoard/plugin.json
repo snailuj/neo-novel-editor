@@ -1,18 +1,23 @@
 {
   "id": "hoard",
-  "apiVersion": 4,
+  "apiVersion": 5,
   "renderer": "renderer.js",
   "main": "main.cjs",
   "commands": [
     { "id": "keep-history", "title": "Keep Library History" },
+    { "id": "check-findings", "title": "Library Check Findings" },
     { "id": "add-comment", "title": "Add Comment" },
     { "id": "toggle-comments", "title": "Show or Hide Comments" },
     { "id": "import-wiki", "title": "Import to Wiki…" },
     { "id": "open-wiki", "title": "Edit Wiki as a Book" },
     { "id": "follow-link", "title": "Follow Link" },
+    { "id": "suggest-change", "title": "Suggest Change" },
+    { "id": "edit-directly", "title": "Suggest or Edit Directly" },
     { "id": "search-library", "title": "Search Library…" },
     { "id": "stop-flagging", "title": "Stop Flagging This Page" },
-    { "id": "flag-again", "title": "Flag This Page Again" }
+    { "id": "flag-again", "title": "Flag This Page Again" },
+    { "id": "run-ripple", "title": "Run Ripple" },
+    { "id": "ripple-chapter", "title": "Ripple This Chapter" }
   ],
   "style": "style.css"
 }

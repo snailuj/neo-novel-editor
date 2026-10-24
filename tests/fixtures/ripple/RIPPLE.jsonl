@@ -1,0 +1,7 @@
+{"id":"rp_1","kind":"claim","status":"applied","source":"sources/Tide-Ledger.md","target":"lore/Wren-Calder.md","hop":0}
+{"id":"rp_2","kind":"claim","status":"packeted","source":"sources/Tide-Ledger.md","target":"lore/Brine-Works.md","hop":0}
+{"id":"rp_2","kind":"claim","status":"applied","source":"sources/Tide-Ledger.md","target":"lore/Brine-Works.md","hop":0}
+{"id":"rp_3","kind":"nothing","status":"rejected","source":"sources/Tide-Ledger.md","target":"lore/Old-Mill.md","hop":0}
+{"id":"rp_4","kind":"claim","status":"applied","source":"lore/Wren-Calder.md","target":"lore/Harbour-Light.md","hop":1}
+{"id":"rp_5","kind":"mint","status":"applied","source":"sources/Other-Log.md","target":"lore/Net-Loft.md","hop":0}
+{"id":"rp_6","kind":"packet","status":"packeted","source":"sources/Tide-Ledger.md","hop":0}

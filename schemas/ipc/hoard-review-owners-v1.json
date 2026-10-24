@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "A request for the chapters of one book that are the librarian's, version 1, from their page sidecars.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "bookId"
+  ],
+  "properties": {
+    "bookId": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

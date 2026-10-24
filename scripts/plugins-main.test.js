@@ -167,19 +167,19 @@ describe('plugin discovery', { concurrency: 1 }, () => {
   // manifest is not judged
   test('a manifest for a newer plugin API than this NEO knows is refused with a reason that names both versions', () => {
     const app = appFolder({
-      'plugins/ahead': plugin('ahead', { apiVersion: 5 }),
+      'plugins/ahead': plugin('ahead', { apiVersion: 6 }),
       'plugins/far-ahead': plugin('far-ahead', { apiVersion: 12, newKey: true }),
       'plugins/zero': plugin('zero', { apiVersion: 0 }),
       'plugins/fraction': plugin('fraction', { apiVersion: 2.5 }),
-      'plugins/text': plugin('text', { apiVersion: '4' }),
-      'plugins/current': plugin('current', { apiVersion: 4 })
+      'plugins/text': plugin('text', { apiVersion: '5' }),
+      'plugins/current': plugin('current', { apiVersion: 5 })
     });
     const { logs } = wire({ appRoot: app });
     assert.deepEqual(ids(), ['current']);
     assert.equal(logs.length, 5, logs.join('\n'));
     const line = (name) => logs.find((l) => l.includes(path.join(app, 'plugins', name))) || `nothing logged for ${name}`;
-    assert.match(line('ahead'), /needs plugin API 5\b.*\bthis NEO knows up to 4\b/);
-    assert.match(line('far-ahead'), /needs plugin API 12\b.*\bthis NEO knows up to 4\b/);
+    assert.match(line('ahead'), /needs plugin API 6\b.*\bthis NEO knows up to 5\b/);
+    assert.match(line('far-ahead'), /needs plugin API 12\b.*\bthis NEO knows up to 5\b/);
     for (const name of ['zero', 'fraction', 'text']) assert.match(line(name), /does not match the manifest format/, name);
   });
 
@@ -1267,12 +1267,14 @@ describe('the window half', () => {
     const invoked = [];
     const clock = { now: 0 };
     const windowListeners = [];
-    const page = { appendChild: (el) => added.push(el) };
+    const page = { appendChild: (el) => added.push(el), classes: new Set() };
+    page.classList = { toggle: (name, on) => (on ? page.classes.add(name) : page.classes.delete(name)) };
     const element = (tag) => ({
       tag,
       dataset: {},
       setAttribute() {},
       addEventListener() {},
+      append() {},
       remove() {
         const i = added.indexOf(this);
         if (i >= 0) added.splice(i, 1);
@@ -1306,7 +1308,7 @@ describe('the window half', () => {
         context.document.currentScript = null;
       }
     };
-    return { NeoPlugins: context.NeoPlugins, attach: () => context.NeoPlugins.attach(getters), added, logged, consoled, invoked, clock, fire, running, neo: context.neo };
+    return { NeoPlugins: context.NeoPlugins, attach: () => context.NeoPlugins.attach(getters), added, logged, consoled, invoked, clock, fire, running, neo: context.neo, page };
   }
 
   // the host with one listed plugin, p, registered with activate; neo is
@@ -1334,14 +1336,14 @@ describe('the window half', () => {
   });
 
   test('a listed plugin written for an API this NEO does not know is refused', () => {
-    const host = windowHalf([{ id: 'ahead', apiVersion: 5, rendererUrl: 'plugins/ahead/renderer.js', styleUrl: null }]);
+    const host = windowHalf([{ id: 'ahead', apiVersion: 6, rendererUrl: 'plugins/ahead/renderer.js', styleUrl: null }]);
     host.attach();
     assert.deepEqual(host.added.map((el) => [el.tag, el.src]), [['script', 'plugins/ahead/renderer.js']]);
     let activated = false;
-    host.NeoPlugins.register({ id: 'ahead', apiVersion: 5, activate() { activated = true; } });
+    host.NeoPlugins.register({ id: 'ahead', apiVersion: 6, activate() { activated = true; } });
     assert.equal(activated, false);
     assert.equal(host.logged.length, 1);
-    assert.match(host.logged[0], /^plugin ahead: apiVersion 5\b.*knows 1\b.*not activated/);
+    assert.match(host.logged[0], /^plugin ahead: apiVersion 6\b.*knows 1\b.*not activated/);
   });
 
   test('invoke reaches the calling plugin\'s own main half, and a plugin that failed to activate invokes nothing', async () => {
@@ -1844,7 +1846,7 @@ describe('the window half', () => {
 
   test('API 2 adds where, go, replace and highlight; a plugin written for API 1 is handed none of them', () => {
     const { NeoPlugins, neo } = bothApis();
-    assert.deepEqual([...NeoPlugins.apiVersions], [1, 2, 3, 4]);
+    assert.deepEqual([...NeoPlugins.apiVersions], [1, 2, 3, 4, 5]);
     assert.deepEqual(Object.keys(neo.api2).filter((name) => !(name in neo.api1)), ['where', 'go', 'replace', 'highlight']);
     assert.equal(neo.api1.where, undefined);
     assert.equal(neo.api1.go, undefined);
@@ -1884,6 +1886,60 @@ describe('the window half', () => {
     assert.equal(await neo.gone.open('book-there-1'), false);
     assert.deepEqual(opened, ['book-there-1', 'book-gone-1']);
     for (const bad of [undefined, '', 7, {}]) assert.throws(() => neo.api4.open(bad), { name: 'TypeError' }, String(bad));
+  });
+
+  test('API 5 adds wide to a side section, which widens the right-hand pane while any section asks; API 4 hands none of it', () => {
+    const host = windowHalf([
+      { id: 'four', apiVersion: 4, rendererUrl: 'plugins/four/renderer.js', styleUrl: null },
+      { id: 'five', apiVersion: 5, rendererUrl: 'plugins/five/renderer.js', styleUrl: null },
+      { id: 'more', apiVersion: 5, rendererUrl: 'plugins/more/renderer.js', styleUrl: null }
+    ]);
+    host.attach();
+    const panes = {};
+    host.NeoPlugins.register({ id: 'four', apiVersion: 4, activate(api) { panes.four = api.addPane({ id: 'side', title: 'Side', side: true }); } });
+    host.NeoPlugins.register({ id: 'five', apiVersion: 5, activate(api) {
+      panes.five = api.addPane({ id: 'side', title: 'Side', side: true });
+      panes.tab = api.addPane({ id: 'tab', title: 'Tab' });
+    } });
+    host.NeoPlugins.register({ id: 'more', apiVersion: 5, activate(api) {
+      panes.more = api.addPane({ id: 'side', title: 'Side', side: true });
+      throw new Error('activate fails on purpose');
+    } });
+    assert.deepEqual(Object.keys(panes.four), ['element', 'show']);
+    assert.deepEqual(Object.keys(panes.five), ['element', 'show', 'wide']);
+    const sidePane = host.page;
+    panes.five.wide(true);
+    assert.deepEqual([...sidePane.classes], ['wide']);
+    panes.five.wide(true);
+    panes.five.wide(false);
+    assert.deepEqual([...sidePane.classes], [], 'one ask is undone by one, however often it was made');
+    // a plugin that failed widens nothing
+    panes.more.wide(true);
+    assert.deepEqual([...sidePane.classes], []);
+    assert.throws(() => panes.tab.wide(true), { name: 'TypeError', message: /\bside section\b/ });
+    for (const bad of [undefined, 1, 'yes']) assert.throws(() => panes.five.wide(bad), { name: 'TypeError', message: /\btrue or false\b/ }, String(bad));
+  });
+
+  test('a plugin that fails takes its wide ask with it, and leaves another plugin\'s', async () => {
+    const host = windowHalf(['a', 'b'].map((id) => ({ id, apiVersion: 5, rendererUrl: `plugins/${id}/renderer.js`, styleUrl: null })));
+    host.attach();
+    const panes = {};
+    let failA = null;
+    host.NeoPlugins.register({ id: 'a', apiVersion: 5, activate(api) {
+      panes.a = api.addPane({ id: 'side', title: 'Side', side: true });
+      panes.a.wide(true);
+      return new Promise((resolve, reject) => { failA = reject; });
+    } });
+    host.NeoPlugins.register({ id: 'b', apiVersion: 5, activate(api) { panes.b = api.addPane({ id: 'side', title: 'Side', side: true }); } });
+    panes.b.wide(true);
+    panes.b.wide(false);
+    assert.deepEqual([...host.page.classes], ['wide'], 'a still asks');
+    panes.b.wide(true);
+    failA(new Error('activate fails on purpose'));
+    await settled();
+    assert.deepEqual([...host.page.classes], ['wide'], 'b still asks');
+    panes.b.wide(false);
+    assert.deepEqual([...host.page.classes], []);
   });
 
   test('highlight throws for a name, a list or a place that is not one', () => {

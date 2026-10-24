@@ -2,8 +2,11 @@
 // applied it. The author's identity comes from git config (or the plugin settings);
 // user.useConfigOnly stops git guessing one from the machine's name when there is
 // none. The librarian's is set through the environment, which outranks any config.
+// Between staging and committing, the gate (gate.ts) judges what was staged: a librarian
+// edit with a finding is refused, and any other commit goes ahead with its findings logged.
 import { existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
+import type { Gate } from './gate.ts';
 import type { Git } from './runner.ts';
 
 export interface Identity {
@@ -48,6 +51,10 @@ export interface CommitOptions {
   librarian: Identity;
   /** The author's identity from the plugin settings; git config's when absent. */
   author?: Identity | null;
+  /** Only these paths, relative to the library; everything else waits for the next commit. */
+  paths?: readonly string[];
+  /** Judges the staged files; none, and nothing is judged. */
+  gate?: Pick<Gate, 'held' | 'judge'>;
 }
 
 export interface Committed {
@@ -80,20 +87,39 @@ function identityEnv(who: Who, options: CommitOptions): Record<string, string> {
   };
 }
 
-/** Stages and commits every change; null when nothing changed. */
+/** Stages and commits every change, or those of options.paths; null when nothing changed. */
 export async function commitAll(git: Git, library: string, options: CommitOptions): Promise<Committed | null> {
   const leftOut = booksWithOwnRepo(library);
-  const pathspec = ['--', '.', ...leftOut.map((b) => `:(exclude)${b}`)];
+  const { gate } = options;
+  // Only a librarian edit blocks; every other commit warns. A refused edit's files wait
+  // outside every commit but a librarian edit's, so the writer is never credited with them.
+  const blocking = options.reason === 'librarian-after';
+  const held = gate && !blocking ? gate.held() : [];
+  const only = options.paths ? options.paths.map((p) => `:(literal)${p}`) : null;
+  const pathspec = [
+    '--', ...(only ?? ['.']),
+    ...leftOut.map((b) => `:(exclude)${b}`),
+    ...held.map((p) => `:(exclude,literal)${p}`),
+  ];
   await git.run(library, ['add', '-A', ...pathspec]);
-  const { stdout: staged } = await git.run(library, ['diff', '--cached', '--name-only', '-z']);
-  const files = staged.split('\0').filter(Boolean).length;
-  if (!files) return null;
+  const { stdout: staged } = await git.run(library, ['diff', '--cached', '--name-only', '-z', ...(only ? ['--', ...only] : [])]);
+  const names = staged.split('\0').filter(Boolean);
+  if (!names.length) return null;
+  if (gate) {
+    try {
+      gate.judge(names, blocking);
+    } catch (err) {
+      await git.run(library, ['reset', '-q', '--', ...names.map((p) => `:(literal)${p}`)]);
+      throw err;
+    }
+  }
   await git.run(library, [
     '-c', 'user.useConfigOnly=true',
     'commit', '-q', '--no-verify',
     '-m', SUBJECTS[options.reason],
     '-m', `Neo-Checkpoint: ${options.reason}`,
+    ...(only ? ['--', ...only] : []),
   ], { env: identityEnv(options.who, options) });
   const { stdout: head } = await git.run(library, ['rev-parse', 'HEAD']);
-  return { commit: head.trim(), files, leftOut };
+  return { commit: head.trim(), files: names.length, leftOut };
 }
