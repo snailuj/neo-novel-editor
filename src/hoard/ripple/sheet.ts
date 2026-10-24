@@ -2,7 +2,7 @@
 // noisy key (two runs of one judge agreed on 8 of 24 targets by kind), so the author
 // reads the candidates instead. The sheet hides which list held a page; the key says.
 import { key as linkKey } from '../../librarian/links.ts';
-import { card, packetChars, rrf, type Corpus, type Ranked } from './shortlist.ts';
+import { entry, packetChars, rrf, type Corpus, type Ranked } from './shortlist.ts';
 
 export { rrf };
 
@@ -117,15 +117,15 @@ export function buildSheet(cases: SheetCase[], seen?: Map<string, Set<string>>):
       pastTargets: c.pastTargets,
       wholeRosterPacketChars: c.briefChars + c.sourceChars + c.rosterChars,
       lists: c.lists.map((list) => {
-        const cards = list.ranked.flatMap((r) => {
+        const entries = list.ranked.flatMap((r) => {
           const doc = c.corpus.byRel.get(r.relpath);
-          return doc ? [card(doc, r)] : [];
+          return doc ? [entry(doc, r)] : [];
         });
         const held = new Set(list.ranked.map((r) => linkKey(r.relpath)));
         return {
           method: list.method,
           pages: list.ranked.map((r) => r.relpath),
-          packetChars: packetChars(cards, c.sourceChars, c.briefChars),
+          packetChars: packetChars(entries, c.sourceChars, c.briefChars),
           pastCaught: c.pastTargets.filter((t) => held.has(t)).length,
         };
       }),

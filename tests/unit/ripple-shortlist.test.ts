@@ -7,12 +7,12 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  blend, buildCorpus, card, chunks, embeddingRank, fuse, merged, phraseRank, inRoster, lexicalRank, packetChars, rosterChars, rosterRank,
+  blend, buildCorpus, chunks, entry, embeddingRank, fuse, merged, phraseRank, inRoster, lexicalRank, packetChars, rosterChars, rosterRank,
   type Embed, type Source,
 } from '../../src/hoard/ripple/shortlist.ts';
 import { buildSheet, pastTargets, pickSources, readSheet, renderScore, scoreSheet, withFusion, withUnions, rrf, mcnemar, mergeKeys, type Key } from '../../src/hoard/ripple/sheet.ts';
 import { readSnapshot } from '../../src/hoard/ripple/snapshot.ts';
-import { FUSED_EXTRAS, LEXICAL_EXTRAS, ROSTER_CARDS, shortlistFor } from '../../src/hoard/ripple/packet.ts';
+import { FUSED_EXTRAS, LEXICAL_EXTRAS, ROSTER_ENTRIES, shortlistFor } from '../../src/hoard/ripple/packet.ts';
 import { isolateGitConfig, tempDir } from './git-support.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -179,13 +179,13 @@ test('the blend keeps every named and hop-1 page first, then fills to k without 
   assert.equal(new Set(b).size, b.length);
 });
 
-test('a card is bounded, and a shortlist packet is smaller than the whole roster\'s', () => {
+test('a candidate entry is bounded, and a shortlist packet is smaller than the whole roster\'s', () => {
   const doc = corpus.byRel.get('lore/Brine-Works.md')!;
-  const c = card(doc, { relpath: doc.relpath, score: 1, why: 'named', passage: 'x'.repeat(900) });
-  assert.ok(c.length <= 600, `card of ${c.length}`);
+  const c = entry(doc, { relpath: doc.relpath, score: 1, why: 'named', passage: 'x'.repeat(900) });
+  assert.ok(c.length <= 600, `entry of ${c.length}`);
   assert.ok(c.includes('Brine-Works'));
-  const cards = rosterRank(corpus, source).slice(0, 3).map((r) => card(corpus.byRel.get(r.relpath)!, r));
-  assert.ok(packetChars(cards, source.text.length, 1000) < packetChars([], source.text.length, 1000) + rosterChars(corpus, source) || cards.length === 0);
+  const entries = rosterRank(corpus, source).slice(0, 3).map((r) => entry(corpus.byRel.get(r.relpath)!, r));
+  assert.ok(packetChars(entries, source.text.length, 1000) < packetChars([], source.text.length, 1000) + rosterChars(corpus, source) || entries.length === 0);
   assert.ok(rosterChars(corpus, source) > 0);
 });
 
@@ -395,25 +395,25 @@ test('the in-app shortlist fuses BM25 and the model on merged chunks, or falls b
   notes[55] = ['lore/P55.md', 'A kelp tithe was paid.'];
   const big = buildCorpus(notes);
   const src: Source = { relpath: 'sources/S.md', text: 'The kelp ledger burned at dawn.' };
-  const roster = rosterRank(big, src).slice(0, ROSTER_CARDS).map((r) => r.relpath);
+  const roster = rosterRank(big, src).slice(0, ROSTER_ENTRIES).map((r) => r.relpath);
   assert.equal(roster.length, 30, 'baseline: the roster fills its 30');
   assert.ok(!roster.includes('lore/P50.md') && !roster.includes('lore/P55.md'), 'baseline: the two pages are past the roster');
   const words = await shortlistFor(big, src);
   assert.equal(words.modelled, false);
   assert.ok(LEXICAL_EXTRAS >= 2);
-  assert.deepEqual(words.ranked.slice(ROSTER_CARDS).map((r) => r.relpath), ['lore/P50.md', 'lore/P55.md'], 'only two pages share words');
+  assert.deepEqual(words.ranked.slice(ROSTER_ENTRIES).map((r) => r.relpath), ['lore/P50.md', 'lore/P55.md'], 'only two pages share words');
   assert.equal(words.ranked.find((r) => r.relpath === 'lore/P50.md')!.passage, 'The kelp ledger burned.', 'words alone read paragraphs');
   // The model also leans the source (it says dawn) towards pages 30 to 59, so its first 30
   // reach past the roster.
   const kelp = async (texts: string[]) => texts.map((t) => [/kelp/i.test(t) ? 1 : 0, /ledger/i.test(t) ? 1 : 0, 0.01, /dawn|Page [3-5]\d/.test(t) ? 1 : 0]);
   const both = await shortlistFor(big, src, kelp);
   assert.equal(both.modelled, true);
-  assert.equal(both.ranked.length, ROSTER_CARDS + FUSED_EXTRAS);
-  assert.deepEqual(both.ranked.slice(0, ROSTER_CARDS).map((r) => r.relpath), roster);
+  assert.equal(both.ranked.length, ROSTER_ENTRIES + FUSED_EXTRAS);
+  assert.deepEqual(both.ranked.slice(0, ROSTER_ENTRIES).map((r) => r.relpath), roster);
   assert.equal(new Set(both.ranked.map((r) => r.relpath)).size, both.ranked.length, 'no page twice');
-  const extras = both.ranked.slice(ROSTER_CARDS).map((r) => r.relpath);
+  const extras = both.ranked.slice(ROSTER_ENTRIES).map((r) => r.relpath);
   assert.deepEqual(extras.slice(0, 2), ['lore/P50.md', 'lore/P55.md'], 'the page both legs find leads');
-  assert.match(both.ranked[ROSTER_CARDS]!.passage!, /Short line\.\n\nThe kelp ledger burned\./, 'the model reads merged chunks');
+  assert.match(both.ranked[ROSTER_ENTRIES]!.passage!, /Short line\.\n\nThe kelp ledger burned\./, 'the model reads merged chunks');
 });
 
 // Rule: a case is read as the vault stood before its source came in, so a link the
