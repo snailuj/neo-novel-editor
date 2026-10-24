@@ -176,3 +176,22 @@ test('the ruled arm asks the judge to rule on each page the screen said yes to',
   assert.match(ruled, /^## Pages to rule on \(1\)\n\n.+\n\n- \[\[Net-Loft\]\]\n/m);
   assert.match(readFileSync(path.join(out, 'eval.md'), 'utf8'), /^\| ruled-1 \| 1 \| 1 of 1 \|/m);
 });
+
+// Rule: an effort level reaches every call of the step it is set for, and no other.
+test('--effort reaches each judge call and --screen-effort each screen call', async (t) => {
+  const { vault, scored, out } = setup(t);
+  const calls: { args: string[]; cwd: string }[] = [];
+  await main(['--vault', vault, '--scored', scored, '--out', out, '--arms', 'base,screen', '--claude', 'fake-claude', '--effort', 'max'], { runner: fakeClaude(calls), log: () => {} });
+  const judge = calls.filter((c) => !c.args.includes('--max-turns'));
+  const screen = calls.filter((c) => c.args.includes('--max-turns'));
+  assert.ok(judge.length === 1 && screen.length === 3, 'baseline: both steps ran');
+  for (const c of judge) assert.equal(c.args[c.args.indexOf('--effort') + 1], 'max');
+  for (const c of screen) assert.ok(!c.args.includes('--effort'), 'the screen keeps its default');
+  const out2 = tempDir(t, 'ripple-eval-out-');
+  const calls2: { args: string[]; cwd: string }[] = [];
+  await main(['--vault', vault, '--scored', scored, '--out', out2, '--arms', 'base,screen', '--claude', 'fake-claude', '--screen-effort', 'max'], { runner: fakeClaude(calls2), log: () => {} });
+  for (const c of calls2) assert.equal(c.args.includes('--effort'), c.args.includes('--max-turns'), 'only screen calls carry it');
+  assert.match(readFileSync(path.join(out2, 'eval.md'), 'utf8'), /screen model opus at max effort/);
+  // claude takes an unknown level with a warning and its default, so the harness refuses it
+  await assert.rejects(main(['--vault', vault, '--scored', scored, '--out', out2, '--effort', 'maxx'], { runner: fakeClaude([]), log: () => {} }), /--effort/);
+});

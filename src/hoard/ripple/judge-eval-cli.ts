@@ -1,6 +1,6 @@
 // npm run ripple:judge-eval -- --vault <hoard> --scored <folder holding key.json>
 //   [--ticks <sheet.md> ...] --out <folder> [--arms base,base,screen,screened,ruled,budget,wide,map]
-//   [--dry-run] [--model opus] [--screen-model opus] [--embed <model>[#titles]]
+//   [--dry-run] [--model opus] [--screen-model opus] [--effort <level>] [--screen-effort <level>] [--embed <model>[#titles]]
 //   [--map-chars 12000] [--jobs 4] [--cases <n>] [--claude <command>] [--tools <list>]
 // Runs the judge arms of plans/ripple-judge-tweaks.md over the scorer's cases and scores
 // them against the tick sheets. Each case's corpus is rebuilt from git as it stood before
@@ -49,6 +49,7 @@ const ARMS = ['base', 'screen', 'screened', 'ruled', 'budget', 'wide', 'map'] as
 type Arm = typeof ARMS[number];
 // Each call leaves out the user's own settings (hooks, plugins, `verbose`), MCP servers and
 // skills: a Stop hook adds turns, and the tool lists cost tokens on every call.
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 const ISOLATE = ['--setting-sources', 'project,local', '--strict-mcp-config', '--disable-slash-commands', '--no-session-persistence'];
 // The judge must hash the brief for its preflight, so it may run a hash command and no other.
 const JUDGE_TOOLS = 'Read,Grep,Glob,Write,Bash(sha256sum:*),Bash(shasum:*)';
@@ -133,6 +134,8 @@ export async function main(argv: string[], deps: { runner?: Runner; log?: (messa
       'dry-run': { type: 'boolean', default: false },
       model: { type: 'string', default: 'opus' },
       'screen-model': { type: 'string', default: 'opus' },
+      effort: { type: 'string' },
+      'screen-effort': { type: 'string' },
       embed: { type: 'string' },
       'map-chars': { type: 'string', default: '12000' },
       jobs: { type: 'string', default: '4' },
@@ -148,6 +151,13 @@ export async function main(argv: string[], deps: { runner?: Runner; log?: (messa
   const vault = path.resolve(values.vault);
   const out = path.resolve(values.out);
   if (inside(out, vault) || inside(vault, out)) throw new UsageError(`refusing to write inside the vault: ${out}`);
+  // claude takes an unknown level with a warning and runs at its default, which would mislabel a run
+  for (const flag of ['effort', 'screen-effort'] as const) {
+    const level = values[flag];
+    if (level !== undefined && !(EFFORTS as readonly string[]).includes(level)) throw new UsageError(`--${flag} takes one of ${EFFORTS.join(', ')}, not ${level}`);
+  }
+  const effortOf = (level?: string) => (level ? ['--effort', level] : []);
+  const atEffort = (level?: string) => (level ? ` at ${level} effort` : '');
   const mapChars = Number(values['map-chars']);
   const jobs = Number(values.jobs);
   if (!(mapChars > 0) || !(jobs >= 1)) throw new UsageError('--map-chars and --jobs take numbers');
@@ -282,7 +292,7 @@ export async function main(argv: string[], deps: { runner?: Runner; log?: (messa
       try {
         const res = await runner({
           command: values.claude, cwd: screenDir, stdin: screenPrompt({ title: p.job.source.title, text: p.source.text }, { title: doc.name, body: doc.body, passage: r.passage }),
-          args: ['-p', '--output-format', 'json', '--model', values['screen-model'], '--max-turns', '1', '--tools', '', ...ISOLATE],
+          args: ['-p', '--output-format', 'json', '--model', values['screen-model'], '--max-turns', '1', '--tools', '', ...effortOf(values['screen-effort']), ...ISOLATE],
         });
         if (res.code !== 0) throw new Error(`claude exited ${res.code}: ${tail(res.stderr || res.stdout)}`);
         const json = resultOf(res.stdout);
@@ -360,7 +370,7 @@ export async function main(argv: string[], deps: { runner?: Runner; log?: (messa
       res = await runner({
         command: values.claude, cwd: p.lib, stdin: packet.text,
         args: ['-p', '--output-format', 'json', '--model', values.model, '--permission-mode', 'acceptEdits',
-          '--allowedTools', ...tools, '--add-dir', p.lib, '--add-dir', path.dirname(answer), ...ISOLATE],
+          '--allowedTools', ...tools, '--add-dir', p.lib, '--add-dir', path.dirname(answer), ...effortOf(values.effort), ...ISOLATE],
       });
     } catch (err) {
       record({ kind: 'failed', why: `claude did not start: ${(err as Error).message}` });
@@ -400,13 +410,13 @@ export async function main(argv: string[], deps: { runner?: Runner; log?: (messa
   });
   const screenFailed = [...screens.values()].reduce((s, x) => s + x.failed, 0);
   const notes = [
-    dry ? 'A dry run: packets only, no model call. Only where the ticked pages sit is scored.' : `Judge model ${values.model}; screen model ${values['screen-model']}.`,
+    dry ? 'A dry run: packets only, no model call. Only where the ticked pages sit is scored.' : `Judge model ${values.model}${atEffort(values.effort)}; screen model ${values['screen-model']}${atEffort(values['screen-effort'])}.`,
     embed ? `Model extras from ${values.embed}.` : 'The meaning model was not loaded, so base lacks its ten model pages and wide fuses lexical alone.',
     `The wiki map is cut to ${mapChars} characters.`,
     ...(screenFailed ? [`${screenFailed} screen calls failed; their pages count as not affected and run again next time.`] : []),
   ];
   writeFileSync(path.join(out, 'eval.md'), renderEval(report, notes));
-  writeFileSync(path.join(out, 'eval.json'), `${JSON.stringify({ arms, model: values.model, screenModel: values['screen-model'], embed: values.embed ?? null, dryRun: dry, mapChars, report }, null, 2)}\n`);
+  writeFileSync(path.join(out, 'eval.json'), `${JSON.stringify({ arms, model: values.model, screenModel: values['screen-model'], effort: values.effort ?? null, screenEffort: values['screen-effort'] ?? null, embed: values.embed ?? null, dryRun: dry, mapChars, report }, null, 2)}\n`);
   for (const t of report.totals) {
     log(`${t.run}: caught ${t.caught} of ${t.ticked} ticked over ${t.cases} cases (${t.failed} failed); tokens ${t.inputTokens} in, ${t.cacheWriteTokens} cache write, ${t.cacheReadTokens} cache read, ${t.outputTokens} out; $${t.costUsd.toFixed(2)}`);
   }
