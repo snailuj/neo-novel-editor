@@ -146,18 +146,11 @@ function mentions(text: string, name: string): boolean {
 }
 
 /**
- * Hoard's roster order: pages the source names (by name or alias, or a link), then
- * pages by hop distance in the undirected link graph, then the rest by name.
+ * Each page's distance from the source in the undirected link graph: what the source
+ * links to, and what links to it, are hop 1. A page it cannot reach is left out.
  */
-export function rosterRank(corpus: Corpus, source: Source): Ranked[] {
-  const text = prose(source.text);
+export function linkHops(corpus: Corpus, source: Source): Map<string, number> {
   const sourceKey = key(source.relpath);
-  const named = new Set<string>();
-  for (const d of corpus.docs) {
-    if (d.relpath === source.relpath) continue;
-    if ([d.name, ...d.aliases].some((n) => mentions(text, n))) named.add(d.relpath);
-  }
-  // The source's neighbours: what it links to, and what links to it, as hop 1.
   const start = new Set<string>();
   for (const target of linksIn(source.text)) {
     const to = corpus.index.resolveAny(target)?.relpath;
@@ -180,6 +173,21 @@ export function rosterRank(corpus: Corpus, source: Source): Ranked[] {
     }
     frontier = next;
   }
+  return hop;
+}
+
+/**
+ * Hoard's roster order: pages the source names (by name or alias, or a link), then
+ * pages by hop distance in the undirected link graph, then the rest by name.
+ */
+export function rosterRank(corpus: Corpus, source: Source): Ranked[] {
+  const text = prose(source.text);
+  const named = new Set<string>();
+  for (const d of corpus.docs) {
+    if (d.relpath === source.relpath) continue;
+    if ([d.name, ...d.aliases].some((n) => mentions(text, n))) named.add(d.relpath);
+  }
+  const hop = linkHops(corpus, source);
   const rank = (r: string): number => (named.has(r) ? 0 : hop.get(r) ?? Number.POSITIVE_INFINITY);
   return corpus.docs.filter((d) => d.relpath !== source.relpath)
     .map((d): Ranked => {
