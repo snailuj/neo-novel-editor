@@ -135,6 +135,15 @@ export function bookSlug(title: string): string {
   return slug || 'book';
 }
 
+/**
+ * The name of a book's file in .neo/books: its slug and the start of its title's hash,
+ * so two titles that slug alike (`Notes!` and `Notes?`, or two in a script the slug
+ * drops) never share a book.
+ */
+export function bookFileName(title: string): string {
+  return `${bookSlug(title)}-${createHash('sha256').update(key(title)).digest('hex').slice(0, 8)}`;
+}
+
 function randomChapterId(): string {
   return `ch-${Date.now().toString(36)}-${randomBytes(3).toString('hex').slice(0, 4)}`;
 }
@@ -159,7 +168,7 @@ export class WikiStore {
   // The file that names the book: wiki.json for the wiki, else one in .neo/books.
   #wikiFile(): string {
     if (this.#o.book === undefined) return path.join(this.#library, '.neo', 'wiki.json');
-    return path.join(this.#library, '.neo', 'books', `${bookSlug(this.#o.book)}.json`);
+    return path.join(this.#library, '.neo', 'books', `${bookFileName(this.#o.book)}.json`);
   }
 
   #bookFile(bookId: string): string {
@@ -300,7 +309,12 @@ export class WikiStore {
       const whole = text.replace(/^\ufeff/, '').replace(/\r\n?/g, '\n');
       // a file's last newline ends its last line and starts none
       const lines = whole.replace(/\n$/, '').split('\n');
-      const { body } = split(whole);
+      let body: string;
+      try {
+        ({ body } = split(whole));
+      } catch (err) {
+        return { why: err instanceof Error ? err.message : String(err) };
+      }
       const cut: string[] = [];
       for (const heading of p.sections) {
         const range = lineRange(heading);

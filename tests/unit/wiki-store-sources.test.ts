@@ -5,9 +5,10 @@
 // - a list entry may name the page, and may take one or more sections of a source,
 //   which become one page recorded as a split, without the source's frontmatter;
 // - a line range takes those lines of the whole file, and is refused once the file no
-//   longer has the hash the list read it against, or is too short for it;
+//   longer has the hash the list read it against, or is too short for it, and a page
+//   whose frontmatter does not read is named as unreadable without stopping the rest;
 // - a store for another book (Morning Pages) makes that book, named in .neo/books, and
-//   leaves the wiki alone;
+//   leaves the wiki alone, and titles that slug alike never share a book;
 // - a page hoard already holds (by hoard's own manifest) is not imported again, an
 //   older hoard copy is named, and hoard's own pages are never taken for either;
 // - a page's images and PDFs are copied into the wiki book once, recorded verbatim
@@ -21,7 +22,7 @@ import { test } from 'node:test';
 import { validateHoardChangeV1, validateHoardPageV1 } from '../../src/generated/validators.cjs';
 import { paragraphTexts } from '../../src/hoard/html.ts';
 import { MarkStore } from '../../src/hoard/marks/store.ts';
-import { bookSlug, WikiStore } from '../../src/hoard/wiki/store.ts';
+import { bookFileName, bookSlug, WikiStore } from '../../src/hoard/wiki/store.ts';
 import { parseManifest } from '../../src/librarian/manifest.ts';
 import { tempDir } from './git-support.ts';
 
@@ -162,6 +163,9 @@ test('a line range takes those lines of the file, joined into one page, while th
   assert.deepEqual(s.text(chId), ['Morning Pages', 'Woke early.', 'The sea again.']);
   assert.deepEqual(s.json(`.neo/${s.wiki.wikiId()}/pages/${chId}.json`).source.sections, ['L4-L4', 'L6-L8']);
   writeFileSync(daily, `${readFileSync(daily, 'utf8')}More.\n`);
+  const bad = s.put('vault/Daily/bad.md', '---\n- not a mapping\n---\n## Morning Pages\nWords.\n');
+  const odd = s.wiki.sort([{ path: bad, section: 'Morning Pages', name: 'bad-day' }, { path: bad, section: 'L4-L5', name: 'bad-lines' }]);
+  assert.deepEqual(odd.verdicts.map((v) => v.kind), ['unreadable', 'unreadable'], 'a frontmatter that does not read stops only its own page');
   const again = s.wiki.sort([{ path: daily, section: 'L4-L4', name: '2026-01-23', sha: hash }, { path: daily, section: 'L6-L8', name: '2026-01-23' }]);
   assert.deepEqual(s.kinds(again), [['unreadable', '2026-01-23']]);
 });
@@ -182,13 +186,17 @@ test('a store for another book makes that book beside the wiki, named in .neo/bo
   }, /Morning Pages is open/);
   const bookId = pages.wikiId()!;
   assert.match(bookId, /^book-morning-pages-/);
-  assert.deepEqual(s.json('.neo/books/morning-pages.json'), { version: 1, bookId });
+  assert.deepEqual(s.json(`.neo/books/${bookFileName('Morning Pages')}.json`), { version: 1, bookId });
   const book = s.json(`${bookId}/book.json`);
   assert.equal(book.title, 'Morning Pages');
   assert.deepEqual(book.chapterOrder.map((id: string) => book.chapterTitles[id]), ['2025-12-15']);
   assert.deepEqual(s.titles(), ['Harbour'], 'the wiki keeps only its own page');
   assert.notEqual(s.wiki.wikiId(), bookId);
   assert.deepEqual([bookSlug('Morning Pages'), bookSlug('Café / Notes!'), bookSlug('***')], ['morning-pages', 'cafe-notes', 'book']);
+  assert.match(bookFileName('Morning Pages'), /^morning-pages-[0-9a-f]{8}$/);
+  assert.equal(bookFileName('Morning Pages'), bookFileName('morning pages'), 'a title is one book whatever its case');
+  assert.notEqual(bookFileName('Notes!'), bookFileName('Notes?'));
+  assert.notEqual(bookFileName('朝のページ'), bookFileName('夜のページ'));
 });
 
 test('a page hoard already holds is not imported again, an older hoard copy is named, and hoard\'s own pages come in', async (t) => {
