@@ -3,14 +3,14 @@
 //   [--cases-from <earlier key.json> ...] [--seen <earlier sheet.md> ...] [--git] [--k 30]
 //   [--embed <model>[#titles] ...]
 // Writes sheet.md (each candidate once, to tick by hand) and key.json to --out, never
-// inside the vault. `--score <folder> [--ticks <sheet.md> ...] [--union N]` then reads the
+// inside the vault. `--score <folder> [--ticks <sheet.md> ...] [--union N] [--fuse N]` then reads the
 // ticks back into score.md, with --union adding the roster plus N pages from each model.
 // A spike for choosing ripple's shortlist method; not part of the app.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { readText } from '../../librarian/vault-fs.ts';
-import { buildSheet, pastTargets, pickSources, readSheet, renderScore, scoreSheet, withUnions, type Key, type SheetCase, type SheetList } from './sheet.ts';
+import { buildSheet, pastTargets, pickSources, readSheet, renderScore, scoreSheet, withFusion, withUnions, type Key, type SheetCase, type SheetList } from './sheet.ts';
 import {
   ROSTER_ZONES, blend, buildCorpus, embeddingRank, inRoster, lexicalRank, rosterChars, rosterRank,
   type Embed, type Source,
@@ -62,6 +62,7 @@ async function main(argv: string[]): Promise<void> {
       score: { type: 'string' },
       ticks: { type: 'string', multiple: true },
       union: { type: 'string' },
+      fuse: { type: 'string' },
       pooling: { type: 'string', default: 'mean' },
       dtype: { type: 'string', default: 'q8' },
       device: { type: 'string' },
@@ -76,6 +77,12 @@ async function main(argv: string[]): Promise<void> {
       const n = Number(values.union);
       if (!(n > 0)) throw new UsageError('--union takes a number');
       key = withUnions(key, n);
+    }
+    // --fuse N scores rank fusion at the same size as the roster plus N lexical and N model pages.
+    if (values.fuse) {
+      const n = Number(values.fuse);
+      if (!(n > 0)) throw new UsageError('--fuse takes a number');
+      key = withFusion(key, n);
     }
     // --ticks scores this run's lists against sheets ticked for earlier runs; several are
     // read as one, so a top-up sheet scores together with the sheet it tops up.

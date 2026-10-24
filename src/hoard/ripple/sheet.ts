@@ -162,6 +162,43 @@ export function withUnions(key: Key, extra: number): Key {
   };
 }
 
+/**
+ * Reciprocal rank fusion (Cormack et al. 2009): each page scores the sum of 1/(k + rank)
+ * over the lists that hold it, rank from 1. k = 60 is the paper's constant. Ties by path.
+ */
+export function rrf(lists: readonly (readonly string[])[], k = 60): string[] {
+  const score = new Map<string, number>();
+  for (const list of lists) list.forEach((p, i) => score.set(p, (score.get(p) ?? 0) + 1 / (k + i + 1)));
+  return [...score].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([p]) => p);
+}
+
+/**
+ * Adds, per case and per model, two lists the size of the roster plus `extra` from each of
+ * lexical and the model: the roster's pages then the fusion of lexical and the model, and
+ * the fusion of all three cut to that size. Like a union, every page was on the sheet.
+ */
+export function withFusion(key: Key, extra: number, k = 60): Key {
+  return {
+    ...key,
+    cases: key.cases.map((c) => {
+      const roster = c.lists.find((l) => l.method === 'roster');
+      const lexical = c.lists.find((l) => l.method === 'lexical');
+      if (!roster || !lexical) return c;
+      const size = roster.pages.length + 2 * extra;
+      const packetChars = Math.round(roster.packetChars * size / (roster.pages.length || 1));
+      const models = c.lists.filter((l) => l.method.startsWith('embedding '));
+      const fused = models.flatMap((m): KeyList[] => {
+        const fill = rrf([lexical.pages, m.pages], k).filter((p) => !roster.pages.includes(p)).slice(0, 2 * extra);
+        return [
+          { method: `roster + ${2 * extra} rrf(lexical, ${m.method})`, pages: [...roster.pages, ...fill], packetChars, pastCaught: 0 },
+          { method: `rrf(roster, lexical, ${m.method}) top ${size}`, pages: rrf([roster.pages, lexical.pages, m.pages], k).slice(0, size), packetChars, pastCaught: 0 },
+        ];
+      });
+      return { ...c, lists: [...c.lists, ...fused] };
+    }),
+  };
+}
+
 export interface ListScore {
   method: string;
   size: number;
