@@ -105,7 +105,9 @@ test('a packet with a budget and a map says what is full and gives the map after
   const plain = await buildPacket(input());
   const packet = await buildPacket(input({ budgetChars: 300, map: 'lore/\n- Harbour-Light' }));
   assert.deepEqual(packet.candidates, plain.candidates, 'the same candidates');
-  assert.match(packet.text, /^\d+ in full and \d+ by name only\./m);
+  assert.match(packet.text, new RegExp(`^${packet.full.length} in full and ${packet.locator.length} by name only\\.`, 'm'));
+  assert.ok(packet.full.length > 0 && packet.locator.length > 0, 'baseline: the budget splits the list');
+  assert.equal(packet.full.length + packet.locator.length, packet.candidates.length);
   const cands = packet.text.indexOf('## Candidates');
   const map = packet.text.indexOf('## Wiki map');
   assert.ok(cands > 0 && map > cands, 'the map comes after the candidates');

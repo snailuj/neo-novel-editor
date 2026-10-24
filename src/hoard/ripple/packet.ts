@@ -45,6 +45,9 @@ export interface Packet {
   candidates: string[];
   /** Whether the model's extras are in. */
   modelled: boolean;
+  /** Corpus paths carded in full, and those given a locator line only. */
+  full: string[];
+  locator: string[];
 }
 
 const CONTRACT = `## How to answer
@@ -121,5 +124,5 @@ export async function buildPacket(input: PacketInput): Promise<Packet> {
     '',
     ...map,
   ].join('\n');
-  return { text, candidates: cards.candidates, modelled };
+  return { text, candidates: cards.candidates, modelled, full: cards.full, locator: cards.locator };
 }
