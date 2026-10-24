@@ -29,6 +29,7 @@
     "librarian": "node src/librarian/cli.ts",
     "ripple:shortlist": "node src/hoard/ripple/shortlist-cli.ts",
     "ripple:embed": "node src/hoard/ripple/embed-cli.ts",
+    "ripple:judge-eval": "node src/hoard/ripple/judge-eval-cli.ts",
     "test:e2e": "npm run build && playwright test",
     "check": "npm run gen:check && npm run typecheck && npm run lint:fork && npm test && npm run test:unit",
     "test:coverage": "node --test --experimental-test-coverage \"scripts/*.test.js\"",
