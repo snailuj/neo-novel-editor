@@ -28,6 +28,20 @@ const fs = require('node:fs');
 let s = '';
 process.stdin.on('data', (d) => (s += d)).on('end', () => {
   fs.appendFileSync(${JSON.stringify(path.join(dir, 'calls.txt'))}, 'x');
+  if (s.includes('Find where each entry starts')) {
+    // Every block starts an entry, titled by its text.
+    const starts = [...s.matchAll(/<block id="(b\\d+)"[^>]*>\\n([^\\n]*)/g)].map(([, id, text]) => ({ start: id, title: text, summary: 's' }));
+    process.stdout.write(JSON.stringify(starts));
+    return;
+  }
+  if (s.includes('Group the entries')) {
+    // Entries about an otter share a topic; the rest stand alone.
+    const ids = [...s.matchAll(/<entry id="(e\\d+)"[^>]*title="([^"]*)"/g)];
+    const otters = ids.filter(([, , t]) => /otter/i.test(t)).map(([, id]) => id);
+    const rest = ids.filter(([, , t]) => !/otter/i.test(t)).map(([, id, t]) => ({ name: t, entries: [id] }));
+    process.stdout.write(JSON.stringify([...(otters.length ? [{ name: 'Otters', entries: otters }] : []), ...rest]));
+    return;
+  }
   const out = [...s.matchAll(/<block id="(b\\d+)" heading="([^"]*)"[^>]*>\\n([\\s\\S]*?)\\n<\\/block>/g)].map(([, id, h, text]) => ({
     id, label: /otter/i.test(text) ? 'writing' : /Morning Pages/.test(h) ? 'morning-pages' : 'tasks', pasted: false, reason: 'stub',
   }));
@@ -137,4 +151,45 @@ test('text repeated across pages goes to the wiki once', async () => {
   await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, 'Scratch.md', 'Copy.md'], dir);
   const rows = readSheet(readFileSync(sheet, 'utf8'));
   assert.deepEqual(rows.filter((r) => r.preview === 'The otter again.').map((r) => [r.page, r.wiki]), [['Scratch.md', 'yes'], ['Copy.md', 'no']]);
+});
+
+test('group cuts classified pages into entries and topics, once unless asked again', async () => {
+  const { dir, vault, judge } = setup();
+  writeFileSync(path.join(vault, 'Scratch.md'), 'The otter again.\n\n- [ ] Shop\n\nA second otter.');
+  const sheet = path.join(dir, 'sheet.csv');
+  await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, 'Scratch.md'], dir);
+  const calls = () => readFileSync(path.join(dir, 'calls.txt'), 'utf8').length;
+  const before = calls();
+
+  const r = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Scratch.md'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(calls() - before, 3, 'one entry call, two topic votes');
+  const rows = readSheet(readFileSync(sheet, 'utf8'));
+  assert.deepEqual(rows.map((x) => [x.entry, x.topic, x.topic_by, x.wiki_page]), [
+    ['e1', 'Otters', 'judge', 'Otters-(snippets)'],
+    ['e2', '- [ ] Shop', 'judge', ''],
+    ['e3', 'Otters', 'judge', 'Otters-(snippets)'],
+  ]);
+  const text = readFileSync(path.join(dir, 'outlines', 'Scratch.md'), 'utf8');
+  assert.match(text, /## Otters \(2 entries\)/);
+  assert.match(r.stdout, /Grouped 1 of 1 pages/);
+
+  await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Scratch.md'], dir);
+  assert.equal(calls() - before, 3, 'a grouped page is left alone');
+  await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, '--redo', 'Scratch.md'], dir);
+  assert.equal(calls() - before, 6, '--redo groups it again');
+});
+
+test('group needs a judge and a page classified as it now stands', async () => {
+  const { dir, vault, judge } = setup();
+  const sheet = path.join(dir, 'sheet.csv');
+  await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, 'Scratch.md'], dir);
+  assert.equal((await run(['group', '--vault', vault, '--sheet', sheet, 'Scratch.md'], dir)).code, 2);
+  const unknown = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Daily/2026-01-01.md'], dir);
+  assert.equal(unknown.code, 3);
+  assert.match(unknown.stderr, /classify it first/);
+  writeFileSync(path.join(vault, 'Scratch.md'), 'The otter, changed.\n\n- [ ] Shop');
+  const changed = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Scratch.md'], dir);
+  assert.equal(changed.code, 3);
+  assert.match(changed.stderr, /classify it again first/);
 });

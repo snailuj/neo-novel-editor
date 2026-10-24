@@ -2,20 +2,26 @@
 //
 //   npm run blocks -- classify --vault DIR --out SHEET.csv [--already LIST] [--judge CMD]
 //                     [--votes N] [--jobs N] [--pages FILE] [PAGE...]
+//   npm run blocks -- group --vault DIR --sheet SHEET.csv --judge CMD [--votes N] [--jobs N]
+//                     [--outlines DIR] [--redo] [--pages FILE] [PAGE...]
 //   npm run blocks -- apply --vault DIR --sheet SHEET.csv --out DIR [--path-prefix P] [--picks FILE]
 //
 // classify splits each page into blocks and writes the review sheet, after every page so
-// a stopped run loses nothing; a re-run judges only blocks the sheet lacks. apply writes
+// a stopped run loses nothing; a re-run judges only blocks the sheet lacks. group cuts
+// classified pages into entries and groups the entries by topic (see group.ts), writing
+// the sheet's entry and topic columns and an outline per page; a page already grouped is
+// left alone unless --redo. apply writes
 // the wiki pages, the Morning Pages book and the import list from the reviewed sheet, and
 // with --picks a JSONL file of line-range picks for the old vault's import to cut itself.
 // Summaries go to stdout, log records to stderr as JSON lines. Exit: 0 done, 1 apply
 // found blocks that changed since review, 2 usage, 3 error.
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { pathToFileURL } from 'node:url';
 import { getLogger, setLogSink } from '../log.ts';
 import { applySheet, blockPicks } from './apply.ts';
+import { findEntries, groupEntries, outline, topicRows } from './group.ts';
 import { commandJudge, judgePage, type JudgeFn } from './judge.ts';
 import { ruleLabel } from './rules.ts';
 import { type Already, dedupeRows, mergeRows, parseAlready, readSheet, type Row, rowsFor, writeSheet } from './sheet.ts';
@@ -32,13 +38,16 @@ export interface Io {
 class UsageError extends Error {}
 
 const USAGE = 'usage: blocks classify --vault DIR --out SHEET [--already LIST] [--judge CMD] [--votes N] [--jobs N] [--pages FILE] [PAGE...]\n'
+  + '       blocks group --vault DIR --sheet SHEET --judge CMD [--votes N] [--jobs N] [--outlines DIR] [--redo] [--pages FILE] [PAGE...]\n'
   + '       blocks apply --vault DIR --sheet SHEET --out DIR [--path-prefix P] [--picks FILE [--picks-kinds writing,morning-pages]]';
 
 const VALUES: Record<string, string[]> = {
   classify: ['--vault', '--out', '--already', '--judge', '--votes', '--jobs', '--pages'],
+  group: ['--vault', '--sheet', '--judge', '--votes', '--jobs', '--outlines', '--pages'],
   apply: ['--vault', '--sheet', '--out', '--path-prefix', '--picks', '--picks-kinds'],
 };
-const REQUIRED: Record<string, string[]> = { classify: ['--vault', '--out'], apply: ['--vault', '--sheet', '--out'] };
+const FLAGS: Record<string, string[]> = { group: ['--redo'] };
+const REQUIRED: Record<string, string[]> = { classify: ['--vault', '--out'], group: ['--vault', '--sheet', '--judge'], apply: ['--vault', '--sheet', '--out'] };
 
 function parse(argv: readonly string[]) {
   const [cmd, ...rest] = argv;
@@ -49,6 +58,10 @@ function parse(argv: readonly string[]) {
     const arg = rest[i]!;
     if (!arg.startsWith('--')) {
       positional.push(arg);
+      continue;
+    }
+    if (FLAGS[cmd]?.includes(arg)) {
+      values.set(arg, 'yes');
       continue;
     }
     if (!VALUES[cmd].includes(arg)) throw new UsageError(`unknown option ${arg}`);
@@ -74,6 +87,24 @@ function writeAtomic(file: string, text: string) {
   renameSync(`${file}.tmp`, file);
 }
 
+/** The pages named by --pages and on the command line, once each, with forward slashes. */
+function pagesOf(values: Map<string, string>, positional: string[], at: (p: string) => string): string[] {
+  const listed = values.has('--pages')
+    ? readFileSync(at(values.get('--pages')!), 'utf8').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))
+    : [];
+  const pages = [...new Set([...listed, ...positional].map((p) => p.replace(/\\/g, '/')))];
+  if (!pages.length) throw new UsageError('name at least one page');
+  return pages;
+}
+
+/** Runs `one` over the pages, `jobs` at a time. */
+async function eachPage(pages: readonly string[], jobs: number, one: (page: string) => Promise<void>) {
+  const queue = [...pages];
+  await Promise.all(Array.from({ length: Math.min(jobs, queue.length) }, async () => {
+    for (let page = queue.shift(); page !== undefined; page = queue.shift()) await one(page);
+  }));
+}
+
 async function classify(values: Map<string, string>, positional: string[], io: Io): Promise<number> {
   const at = (p: string) => path.resolve(io.cwd, p);
   const vault = at(values.get('--vault')!);
@@ -83,11 +114,7 @@ async function classify(values: Map<string, string>, positional: string[], io: I
   const judgeCmd = values.get('--judge');
   const judge: JudgeFn | null = judgeCmd ? commandJudge(judgeCmd) : null;
   const already: Already[] = values.has('--already') ? parseAlready(readFileSync(at(values.get('--already')!), 'utf8')) : [];
-  const listed = values.has('--pages')
-    ? readFileSync(at(values.get('--pages')!), 'utf8').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))
-    : [];
-  const pages = [...new Set([...listed, ...positional].map((p) => p.replace(/\\/g, '/')))];
-  if (!pages.length) throw new UsageError('name at least one page');
+  const pages = pagesOf(values, positional, at);
 
   const old = existsSync(sheetFile) ? readSheet(readFileSync(sheetFile, 'utf8')) : [];
   const byPage = new Map<string, Row[]>();
@@ -121,10 +148,7 @@ async function classify(values: Map<string, string>, positional: string[], io: I
     log.info(`${page}: ${blocks.length} blocks, ${todo.length} new (${ruled} by rule, ${judged.size} judged x${votes}), ${Math.round(performance.now() - started)}ms`);
   };
 
-  const queue = [...pages];
-  await Promise.all(Array.from({ length: Math.min(jobs, queue.length) }, async () => {
-    for (let page = queue.shift(); page !== undefined; page = queue.shift()) await one(page);
-  }));
+  await eachPage(pages, jobs, one);
   const dupes = dedupeRows(order.flatMap((p) => byPage.get(p) ?? []), (r) => fresh.has(`${r.page}\0${r.block}`));
   if (dupes) log.info(`${dupes} new rows repeat text an earlier row sends to the wiki; set to no`);
   save();
@@ -133,6 +157,58 @@ async function classify(values: Map<string, string>, positional: string[], io: I
   const tally = (key: 'label' | 'wiki') => [...rows.reduce((m, r) => m.set(r[key], (m.get(r[key]) ?? 0) + 1), new Map<string, number>())]
     .map(([k, n]) => `${k} ${n}`).join(', ');
   io.stdout(`${rows.length} blocks in ${order.length} pages. Labels: ${tally('label')}. Wiki: ${tally('wiki')}. Book: ${rows.filter((r) => r.book).length}.\n`);
+  return failed ? 3 : 0;
+}
+
+async function group(values: Map<string, string>, positional: string[], io: Io): Promise<number> {
+  const at = (p: string) => path.resolve(io.cwd, p);
+  const vault = at(values.get('--vault')!);
+  const sheetFile = at(values.get('--sheet')!);
+  const votes = count(values.get('--votes'), '--votes', 2);
+  const jobs = count(values.get('--jobs'), '--jobs', 1);
+  const outlines = at(values.get('--outlines') ?? path.join(path.dirname(sheetFile), 'outlines'));
+  const redo = values.has('--redo');
+  const judge = commandJudge(values.get('--judge')!);
+  const pages = pagesOf(values, positional, at);
+  const rows = readSheet(readFileSync(sheetFile, 'utf8'));
+  mkdirSync(outlines, { recursive: true });
+
+  let failed = 0;
+  const one = async (page: string) => {
+    const started = performance.now();
+    const mine = rows.filter((r) => r.page === page);
+    const file = path.join(vault, page);
+    if (!mine.length || !existsSync(file)) {
+      log.error(`${page}: ${mine.length ? 'no such page in the vault' : 'not in the sheet; classify it first'}`);
+      failed++;
+      return;
+    }
+    const blocks = splitBlocks(readFileSync(file, 'utf8'));
+    const known = new Set(mine.map((r) => r.block));
+    if (blocks.some((b) => !known.has(b.id))) {
+      log.error(`${page}: changed since it was classified; classify it again first`);
+      failed++;
+      return;
+    }
+    if (!redo && mine.every((r) => r.entry)) {
+      log.info(`${page}: already grouped; --redo groups it again`);
+      return;
+    }
+    try {
+      const entries = await findEntries(page, blocks, judge, {});
+      const topics = await groupEntries(page, blocks, entries, judge, { votes });
+      topicRows(page, blocks, entries, topics, rows);
+      writeAtomic(sheetFile, writeSheet(rows));
+      writeFileSync(path.join(outlines, `${page.replace(/\.md$/i, '').replace(/[\\/]/g, ' - ')}.md`), outline(page, blocks, entries, topics, rows));
+      const doubts = topics.filter((t) => t.by !== 'judge').length;
+      log.info(`${page}: ${entries.length} entries, ${new Set(topics.map((t) => t.topic)).size} topics, ${doubts} to check, ${Math.round(performance.now() - started)}ms`);
+    } catch (err) {
+      log.error((err as Error).message);
+      failed++;
+    }
+  };
+  await eachPage(pages, jobs, one);
+  io.stdout(`Grouped ${pages.length - failed} of ${pages.length} pages. Outlines in ${outlines}.\n`);
   return failed ? 3 : 0;
 }
 
@@ -159,7 +235,9 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
   const previous = setLogSink((record) => io.stderr(`${JSON.stringify(record)}\n`));
   try {
     const { cmd, values, positional } = parse(argv);
-    return cmd === 'classify' ? await classify(values, positional, io) : apply(values, io);
+    if (cmd === 'classify') return await classify(values, positional, io);
+    if (cmd === 'group') return await group(values, positional, io);
+    return apply(values, io);
   } catch (err) {
     if (err instanceof UsageError) {
       io.stderr(`${USAGE}\nblocks: error: ${err.message}\n`);
