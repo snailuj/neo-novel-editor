@@ -50,12 +50,16 @@ function setup(t: T) {
 const usage = { input_tokens: 10, output_tokens: 20, cache_creation_input_tokens: 30, cache_read_input_tokens: 400 };
 const ECHO = 'Never invent facts. Every proposal rests on the source\'s own words, quoted.';
 
-function fakeClaude(calls: { args: string[]; cwd: string }[]): Runner {
+// verbose: as `claude -p --output-format json` prints when settings.json has "verbose": true
+function fakeClaude(calls: { args: string[]; cwd: string }[], verbose = false): Runner {
+  const printed = (result: Record<string, unknown>) => JSON.stringify(verbose
+    ? [{ type: 'system', subtype: 'init' }, { type: 'assistant', message: { content: [] } }, result]
+    : result);
   return async ({ args, stdin, cwd }) => {
     calls.push({ args, cwd });
     if (args.includes('--max-turns')) {
       const yes = /^## Page: Net-Loft$/m.test(stdin);
-      return { code: 0, stderr: '', stdout: JSON.stringify({ type: 'result', result: `{"affects": ${yes}, "confidence": 0.9, "why": "It is named."}`, usage, total_cost_usd: 0.001, duration_ms: 3 }) };
+      return { code: 0, stderr: '', stdout: printed({ type: 'result', result: `{"affects": ${yes}, "confidence": 0.9, "why": "It is named."}`, usage, total_cost_usd: 0.001, duration_ms: 3 }) };
     }
     const answer = /^- Answer file: (.+)$/m.exec(stdin)![1]!;
     writeFileSync(answer, [
@@ -63,7 +67,7 @@ function fakeClaude(calls: { args: string[]; cwd: string }[]): Runner {
       { kind: 'topic', target: 'Net-Loft', line: 'See [[Gale-Log]].', reason: 'r', quote: 'The gale tore the nets' },
       { kind: 'nothing', target: 'Old-Pier', reason: 'r' },
     ].map((l) => JSON.stringify(l)).join('\n'));
-    return { code: 0, stderr: '', stdout: JSON.stringify({ type: 'result', result: 'done', usage, total_cost_usd: 0.02, duration_ms: 9 }) };
+    return { code: 0, stderr: '', stdout: printed({ type: 'result', result: 'done', usage, total_cost_usd: 0.02, duration_ms: 9 }) };
   };
 }
 
@@ -140,4 +144,17 @@ test('the eval refuses to write inside the vault', async (t) => {
   const never: Runner = async () => { throw new Error('no call expected'); };
   await assert.rejects(main(['--vault', vault, '--scored', scored, '--out', path.join(vault, 'eval'), '--dry-run'], { runner: never, log: () => {} }), /inside the vault/);
   assert.ok(!existsSync(path.join(vault, 'eval')));
+});
+
+test('claude printing its verbose message list scores and costs the same as its one result object', async (t) => {
+  const { scored, vault, out } = setup(t);
+  const calls: { args: string[]; cwd: string }[] = [];
+  await main(['--vault', vault, '--scored', scored, '--out', out, '--arms', 'base,screen,screened', '--claude', 'fake-claude'], { runner: fakeClaude(calls, true), log: () => {} });
+  assert.equal(calls.length, 5, 'every screen call came back, so screened was judged too');
+  const md = readFileSync(path.join(out, 'eval.md'), 'utf8');
+  assert.match(md, /^\| base-1 \| 1 \| 1 of 1 \| 0 \| 0 \| 1 \|/m);
+  assert.match(md, /^\| screen-1 \| 1 \| 1 of 1 \| 0 \| 0 \| 0 \|/m);
+  const totals = JSON.parse(readFileSync(path.join(out, 'eval.json'), 'utf8')).report.totals;
+  assert.equal(totals[0].costUsd, 0.02, 'the judge\'s cost is read from the result entry');
+  assert.equal(totals[0].outputTokens, 20);
 });

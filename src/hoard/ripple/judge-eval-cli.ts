@@ -79,6 +79,16 @@ function ownerOfText(text: string): WikiPage['owner'] {
   }
 }
 
+// With "verbose": true in the user's settings, `claude -p --output-format json` prints every
+// message as an array; the result object is its last `result` entry.
+function resultOf(stdout: string): Record<string, any> {
+  const json = JSON.parse(stdout) as Record<string, any> | Record<string, any>[];
+  if (!Array.isArray(json)) return json;
+  const result = json.findLast((m) => m?.['type'] === 'result');
+  if (!result) throw new Error('claude printed no result entry');
+  return result;
+}
+
 function usageOf(json: Record<string, any>): Usage {
   const u = json['usage'] ?? {};
   return {
@@ -271,7 +281,7 @@ export async function main(argv: string[], deps: { runner?: Runner; log?: (messa
           args: ['-p', '--output-format', 'json', '--model', values['screen-model'], '--max-turns', '1', '--tools', ''],
         });
         if (res.code !== 0) throw new Error(`claude exited ${res.code}: ${tail(res.stderr || res.stdout)}`);
-        const json = JSON.parse(res.stdout) as Record<string, any>;
+        const json = resultOf(res.stdout);
         if (json['is_error']) throw new Error(`claude said: ${tail(String(json['result'] ?? json['subtype'] ?? ''))}`);
         const answer = readScreen(String(json['result'] ?? ''));
         const usage = usageOf(json);
@@ -321,7 +331,7 @@ export async function main(argv: string[], deps: { runner?: Runner; log?: (messa
     const usageFile = `${answer}.usage.json`;
     const readUsage = (): Usage | undefined => {
       try {
-        return existsSync(usageFile) ? usageOf(JSON.parse(readFileSync(usageFile, 'utf8')) as Record<string, any>) : undefined;
+        return existsSync(usageFile) ? usageOf(resultOf(readFileSync(usageFile, 'utf8'))) : undefined;
       } catch {
         return undefined;
       }
