@@ -42,3 +42,9 @@ test('headings lists every heading outside a fence, with its level', () => {
     [1, 'Tide'], [2, 'Overview'], [3, 'Peoples'], [2, 'Tasks'], [2, 'Overview'], [1, 'Filing'],
   ]);
 });
+
+test('a fence closes only on its own marker, at least as long as the one that opened it', () => {
+  const body = ['# Top', '````', '~~~', '# not a heading', '```', '## nor this', '````', '## Next', 'After.'].join('\n');
+  assert.deepEqual(headings(body).map((h) => h.text), ['Top', 'Next']);
+  assert.equal(section(body, 'Next'), '## Next\nAfter.');
+});

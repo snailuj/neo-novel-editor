@@ -1,24 +1,27 @@
 // A section of a Markdown page, as an import list's `page.md#Heading` names it: the
 // heading's line and every line after it up to the next heading of the same or a higher
-// level. A `#` line inside a code fence is no heading. The first heading that matches
+// level. A `#` line inside a code fence is no heading; a fence closes only on a line of
+// its own marker at least as long as the one that opened it, as CommonMark has it. The
+// first heading that matches
 // exactly wins; failing that, the first that matches without regard to case.
 //
 // Pure.
-import { isFence } from '../../librarian/links.ts';
-
 const ATX = /^ {0,3}(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/;
+const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
 export interface Heading { line: number; level: number; text: string }
 
 export function headings(body: string): Heading[] {
   const found: Heading[] = [];
-  let inFence = false;
+  let open = '';
   body.split('\n').forEach((line, i) => {
-    if (isFence(line)) {
-      inFence = !inFence;
+    const marker = FENCE.exec(line)?.[1];
+    if (marker) {
+      if (!open) open = marker;
+      else if (marker[0] === open[0] && marker.length >= open.length && line.trim() === marker) open = '';
       return;
     }
-    const m = inFence ? null : ATX.exec(line);
+    const m = open ? null : ATX.exec(line);
     if (m) found.push({ line: i, level: m[1]!.length, text: m[2]!.trim() });
   });
   return found;
