@@ -7,6 +7,8 @@
 //   comments on the author's page instead, and mints a page as the librarian's;
 // - nothing applies while the wiki is open, and a ruling made stays made;
 // - Ripple This Chapter packets a chapter of the manuscript;
+// - a later answer that repeats a card the writer has waiting or rejected, in other
+//   words, makes no new card; one that repeats an applied card does;
 // - the meaning model's top-up writes a waiting packet again with its pages, once, and
 //   leaves a packet the judge has answered alone.
 import assert from 'node:assert/strict';
@@ -181,6 +183,47 @@ test('Ripple This Chapter packets a chapter of the manuscript, once for the same
   const again = await ripple.ask({ bookId: 'book-novel-1', chId: 'c1', title: 'Dawn' });
   assert.deepEqual([again.made, again.job, again.packet], [false, asked.job, asked.packet]);
   await assert.rejects(ripple.ask({ bookId: 'book-novel-1', chId: 'c2', title: 'Later' }), /not saved yet/);
+});
+
+test('a re-run makes no new card for a change the writer has waiting or rejected', async (t) => {
+  const { library, ripple, importPages } = setup(t);
+  await importPages({
+    Harbour: '---\ntype: lore\n---\nThe harbour wall is made of timber.\n',
+    Quay: '---\ntype: lore\n---\nThe quay by the [[Harbour]].\n',
+    Lighthouse: '---\ntype: lore\n---\nThe keeper lives in the tower.\n',
+  });
+  await ripple.run();
+  const file = path.join(library, 'book-novel-1', 'chapters', 'c1.html');
+  mkdirSync(path.dirname(file), { recursive: true });
+  const dawn = { bookId: 'book-novel-1', chId: 'c1', title: 'Dawn' };
+  const judge = async (html: string, lines: object[]) => {
+    writeFileSync(file, html);
+    const asked = await ripple.ask(dawn);
+    assert.equal(asked.made, true, 'new words make a new job');
+    writeFileSync(ripple.overview().jobs.find((j) => j.id === asked.job)!.answer, answer(lines));
+    return ripple.run();
+  };
+  const first = await judge('<p>The storm broke the harbour wall; it was rebuilt in stone. The keeper moved inland.</p>', [
+    { kind: 'claim', target: 'Harbour', anchor: 'made of timber', text: 'rebuilt in stone', reason: 'r', quote: 'it was rebuilt in stone' },
+    { kind: 'topic', target: 'Quay', line: 'The storm in [[Dawn]] broke the wall here.', reason: 'r', quote: 'The storm broke the harbour wall' },
+    { kind: 'topic', target: 'Lighthouse', line: 'In [[Dawn]] the keeper moves inland.', reason: 'r', quote: 'The keeper moved inland' },
+  ]);
+  assert.deepEqual([first.proposals, first.repeats], [3, 0], 'a clean log holds nothing to repeat');
+  const [claim, quay, light] = ripple.overview().proposals;
+  await ripple.decide(null, quay!.id, 'reject');
+  await ripple.decide('book-other', light!.id, 'apply');
+
+  const second = await judge('<p>The storm broke the harbour wall; it was rebuilt in stone. The keeper moved inland at once.</p>', [
+    { kind: 'claim', target: 'Harbour', anchor: 'made of timber', text: 'of stone, after the storm', reason: 'other words', quote: 'rebuilt in stone' },
+    { kind: 'topic', target: 'quay', line: 'See [[Dawn]], where the storm breaks the wall.', reason: 'other words', quote: 'broke the harbour wall' },
+    { kind: 'topic', target: 'Lighthouse', line: 'The keeper leaves at once in [[Dawn]].', reason: 'r', quote: 'moved inland at once' },
+    { kind: 'topic', target: 'Harbour', line: 'The wall falls in [[Dawn]].', reason: 'r', quote: 'The storm broke the harbour wall' },
+    { kind: 'topic', target: 'Harbour', line: 'In [[Dawn]] the wall falls.', reason: 'said twice', quote: 'broke the harbour wall' },
+  ]);
+  assert.deepEqual([second.read, second.proposals, second.repeats], [1, 2, 3], 'one answer saying a change twice makes one card');
+  const waiting = ripple.overview().proposals.filter((p) => p.status === 'proposed');
+  assert.deepEqual(waiting.map((p) => [p.kind, p.target]), [['claim', 'Harbour'], ['topic', 'Lighthouse'], ['topic', 'Harbour']]);
+  assert.equal(waiting[0]!.id, claim!.id, 'the waiting card is the first one, not a second copy');
 });
 
 // letters counted: close enough in meaning for a test

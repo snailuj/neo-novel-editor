@@ -430,15 +430,15 @@ export function withExtras(roster: Ranked[], k: number, fills: readonly { ranked
 }
 
 /** One candidate as the judge would see it: name, gloss, the passage that matched, why. */
-export function card(doc: Doc, r: Ranked): string {
+export function entry(doc: Doc, r: Ranked): string {
   const lines = [`- [[${doc.name}]]${r.why ? ` (${r.why})` : ''}: ${doc.gloss}`];
   if (r.passage) lines.push(`  > ${clip(plain(r.passage), PASSAGE)}`);
   return lines.join('\n');
 }
 
-/** A packet's size in characters: brief, source and cards. Characters, not tokens. */
-export function packetChars(cards: string[], sourceChars: number, briefChars: number): number {
-  return briefChars + sourceChars + cards.reduce((s, c) => s + c.length + 1, 0);
+/** A packet's size in characters: brief, source and candidate entries. Characters, not tokens. */
+export function packetChars(entries: string[], sourceChars: number, briefChars: number): number {
+  return briefChars + sourceChars + entries.reduce((s, c) => s + c.length + 1, 0);
 }
 
 /** What hoard's whole roster would add to the packet: a name-and-gloss row per page. */

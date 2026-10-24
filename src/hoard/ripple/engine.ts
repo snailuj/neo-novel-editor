@@ -26,7 +26,7 @@ import { AnswerError, readAnswer, type Proposed } from './contract.ts';
 import { buildPacket } from './packet.ts';
 import { chapterRel, corpusPath, pageText, readWiki, wikiCorpus, type Wiki, type WikiPage } from './pages.ts';
 import { newJob, reconcile, superseded } from './reconcile.ts';
-import { LAST_HOP, proposalId, Rulings, sha256, type RippleJob, type RippleProposal, type RippleState } from './rulings.ts';
+import { cardKey, heldCards, LAST_HOP, proposalId, repeatOf, Rulings, sha256, type RippleJob, type RippleProposal, type RippleState } from './rulings.ts';
 import type { Corpus, Embed } from './shortlist.ts';
 
 type Log = (level: 'error' | 'warn' | 'info' | 'debug', message: string, data?: unknown) => void;
@@ -67,6 +67,8 @@ export interface RunSummary {
   /** Answers taken in, and the proposals they held. */
   read: number;
   proposals: number;
+  /** Proposals left out because the writer has the same change waiting, or rejected it. */
+  repeats: number;
   /** An answer that could not be taken, with why, by the source's title. */
   problems: string[];
   packets: string;
@@ -207,7 +209,7 @@ export class Ripple {
   }
 
   async #run(): Promise<RunSummary> {
-    const summary: RunSummary = { wiki: false, baseline: false, made: 0, packeted: 0, read: 0, proposals: 0, problems: [], packets: this.#dir('packets') };
+    const summary: RunSummary = { wiki: false, baseline: false, made: 0, packeted: 0, read: 0, proposals: 0, repeats: 0, problems: [], packets: this.#dir('packets') };
     const wiki = this.#wiki();
     if (!wiki) return summary;
     summary.wiki = true;
@@ -228,6 +230,7 @@ export class Ripple {
     const answers = await this.#answers(state);
     summary.read = answers.read;
     summary.proposals = answers.proposals;
+    summary.repeats = answers.repeats;
     summary.problems = answers.problems;
     this.#o.log('info', 'ripple.run', { ...summary, packets: undefined });
     return summary;
@@ -257,8 +260,9 @@ export class Ripple {
   }
 
   // Each answer waiting in the inbox for a packeted job.
-  async #answers(state: RippleState): Promise<{ read: number; proposals: number; problems: string[] }> {
-    const out = { read: 0, proposals: 0, problems: [] as string[] };
+  async #answers(state: RippleState): Promise<{ read: number; proposals: number; repeats: number; problems: string[] }> {
+    const out = { read: 0, proposals: 0, repeats: 0, problems: [] as string[] };
+    const held = heldCards(state);
     const records: (RippleJob | RippleProposal)[] = [];
     let brief: { text: string; sha256: string } | null = null;
     for (const job of state.jobs.values()) {
@@ -282,7 +286,17 @@ export class Ripple {
       }
       const at = this.#now();
       const made = proposed.map((p) => proposalOf(job, p, at)).filter((p) => !state.proposals.has(p.id));
-      const fresh = made.filter((p, i) => made.findIndex((q) => q.id === p.id) === i);
+      const fresh = made.filter((p, i) => made.findIndex((q) => q.id === p.id) === i).filter((p) => {
+        const was = repeatOf(state, p, held);
+        if (was) {
+          out.repeats++;
+          this.#o.log('info', `ripple: ${job.source.title}: left out a ${p.kind} on ${p.target}, which repeats card ${was.id} (${was.status})`);
+          return false;
+        }
+        // a change said twice, in one answer or two, is one card
+        if (p.kind !== 'nothing') held.set(cardKey(p), p);
+        return true;
+      });
       records.push(...fresh, { ...rest, at, state: 'judged' });
       out.read++;
       out.proposals += fresh.filter((p) => p.status === 'proposed').length;
