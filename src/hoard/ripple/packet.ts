@@ -37,6 +37,8 @@ export interface PacketInput {
   fullOnly?: ReadonlySet<string>;
   /** A rendered wiki map (map.ts), given after the candidates. */
   map?: string;
+  /** Pages the judge must answer, each with a proposal or a nothing line. */
+  mustRule?: ReadonlySet<string>;
 }
 
 export interface Packet {
@@ -99,6 +101,18 @@ export async function buildPacket(input: PacketInput): Promise<Packet> {
     input.map.trimEnd(),
     '',
   ];
+  // Overrides the contract's "say nothing of a page you leave alone" for these pages only,
+  // so a declined page is a recorded decision rather than silence.
+  const ruled = ranked.filter((r) => input.mustRule?.has(r.relpath))
+    .map((r) => `- [[${byPath.get(r.relpath)?.title ?? corpus.byRel.get(r.relpath)?.name ?? r.relpath}]]`);
+  const rule = input.mustRule === undefined ? [] : [
+    `## Pages to rule on (${ruled.length})`,
+    '',
+    'Write one line for each page below: a claim or a topic where the source means the page should change or name it, otherwise a nothing line with your reason. For these pages, silence is not an answer.',
+    '',
+    ...ruled,
+    '',
+  ];
   const at = job.commit ? `, commit ${job.commit.slice(0, 12)}` : '';
   const text = [
     `# Ripple packet ${job.id}`,
@@ -124,6 +138,7 @@ export async function buildPacket(input: PacketInput): Promise<Packet> {
     '',
     ...(cards.text ? [cards.text] : []),
     '',
+    ...rule,
     ...map,
   ].join('\n');
   return { text, candidates: cards.candidates, modelled, full: cards.full, locator: cards.locator, fullChars: cards.fullChars };

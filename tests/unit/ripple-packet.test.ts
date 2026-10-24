@@ -116,3 +116,20 @@ test('a packet with a budget and a map says what is full and gives the map after
   assert.ok(packet.text.trimEnd().endsWith('- Harbour-Light'));
   assert.ok(!plain.text.includes('## Wiki map'));
 });
+
+// Rule: every page the judge must rule on is named once, under its own heading, and no
+// other page is; without the option the packet has no such section.
+test('a packet with pages to rule on names each of them once and asks a line for each', async () => {
+  const plain = await buildPacket(input());
+  const picked = new Set(plain.full.slice(0, 2));
+  assert.equal(picked.size, 2, 'baseline: two candidates to pick');
+  const packet = await buildPacket(input({ fullOnly: picked, mustRule: picked }));
+  const at = packet.text.indexOf('## Pages to rule on (2)');
+  assert.ok(at > packet.text.indexOf('## Candidates'), 'the section follows the candidates');
+  const section = packet.text.slice(at).split('\n## ')[0]!;
+  assert.match(section, /one line for each/i);
+  assert.match(section, /nothing/);
+  const named = section.split('\n').filter((l) => l.startsWith('- [['));
+  assert.deepEqual(named, [...picked].map((rel) => `- [[${byPath.get(rel)!.title}]]`));
+  assert.ok(!plain.text.includes('## Pages to rule on'));
+});
