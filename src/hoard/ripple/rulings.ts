@@ -14,6 +14,7 @@ import path from 'node:path';
 import type { RippleCursor, RippleJob, RippleProposal, RippleRulingV1 } from '../../generated/ripple-ruling-v1.js';
 import { validateRippleRulingV1 } from '../../generated/validators.cjs';
 import { writeWhole } from '../files.ts';
+import { plainText } from './contract.ts';
 
 export type { RippleCursor, RippleJob, RippleProposal };
 
@@ -47,6 +48,43 @@ export function jobId(source: { bookId: string; chId: string }, sourceHash: stri
 /** A proposal's id: one answer file read twice yields the same ids. */
 export function proposalId(job: string, kind: string, target: string, quote: string): string {
   return `r-${short(['proposal', job, kind, target, quote].join('\0'))}`;
+}
+
+// case, spacing and punctuation aside
+const norm = (text: string) => plainText(text).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
+// The pages a line links, so two wordings of one link line are one change.
+const linked = (line: string) => [...new Set([...line.matchAll(/\[\[([^\]|#]*)/g)].map((m) => norm(m[1]!)))].sort().join('\n');
+
+type Card = Pick<RippleProposal, 'kind' | 'source' | 'target'> & Partial<Pick<RippleProposal, 'anchor' | 'line'>>;
+
+/**
+ * What a card changes, wording and job aside: its kind, source and target page, and the
+ * words a claim replaces, the pages a topic line links (or, with none, its words) or a
+ * mint's title. A judge asked twice words one change differently, so a proposal's id,
+ * which holds the quote and the job, does not find the earlier card (re-run test, 24 Oct).
+ */
+export function cardKey(p: Card): string {
+  const what = p.kind === 'claim' ? norm(p.anchor ?? '') : p.kind === 'topic' ? linked(p.line ?? '') || norm(p.line ?? '') : '';
+  return ['card', p.kind, p.source.bookId, p.source.chId, norm(p.target), what].join('\0');
+}
+
+/** The cards a new proposal must not repeat, by key: those waiting on the writer and those they rejected. */
+export function heldCards(state: RippleState): Map<string, RippleProposal> {
+  const held = new Map<string, RippleProposal>();
+  for (const q of state.proposals.values()) {
+    // an applied card is on its page now, where the judge reads it; a nothing is no card
+    if (q.kind === 'nothing' || q.status === 'applied') continue;
+    held.set(cardKey(q), q);
+  }
+  return held;
+}
+
+/** The earlier card a proposal repeats, or null. */
+export function repeatOf(state: RippleState, p: RippleProposal, held = heldCards(state)): RippleProposal | null {
+  if (p.kind === 'nothing') return null;
+  const q = held.get(cardKey(p));
+  return q && q.id !== p.id ? q : null;
 }
 
 /** The state the lines give: the newest line for each id. */
