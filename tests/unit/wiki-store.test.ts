@@ -202,11 +202,12 @@ test('a page is read for the pane by its chapter id, and only a page of the wiki
   assert.throws(() => wiki.page('../book.json'), TypeError);
 });
 
-// Rule: with history kept, an import is the author's commit (their words on the pages,
-// quotations and code, and nothing else of the pages) and then the librarian's (the
-// whole pages, their sidecars, the manifest and the change log), so blame credits each
-// paragraph to whoever owns it.
-test('an import commits the pages twice: the author\'s blocks, then the whole pages', async (t) => {
+// Rule: with history kept, an import is the author's commit (their words on the
+// librarian's pages, quotations and code, and the whole of each page that is theirs by
+// the rule suggest mode follows) and then the librarian's (the rest of its pages, their
+// sidecars, the manifest and the change log), so blame credits each paragraph to whoever
+// owns it, and agrees with which pages open in suggest mode.
+test('an import commits the pages twice: the author\'s blocks and pages, then the librarian\'s pages', async (t) => {
   const library = tempDir(t);
   const vault = tempDir(t);
   let n = 0;
@@ -227,16 +228,42 @@ test('an import commits the pages twice: the author\'s blocks, then the whole pa
     },
   });
   const file = path.join(vault, 'Quay.md');
-  writeFileSync(file, '# Quay\n> "Mind the step," she said.\n> -- [[Log]] (Ada)\nThe quay is old.\n');
+  writeFileSync(file, '---\ntype: lore\n---\n# Quay\n> "Mind the step," she said.\n> -- [[Log]] (Ada)\nThe quay is old.\n');
+  // no frontmatter: nothing says the librarian wrote it, so the page is the writer's
   const plain = path.join(vault, 'Plain.md');
   writeFileSync(plain, 'Nothing quoted.\n');
   await wiki.apply(wiki.sort([file, plain]), null);
   assert.deepEqual(seen, [
-    { part: 'author', html: ['<p><br></p>', '<p class="wiki-quote" data-depth="1">"Mind the step," she said.</p>'], manifest: false },
+    { part: 'author', html: ['<p>Nothing quoted.</p>', '<p class="wiki-quote" data-depth="1">"Mind the step," she said.</p>'], manifest: false },
     {
       part: 'librarian',
       html: ['<p>Nothing quoted.</p>', '<p class="wiki-h1">Quay</p><p class="wiki-quote" data-depth="1">"Mind the step," she said.</p><p class="wiki-quote" data-depth="1">-- [[Log]] (Ada)</p><p>The quay is old.</p>'],
       manifest: true,
     },
   ]);
+});
+
+// Rule (ripple's mint): a page the librarian makes comes after the wiki's last, as plain
+// blocks with a sidecar naming what made it; never while the wiki is open, before the
+// first import, untitled, or under a title a page or its source's name holds.
+test('mint makes a librarian page after the last, and refuses a title in use', async (t) => {
+  const { library, wiki, page } = setup(t);
+  const frontmatter = { type: 'lore' };
+  assert.throws(() => wiki.mint({ title: 'Quay', paragraphs: ['x'], frontmatter, origin: 'ripple:r-1' }, null), /no wiki yet/);
+  await wiki.apply(wiki.sort([page('Harbour.md', 'The harbour wall.\n')]), null);
+  const bookId = wiki.wikiId()!;
+  assert.throws(() => wiki.mint({ title: 'Quay', paragraphs: ['x'], frontmatter, origin: 'ripple:r-1' }, bookId), /The wiki is open/);
+  assert.throws(() => wiki.mint({ title: '  ', paragraphs: ['x'], frontmatter, origin: 'ripple:r-1' }, null), RangeError);
+  assert.throws(() => wiki.mint({ title: 'harbour', paragraphs: ['x'], frontmatter, origin: 'ripple:r-1' }, null), /already in the wiki/);
+  const made = wiki.mint({ title: 'Quay', paragraphs: ['The quay & the [[Harbour]].', ' ', 'Built of *stone*.'], frontmatter, origin: 'ripple:r-1' }, null);
+  const book = bookOf(library, bookId);
+  assert.equal(book.chapterOrder.at(-1), made.chId);
+  assert.equal(book.chapterTitles[made.chId], 'Quay');
+  assert.equal(book.chapterKinds[made.chId], 'unnumbered');
+  assert.equal(noIds(readFileSync(path.join(library, bookId, 'chapters', `${made.chId}.html`), 'utf8')), '<p>The quay &amp; the [[Harbour]].</p><p>Built of <i>stone</i>.</p>');
+  const sidecar = json(path.join(library, '.neo', bookId, 'pages', `${made.chId}.json`));
+  assert.ok(validateHoardPageV1(sidecar));
+  assert.deepEqual([sidecar.source.path, sidecar.source.name, sidecar.frontmatter], ['ripple:r-1', 'Quay', frontmatter]);
+  assert.deepEqual(made.files, [`${bookId}/chapters/${made.chId}.html`, `.neo/${bookId}/pages/${made.chId}.json`, `${bookId}/book.json`]);
+  assert.throws(() => wiki.mint({ title: 'Quay', paragraphs: ['y'], frontmatter, origin: 'ripple:r-2' }, null), /already in the wiki/);
 });

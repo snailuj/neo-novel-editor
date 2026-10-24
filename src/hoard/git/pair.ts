@@ -8,6 +8,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { oneName } from '../files.ts';
+import { GateRefused, type Finding } from './gate.ts';
 import type { GitLayer, Paired } from './layer.ts';
 import type { GitLog } from './runner.ts';
 
@@ -23,10 +24,8 @@ export interface PairOptions {
 
 export type Begun = { pair: string | null } | { refused: 'unsaved' };
 
-export interface Ended {
-  before: string | null;
-  after: string | null;
-}
+/** The two commits, or why the gate refused the edit: then neither is the librarian's. */
+export type Ended = { before: string | null; after: string | null } | { refused: Finding[] };
 
 interface Open {
   rel: string;
@@ -96,8 +95,13 @@ export class LibrarianPairs {
     this.#open.delete(pair);
     clearTimeout(open.timer);
     open.finish(html);
-    const { before, after } = await open.done;
-    return { before, after };
+    try {
+      const { before, after } = await open.done;
+      return { before, after };
+    } catch (err) {
+      if (err instanceof GateRefused) return { refused: err.findings };
+      throw err;
+    }
   }
 
   // Whether the file comes to hold html within settleMs. Each landed write of it wakes a

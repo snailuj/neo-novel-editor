@@ -13,10 +13,14 @@
 // (wiki/window.ts) imports pages, opens the wiki book and follows links into it, which
 // needs API 4's open. Search (search/window.ts) looks through every book and the wiki
 // from a Search section beside the book. The librarian reads each chapter the writer
-// leaves and comments on the wiki pages its new words name (companion/window.ts).
+// leaves and comments on the wiki pages its new words name (companion/window.ts). Ripple
+// (ripple/window.ts) lists what waits for its judge and the judge's proposals to rule on.
 import { startCompanion } from './companion/window.ts';
 import { startLibrarian } from './git/librarian.ts';
+import { startPaneMarks } from './marks/pane-marks.ts';
 import { startMarks } from './marks/window.ts';
+import { startReview } from './review/window.ts';
+import { startRipple } from './ripple/window.ts';
 import { startSearch } from './search/window.ts';
 import { startWiki } from './wiki/window.ts';
 
@@ -45,17 +49,21 @@ NeoPlugins.register({
       return checkpoint('book-close');
     });
     neo.addCommand('keep-history', async () => { await neo.invoke('git.keep-history'); });
+    neo.addCommand('check-findings', async () => { await neo.invoke('git.findings'); });
 
     const blame = (bookId: string, chId: string) => neo.invoke('git.blame', { bookId, chId });
     const gitStatus = () => neo.invoke('git.status');
     const marks = startMarks(neo, { follow: (target) => { wiki.follow(target); } });
     const wiki = startWiki(neo);
+    const librarian = startLibrarian(neo);
+    const review = startReview(neo, marks, { pages: wiki.index, librarian });
+    const paneMarks = startPaneMarks(neo, wiki.pane);
     const search = startSearch(neo, {
       bookId: () => wiki.pages()?.bookId ?? null,
       show: (chId, at) => wiki.pane.open(chId, at ?? undefined),
     });
     const companion = startCompanion(neo, { marks, wiki: () => wiki.pages() });
-    const librarian = startLibrarian(neo);
-    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, search, companion, librarian }) });
+    const ripple = startRipple(neo, { wikiId: () => wiki.pages()?.bookId ?? null, show: async (chId) => { await wiki.reindex(); await wiki.pane.open(chId); } });
+    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, librarian, review, paneMarks, search, companion, ripple }) });
   },
 });

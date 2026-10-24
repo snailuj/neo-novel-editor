@@ -178,3 +178,33 @@ test('an import is committed at once, the author\'s part and then the librarian\
   await other.commitNow('import');
   assert.equal(await other.head(), null);
 });
+
+// Rule (ripple): show reads a file as a commit holds it, and changed lists the files under
+// a folder that commits changed, each saying whether any of those commits was not the
+// librarian's. Both are empty-handed without history.
+test('show and changed read the history for ripple', async (t) => {
+  isolateGitConfig(t, { name: 'Ada', email: 'ada@example.com' });
+  const lib = tempLibrary(t);
+  await lib.git.run(lib.library, ['init', '-q']);
+  const { layer } = layerFor(t, lib.git, lib.library);
+  await layer.open();
+  await layer.drained();
+  const start = (await layer.head())!;
+  lib.write('book-wiki-1/chapters/a.html', '<p>By Ada.</p>');
+  await layer.commitNow('import-author');
+  lib.write('book-wiki-1/chapters/b.html', '<p>By the librarian.</p>');
+  lib.write('book-fox-1/chapters/c1.html', '<p>Elsewhere.</p>');
+  await layer.commitNow('import');
+  const end = (await layer.head())!;
+  assert.equal(await layer.show(end, 'book-wiki-1/chapters/a.html'), '<p>By Ada.</p>');
+  assert.equal(await layer.show(start, 'book-wiki-1/chapters/a.html'), null);
+  assert.deepEqual(await layer.changed(start, end, 'book-wiki-1/chapters/'), [
+    { rel: 'book-wiki-1/chapters/a.html', byAuthor: true },
+    { rel: 'book-wiki-1/chapters/b.html', byAuthor: false },
+  ]);
+  const bare = tempLibrary(t);
+  const other = layerFor(t, bare.git, bare.library).layer;
+  await other.open();
+  assert.equal(await other.show(start, 'book-fox-1/chapters/c1.html'), null);
+  assert.deepEqual(await other.changed(start, end, 'book-wiki-1/'), []);
+});

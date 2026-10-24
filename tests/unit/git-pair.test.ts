@@ -6,6 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import type { Clock } from '../../src/hoard/git/checkpoints.ts';
+import { Gate } from '../../src/hoard/git/gate.ts';
 import { GitLayer, resolveSettings } from '../../src/hoard/git/layer.ts';
 import { LibrarianPairs } from '../../src/hoard/git/pair.ts';
 import type { Git } from '../../src/hoard/git/runner.ts';
@@ -198,6 +199,7 @@ test('a save landing after the edit is asked for still goes in the author\'s com
   const edited = '<p>One.</p><p>Two, amended.</p>';
   const [ended] = await Promise.all([pairs.end({ pair: begun.pair, html: edited }), save(edited, 150)]);
   assert.deepEqual((await history(git, library)).slice(0, 2), ['Librarian|librarian-after', 'Ada|librarian-before']);
+  assert.ok('after' in ended);
   const { stdout: before } = await git.run(library, ['show', `${ended.before}:${C1}`]);
   const { stdout: after } = await git.run(library, ['show', `${ended.after}:${C1}`]);
   assert.equal(before, typed);
@@ -238,4 +240,22 @@ test('a name that leaves the library is refused', async (t) => {
   const { pairs } = await pairsFor(t);
   await assert.rejects(pairs.begin({ bookId: '..', chId: 'c1', html: '' }), TypeError);
   await assert.rejects(pairs.begin({ bookId: 'book-fox-1', chId: 'a/b', html: '' }), TypeError);
+});
+
+// Rule: a librarian edit the gate refuses ends with its findings, and nothing of it is
+// committed: not as the librarian's, and not as the writer's at the next checkpoint.
+test('an edit the gate refuses ends with its findings and leaves the edit out of history', async (t) => {
+  const { library, git, layer, pairs, save, write } = await pairsFor(t);
+  layer.useGate(new Gate({ library: () => library, log: () => {} }));
+  const typed = '<p data-block="b1">One.</p>';
+  const [begun] = await Promise.all([pairs.begin(ask(typed)), save(typed, 50)]);
+  assert.ok('pair' in begun && begun.pair);
+  const edited = '<p data-block="b 1">One, amended.</p>';
+  const [ended] = await Promise.all([pairs.end({ pair: begun.pair, html: edited }), save(edited, 50)]);
+  assert.ok('refused' in ended, JSON.stringify(ended));
+  assert.deepEqual(ended.refused.map((f) => `${f.path}|${f.rule}`), [`${C1}|Block-Ids-Citable`]);
+  assert.deepEqual((await history(git, library)).slice(0, 2), ['Ada|librarian-before', 'Ada|recovered']);
+  write('book-fox-1/chapters/c2.html', '<p>Elsewhere.</p>');
+  await layer.commitNow('import-author');
+  assert.deepEqual(await filesOf(git, library, 'HEAD'), ['book-fox-1/chapters/c2.html'], 'the checkpoints run, without the edit');
 });

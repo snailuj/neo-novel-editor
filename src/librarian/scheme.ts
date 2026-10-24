@@ -42,6 +42,25 @@ export const DEFAULT_SCHEME: Scheme = Object.freeze({
   unattributed: 'Unattributed',
 }) as Scheme;
 
+/**
+ * A scheme read from JSON naming any of DEFAULT_SCHEME's keys, each the same shape; the
+ * keys it leaves out keep their neutral values. `name` says where it came from in errors.
+ */
+export function schemeFrom(raw: unknown, name: string): Scheme {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new Error(`${name}: a scheme is a JSON object`);
+  const scheme: Record<string, unknown> = { ...DEFAULT_SCHEME };
+  for (const [k, value] of Object.entries(raw)) {
+    const fallback = (DEFAULT_SCHEME as unknown as Record<string, unknown>)[k];
+    if (fallback === undefined) throw new Error(`${name}: unknown scheme key '${k}'`);
+    const ok = Array.isArray(fallback)
+      ? Array.isArray(value) && value.every((v) => typeof v === 'string')
+      : typeof value === 'string';
+    if (!ok) throw new Error(`${name}: scheme key '${k}' must be ${Array.isArray(fallback) ? 'a list of strings' : 'a string'}`);
+    scheme[k] = value;
+  }
+  return scheme as unknown as Scheme;
+}
+
 export interface Layout {
   /** Folders the librarian keeps: every rule judges these (vault.LIBRARIAN_DIRS). */
   librarianDirs: string[];
