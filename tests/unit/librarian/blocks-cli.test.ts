@@ -214,3 +214,29 @@ test('when the outline cannot be written the page is not marked grouped', async 
   assert.ok(rows.filter((x) => x.page === 'Scratch.md').every((x) => x.entry === ''));
   assert.ok(rows.filter((x) => x.page !== 'Scratch.md').every((x) => x.entry !== ''));
 });
+
+test('each page gets its own outline, in the folders the page sits in', async () => {
+  const { dir, vault, judge } = setup();
+  mkdirSync(path.join(vault, 'A'));
+  writeFileSync(path.join(vault, 'A', 'B.md'), 'An otter in a folder.');
+  writeFileSync(path.join(vault, 'A - B.md'), 'An otter beside it.');
+  const sheet = path.join(dir, 'sheet.csv');
+  await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, 'A/B.md', 'A - B.md'], dir);
+  const r = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'A/B.md', 'A - B.md'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(readFileSync(path.join(dir, 'outlines', 'A', 'B.md'), 'utf8'), /in a folder/);
+  assert.match(readFileSync(path.join(dir, 'outlines', 'A - B.md'), 'utf8'), /beside it/);
+});
+
+test('a failed outline write leaves the last outline whole', async () => {
+  const { dir, vault, judge } = setup();
+  const sheet = path.join(dir, 'sheet.csv');
+  await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, 'Scratch.md'], dir);
+  await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Scratch.md'], dir);
+  const file = path.join(dir, 'outlines', 'Scratch.md');
+  const last = readFileSync(file, 'utf8');
+  mkdirSync(`${file}.tmp`); // the temporary file cannot be written
+  const r = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, '--redo', 'Scratch.md'], dir);
+  assert.equal(r.code, 3);
+  assert.equal(readFileSync(file, 'utf8'), last);
+});

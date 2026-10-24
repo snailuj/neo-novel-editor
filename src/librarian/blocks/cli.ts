@@ -202,7 +202,11 @@ async function group(values: Map<string, string>, positional: string[], io: Io):
       // grouped, and another page's save must not carry this one's half-done grouping.
       const staged = mine.map((r) => ({ ...r }));
       topicRows(page, blocks, entries, topics, staged);
-      writeFileSync(path.join(outlines, `${page.replace(/\.md$/i, '').replace(/[\\/]/g, ' - ')}.md`), outline(page, blocks, entries, topics, staged));
+      // Mirrors the vault's folders, so no two pages share an outline.
+      const outlineFile = path.join(outlines, `${page.replace(/\.md$/i, '')}.md`);
+      if (path.relative(outlines, outlineFile).startsWith('..')) throw new Error(`${page}: outside the vault`);
+      mkdirSync(path.dirname(outlineFile), { recursive: true });
+      writeAtomic(outlineFile, outline(page, blocks, entries, topics, staged));
       mine.forEach((r, i) => Object.assign(r, staged[i]));
       writeAtomic(sheetFile, writeSheet(rows));
       const doubts = topics.filter((t) => t.by !== 'judge').length;
