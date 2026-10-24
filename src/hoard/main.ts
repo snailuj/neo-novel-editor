@@ -219,7 +219,7 @@ export function activate(host: NeoMainHost): void {
   const marks = startMarks(host, layer);
   const wiki = startWiki(host, layer, marks);
   startCompanion(host, layer, marks, wiki);
-  startReview(host, marks);
+  startReview(host, marks, { layer, wiki });
   startRipple(host, layer, marks, wiki);
   startSearch(host);
   layer.open().catch((err: unknown) => host.log('error', 'git.open failed', String(err)));
