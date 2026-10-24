@@ -191,7 +191,7 @@ export function withFusion(key: Key, extra: number, k = 60): Key {
         const fill = rrf([lexical.pages, m.pages], k).filter((p) => !roster.pages.includes(p)).slice(0, 2 * extra);
         return [
           { method: `roster + ${2 * extra} rrf(lexical, ${m.method})`, pages: [...roster.pages, ...fill], packetChars, pastCaught: 0 },
-          { method: `rrf(roster, lexical, ${m.method}) top ${size}`, pages: rrf([roster.pages, lexical.pages, m.pages], k).slice(0, size), packetChars, pastCaught: 0 },
+          { method: `rrf(roster, lexical, ${m.method}) to roster + ${2 * extra}`, pages: rrf([roster.pages, lexical.pages, m.pages], k).slice(0, size), packetChars, pastCaught: 0 },
         ];
       });
       return { ...c, lists: [...c.lists, ...fused] };

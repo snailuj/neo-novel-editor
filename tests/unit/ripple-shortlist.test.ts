@@ -279,7 +279,7 @@ test('a fused list matches the extras list in size: the roster then fused fills,
   const lists = withFusion(key, 1).cases[0]!.lists;
   const fill = lists.find((l) => l.method === 'roster + 2 rrf(lexical, embedding m)')!;
   assert.deepEqual(fill.pages, ['a.md', 'b.md', 'c.md', 'd.md'], 'c is in both fills, so it comes first; the roster is never repeated');
-  const all = lists.find((l) => l.method === 'rrf(roster, lexical, embedding m) top 4')!;
+  const all = lists.find((l) => l.method === 'rrf(roster, lexical, embedding m) to roster + 2')!;
   assert.deepEqual(all.pages, ['a.md', 'c.md', 'b.md', 'd.md'], 'a page every list holds can outrank a roster page');
   assert.equal(fill.packetChars, 2000);
   assert.ok(!lists.some((l) => l.method.includes('blend m') && l.method.includes('rrf')), 'blends are not fused');
