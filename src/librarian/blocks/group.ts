@@ -31,6 +31,8 @@ export interface Topic {
 }
 
 const attr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+/** Text set inside a tag cannot close it early, in any case or spacing. */
+const fence = (text: string, tag: 'block' | 'entry') => text.replace(new RegExp(`</${tag}\\s*>`, 'gi'), `<\\/${tag}>`);
 const cut = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}\n[... cut, ${text.length - max} more characters]` : text);
 
 /** The reply's JSON array, or a thrown reason. */
@@ -74,7 +76,7 @@ export function buildEntryPrompt(page: string, blocks: readonly Block[], at: num
   }
   for (let i = carried?.from ?? at; i < end; i++) {
     const b = blocks[i]!;
-    parts.push(`<block id="b${i + 1}" heading="${attr(b.heading.join(' > '))}" lines="${b.start}-${b.end}">\n${cut(b.text, maxBlockChars).replace(/<\/block>/g, '<\\/block>')}\n</block>`);
+    parts.push(`<block id="b${i + 1}" heading="${attr(b.heading.join(' > '))}" lines="${b.start}-${b.end}">\n${fence(cut(b.text, maxBlockChars), 'block')}\n</block>`);
   }
   return parts.join('\n');
 }
@@ -137,8 +139,8 @@ Reply with only a JSON array of groups, every entry in exactly one group:
 export function buildTopicPrompt(page: string, blocks: readonly Block[], entries: readonly Entry[], openingChars = 300): string {
   const parts = [TOPIC_INSTRUCTIONS, '', `Page: ${page}`, ''];
   entries.forEach((e, i) => {
-    const opening = blocks.slice(e.first, e.last + 1).map((b) => b.text).join('\n').slice(0, openingChars).replace(/<\/entry>/g, '<\\/entry>');
-    parts.push(`<entry id="e${i + 1}" lines="${blocks[e.first]!.start}-${blocks[e.last]!.end}" title="${attr(e.title)}">\n${e.summary}\n---\n${opening}\n</entry>`);
+    const opening = blocks.slice(e.first, e.last + 1).map((b) => b.text).join('\n').slice(0, openingChars);
+    parts.push(`<entry id="e${i + 1}" lines="${blocks[e.first]!.start}-${blocks[e.last]!.end}" title="${attr(e.title)}">\n${fence(`${e.summary}\n---\n${opening}`, 'entry')}\n</entry>`);
   });
   return parts.join('\n');
 }
@@ -207,7 +209,8 @@ export function topicRows(page: string, blocks: readonly Block[], entries: reado
   const rowsOf = (e: Entry) => blocks.slice(e.first, e.last + 1).map((b) => byBlock.get(b.id)).filter((r): r is Row => r !== undefined);
   const wikiEntries = new Map<string, number>();
   entries.forEach((e, i) => {
-    if (rowsOf(e).some((r) => r.wiki !== 'no')) wikiEntries.set(topics[i]!.topic, (wikiEntries.get(topics[i]!.topic) ?? 0) + 1);
+    // A failed judge's topic is only the entry's own title, so it joins nothing.
+    if (topics[i]!.by !== 'judge-failed' && rowsOf(e).some((r) => r.wiki !== 'no')) wikiEntries.set(topics[i]!.topic, (wikiEntries.get(topics[i]!.topic) ?? 0) + 1);
   });
   entries.forEach((e, i) => {
     const t = topics[i]!;

@@ -192,4 +192,18 @@ test('group needs a judge and a page classified as it now stands', async () => {
   const changed = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Scratch.md'], dir);
   assert.equal(changed.code, 3);
   assert.match(changed.stderr, /classify it again first/);
+  writeFileSync(path.join(vault, 'Scratch.md'), 'The otter again.');
+  const shrunk = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Scratch.md'], dir);
+  assert.equal(shrunk.code, 3, 'a block gone from the page counts as a change too');
+  assert.match(shrunk.stderr, /classify it again first/);
+});
+
+test('when the outline cannot be written the page is not marked grouped', async () => {
+  const { dir, vault, judge } = setup();
+  const sheet = path.join(dir, 'sheet.csv');
+  await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, 'Scratch.md'], dir);
+  mkdirSync(path.join(dir, 'outlines', 'Scratch.md'), { recursive: true }); // a folder where the file should go
+  const r = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Scratch.md'], dir);
+  assert.equal(r.code, 3);
+  assert.ok(readSheet(readFileSync(sheet, 'utf8')).every((x) => x.entry === ''), 'a re-run will group it');
 });

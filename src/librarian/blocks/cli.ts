@@ -185,7 +185,8 @@ async function group(values: Map<string, string>, positional: string[], io: Io):
     }
     const blocks = splitBlocks(readFileSync(file, 'utf8'));
     const known = new Set(mine.map((r) => r.block));
-    if (blocks.some((b) => !known.has(b.id))) {
+    const present = new Set(blocks.map((b) => b.id));
+    if (blocks.some((b) => !known.has(b.id)) || mine.some((r) => !present.has(r.block))) {
       log.error(`${page}: changed since it was classified; classify it again first`);
       failed++;
       return;
@@ -198,8 +199,9 @@ async function group(values: Map<string, string>, positional: string[], io: Io):
       const entries = await findEntries(page, blocks, judge, {});
       const topics = await groupEntries(page, blocks, entries, judge, { votes });
       topicRows(page, blocks, entries, topics, rows);
-      writeAtomic(sheetFile, writeSheet(rows));
+      // The outline first: the sheet marks the page grouped, so it is saved last.
       writeFileSync(path.join(outlines, `${page.replace(/\.md$/i, '').replace(/[\\/]/g, ' - ')}.md`), outline(page, blocks, entries, topics, rows));
+      writeAtomic(sheetFile, writeSheet(rows));
       const doubts = topics.filter((t) => t.by !== 'judge').length;
       log.info(`${page}: ${entries.length} entries, ${new Set(topics.map((t) => t.topic)).size} topics, ${doubts} to check, ${Math.round(performance.now() - started)}ms`);
     } catch (err) {
