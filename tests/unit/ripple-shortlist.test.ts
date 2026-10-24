@@ -10,7 +10,7 @@ import {
   blend, buildCorpus, card, chunks, embeddingRank, inRoster, lexicalRank, packetChars, rosterChars, rosterRank,
   type Embed, type Source,
 } from '../../src/hoard/ripple/shortlist.ts';
-import { buildSheet, pastTargets, pickSources, readSheet, scoreSheet, withUnions, type Key } from '../../src/hoard/ripple/sheet.ts';
+import { buildSheet, pastTargets, pickSources, readSheet, scoreSheet, withFusion, withUnions, rrf, type Key } from '../../src/hoard/ripple/sheet.ts';
 import { readSnapshot } from '../../src/hoard/ripple/snapshot.ts';
 import { isolateGitConfig, tempDir } from './git-support.ts';
 
@@ -259,6 +259,31 @@ test('a union adds another list\'s first pages the roster lacks, and leaves blen
   assert.deepEqual(pair.pages, ['a.md', 'b.md', 'c.md', 'd.md', 'f.md', 'g.md'], 'the second list takes its 2 after the first');
   assert.ok(!lists.some((l) => l.method.includes('blend m') && l.method.startsWith('roster +')));
   assert.equal(key.cases[0]!.lists.length, 3, 'the key itself is unchanged');
+});
+
+// Rule: reciprocal rank fusion scores a page by the sum of 1/(k + rank) over every list
+// that holds it, so agreement between lists counts, not only how high one list put it.
+test('fusion ranks a page two lists hold above one that a single list ranks first', () => {
+  const fused = rrf([['a.md', 'b.md', 'c.md'], ['b.md', 'd.md']], 60);
+  assert.deepEqual(fused, ['b.md', 'a.md', 'd.md', 'c.md']);
+  assert.deepEqual(rrf([['x.md'], ['y.md']], 60), ['x.md', 'y.md'], 'a tie goes by path');
+});
+
+test('a fused list matches the extras list in size: the roster then fused fills, or all three fused', () => {
+  const key: Key = { note: '', cases: [{ source: 's.md', pastTargets: [], wholeRosterPacketChars: 0, lists: [
+    { method: 'roster', pages: ['a.md', 'b.md'], packetChars: 1000, pastCaught: 0 },
+    { method: 'lexical', pages: ['a.md', 'c.md', 'e.md'], packetChars: 0, pastCaught: 0 },
+    { method: 'embedding m', pages: ['d.md', 'c.md', 'b.md'], packetChars: 0, pastCaught: 0 },
+    { method: 'blend m', pages: ['z.md'], packetChars: 0, pastCaught: 0 },
+  ] }] };
+  const lists = withFusion(key, 1).cases[0]!.lists;
+  const fill = lists.find((l) => l.method === 'roster + 2 rrf(lexical, embedding m)')!;
+  assert.deepEqual(fill.pages, ['a.md', 'b.md', 'c.md', 'd.md'], 'c is in both fills, so it comes first; the roster is never repeated');
+  const all = lists.find((l) => l.method === 'rrf(roster, lexical, embedding m) top 4')!;
+  assert.deepEqual(all.pages, ['a.md', 'c.md', 'b.md', 'd.md'], 'a page every list holds can outrank a roster page');
+  assert.equal(fill.packetChars, 2000);
+  assert.ok(!lists.some((l) => l.method.includes('blend m') && l.method.includes('rrf')), 'blends are not fused');
+  assert.equal(key.cases[0]!.lists.length, 4, 'the key itself is unchanged');
 });
 
 // Rule: a case is read as the vault stood before its source came in, so a link the
