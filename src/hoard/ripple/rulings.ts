@@ -56,7 +56,7 @@ const norm = (text: string) => plainText(text).toLowerCase().replace(/[^\p{L}\p{
 // The pages a line links, so two wordings of one link line are one change.
 const linked = (line: string) => [...new Set([...line.matchAll(/\[\[([^\]|#]*)/g)].map((m) => norm(m[1]!)))].sort().join('\n');
 
-type Card = Pick<RippleProposal, 'kind' | 'source' | 'target'> & Partial<Pick<RippleProposal, 'anchor' | 'line'>>;
+type Card = Pick<RippleProposal, 'kind' | 'source'> & Partial<RippleProposal>;
 
 /**
  * What a card changes, wording and job aside: its kind, source and target page, and the
@@ -66,7 +66,7 @@ type Card = Pick<RippleProposal, 'kind' | 'source' | 'target'> & Partial<Pick<Ri
  */
 export function cardKey(p: Card): string {
   const what = p.kind === 'claim' ? norm(p.anchor ?? '') : p.kind === 'topic' ? linked(p.line ?? '') || norm(p.line ?? '') : '';
-  return ['card', p.kind, p.source.bookId, p.source.chId, norm(p.target), what].join('\0');
+  return ['card', p.kind, p.source.bookId, p.source.chId, norm(p.target ?? ''), what].join('\0');
 }
 
 /** The cards a new proposal must not repeat, by key: those waiting on the writer and those they rejected. */
