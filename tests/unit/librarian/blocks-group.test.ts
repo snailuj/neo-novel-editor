@@ -134,7 +134,7 @@ test('with no usable topic reply each entry stands alone, marked to check', asyn
 
 const judged = (labels: string[]) => new Map(blocks.map((b, i) => [b.id, { label: labels[i], pasted: false, reason: 'r', by: 'judge', votes: [labels[i]] } as Judged]));
 
-test('topic rows: every row gets its entry and topic; writing in a shared topic goes to one wiki page', () => {
+test('topic rows: every row gets its entry and topic; the writing of each topic goes to its own wiki page', () => {
   const rows = rowsFor('Scratch.md', blocks, judged(['writing', 'writing', 'tasks', 'tasks', 'writing', 'writing', 'writing']), []);
   rows[4]!.wiki_page = 'Poems'; // the author named this one
   const topics = [
@@ -151,9 +151,9 @@ test('topic rows: every row gets its entry and topic; writing in a shared topic 
     ['e4', 'The Otter', 'judge'],
   ]);
   assert.deepEqual(rows.map((r) => r.wiki_page), [
-    'The-Otter-(snippets)', 'The-Otter-(snippets)', '', '',
-    'Poems', 'Scratch-Later-(snippets)', // a topic of one entry keeps its default
-    'The-Otter-(snippets)',
+    'Scratch-The-Otter-(snippets)', 'Scratch-The-Otter-(snippets)', '', '',
+    'Poems', 'Scratch-Heron-(snippets)', // a topic of one entry gets its own page too
+    'Scratch-The-Otter-(snippets)',
   ]);
 });
 
@@ -162,10 +162,10 @@ test('a page name the author edited is never replaced', () => {
   rows[0]!.wiki_page = 'Mine';
   topicRows('Scratch.md', blocks, entries, entries.map(() => ({ topic: 'All', by: 'judge', others: [] })), rows);
   assert.equal(rows[0]!.wiki_page, 'Mine');
-  assert.equal(rows[6]!.wiki_page, 'All-(snippets)');
+  assert.equal(rows[6]!.wiki_page, 'Scratch-All-(snippets)');
   // Grouped again: a page name the last grouping gave is the tool's, so it follows the new topic.
   topicRows('Scratch.md', blocks, entries, entries.map((e) => ({ topic: e.title === 'Otter' ? 'Lone' : 'Other', by: 'judge', others: [] })), rows);
-  assert.deepEqual([rows[0]!.wiki_page, rows[1]!.wiki_page, rows[6]!.wiki_page], ['Mine', 'Scratch-3-May-(snippets)', 'Scratch-Later-(snippets)']);
+  assert.deepEqual([rows[0]!.wiki_page, rows[1]!.wiki_page, rows[6]!.wiki_page], ['Mine', 'Scratch-Lone-(snippets)', 'Scratch-Other-(snippets)']);
 });
 
 test('entries left alone by a failed judge never share a page, even with the same title', () => {
@@ -179,11 +179,13 @@ test('entries left alone by a failed judge never share a page, even with the sam
     { topic: 'Notes', by: 'judge-failed', others: [] }, { topic: 'Errands', by: 'judge', others: [] },
     { topic: 'Notes', by: 'judge', others: [] }, { topic: 'Notes', by: 'judge', others: [] },
   ], again);
-  assert.deepEqual([again[0]!.wiki_page, again[4]!.wiki_page, again[6]!.wiki_page], ['Scratch-3-May-(snippets)', 'Notes-(snippets)', 'Notes-(snippets)']);
+  assert.deepEqual([again[0]!.wiki_page, again[4]!.wiki_page, again[6]!.wiki_page], ['Scratch-3-May-(snippets)', 'Scratch-Notes-(snippets)', 'Scratch-Notes-(snippets)']);
 });
 
-test('topicDest is one safe path segment', () => {
-  assert.equal(topicDest('The Otter: dawn / dusk?'), 'The-Otter-dawn-dusk-(snippets)');
+test('topicDest is one safe path segment, named for the page as well as the topic', () => {
+  assert.equal(topicDest('Scratch.md', 'The Otter: dawn / dusk?'), 'Scratch-The-Otter-dawn-dusk-(snippets)');
+  assert.equal(topicDest('Daily/2026-01-01 Notes.md', 'Otters'), '2026-01-01-Otters-(snippets)');
+  assert.notEqual(topicDest('A.md', 'Otters'), topicDest('B.md', 'Otters'), 'one name on two pages is two topics');
 });
 
 test('old sheets without the topic columns still read, and the columns round-trip', () => {

@@ -166,9 +166,9 @@ test('group cuts classified pages into entries and topics, once unless asked aga
   assert.equal(calls() - before, 3, 'one entry call, two topic votes');
   const rows = readSheet(readFileSync(sheet, 'utf8'));
   assert.deepEqual(rows.map((x) => [x.entry, x.topic, x.topic_by, x.wiki_page]), [
-    ['e1', 'Otters', 'judge', 'Otters-(snippets)'],
+    ['e1', 'Otters', 'judge', 'Scratch-Otters-(snippets)'],
     ['e2', '- [ ] Shop', 'judge', ''],
-    ['e3', 'Otters', 'judge', 'Otters-(snippets)'],
+    ['e3', 'Otters', 'judge', 'Scratch-Otters-(snippets)'],
   ]);
   const text = readFileSync(path.join(dir, 'outlines', 'Scratch.md'), 'utf8');
   assert.match(text, /## Otters \(2 entries\)/);

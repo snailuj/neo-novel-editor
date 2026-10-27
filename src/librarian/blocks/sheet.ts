@@ -55,15 +55,17 @@ const stemOf = (page: string) => path.posix.basename(page.replace(/\\/g, '/')).r
 const safe = (s: string) => s.replace(/[\\/:*?"<>|#^[\]]+/g, ' ').trim().replace(/\s+/g, '-').replace(/-{2,}/g, '-');
 const DATE = /\d{4}-\d{2}-\d{2}/;
 
-/** The default wiki page for a writing block: its page (a daily note by its date alone) and innermost heading. */
-export function defaultDest(page: string, heading: string): string {
-  const inner = heading.split(' > ').pop() ?? '';
+/** A wiki page named for the source page (a daily note by its date alone) and one part of it. */
+function destOf(page: string, part: string): string {
   const stem = stemOf(page);
   const name = safe(/^\d{4}-\d{2}-\d{2}\b/.exec(stem)?.[0] ?? stem);
-  // A heading that repeats the page's name ("## 2025-09-13", "Habit Tracking 2025-09-13") says it once.
-  const head = safe(inner).split(name).join('-').replace(/-{2,}/g, '-').replace(/^-|-$/g, '');
+  // A part that repeats the page's name ("## 2025-09-13", "Habit Tracking 2025-09-13") says it once.
+  const head = safe(part).split(name).join('-').replace(/-{2,}/g, '-').replace(/^-|-$/g, '');
   return `${[name, head].filter(Boolean).join('-')}-(snippets)`;
 }
+
+/** The default wiki page for a writing block: its page and innermost heading. */
+export const defaultDest = (page: string, heading: string) => destOf(page, heading.split(' > ').pop() ?? '');
 
 /**
  * Leaves one wiki copy of each text: a fresh row bound for the wiki whose text an earlier
@@ -89,8 +91,8 @@ export function dedupeRows(rows: Row[], isFresh: (row: Row) => boolean): number 
   return changed;
 }
 
-/** The wiki page for the writing of a topic that several entries share. */
-export const topicDest = (topic: string) => `${safe(topic)}-(snippets)`;
+/** The wiki page for the writing of one topic on one page; the same name on another page is another topic. */
+export const topicDest = (page: string, topic: string) => destOf(page, topic);
 
 /** The default Morning Pages chapter: the page's date, else a heading's, else the page. */
 export function defaultBook(page: string, heading: string): string {
