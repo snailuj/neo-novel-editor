@@ -3,14 +3,17 @@
 // the rest is the author's to edit. A block has two possible homes: `wiki` (yes, no or
 // check) sends it to the wiki page `wiki_page`; a `book` value sends it to that chapter
 // of the Morning Pages book. A Morning Pages section goes to the book whole, whatever its
-// blocks' labels, so the journal keeps each day as written. A re-run keeps every
-// row it already has (matched by page and block id) and only adds new blocks.
+// blocks' labels, so the journal keeps each day as written. `entry` and `topic` come from
+// the group command: the entry a block belongs to and what that entry is about. A re-run
+// keeps every row it already has (matched by page and block id) and only adds new blocks.
 import path from 'node:path';
 import type { Judged } from './judge.ts';
 import { fallbackGuess, type Label, MORNING_PAGES, ruleLabel } from './rules.ts';
 import type { Block } from './split.ts';
 
-export const COLUMNS = ['page', 'block', 'lines', 'heading', 'proposed', 'label', 'wiki', 'wiki_page', 'book', 'pasted', 'by', 'reason', 'preview'] as const;
+export const COLUMNS = ['page', 'block', 'lines', 'heading', 'proposed', 'label', 'wiki', 'wiki_page', 'book', 'topic', 'entry', 'topic_by', 'pasted', 'by', 'reason', 'preview'] as const;
+/** Columns added after the first sheets were written; a sheet without them reads them as empty. */
+const LATER: readonly string[] = ['topic', 'entry', 'topic_by'];
 export type Row = Record<(typeof COLUMNS)[number], string>;
 
 export interface Already {
@@ -52,15 +55,17 @@ const stemOf = (page: string) => path.posix.basename(page.replace(/\\/g, '/')).r
 const safe = (s: string) => s.replace(/[\\/:*?"<>|#^[\]]+/g, ' ').trim().replace(/\s+/g, '-').replace(/-{2,}/g, '-');
 const DATE = /\d{4}-\d{2}-\d{2}/;
 
-/** The default wiki page for a writing block: its page (a daily note by its date alone) and innermost heading. */
-export function defaultDest(page: string, heading: string): string {
-  const inner = heading.split(' > ').pop() ?? '';
+/** A wiki page named for the source page (a daily note by its date alone) and one part of it. */
+function destOf(page: string, part: string): string {
   const stem = stemOf(page);
   const name = safe(/^\d{4}-\d{2}-\d{2}\b/.exec(stem)?.[0] ?? stem);
-  // A heading that repeats the page's name ("## 2025-09-13", "Habit Tracking 2025-09-13") says it once.
-  const head = safe(inner).split(name).join('-').replace(/-{2,}/g, '-').replace(/^-|-$/g, '');
+  // A part that repeats the page's name ("## 2025-09-13", "Habit Tracking 2025-09-13") says it once.
+  const head = safe(part).split(name).join('-').replace(/-{2,}/g, '-').replace(/^-|-$/g, '');
   return `${[name, head].filter(Boolean).join('-')}-(snippets)`;
 }
+
+/** The default wiki page for a writing block: its page and innermost heading. */
+export const defaultDest = (page: string, heading: string) => destOf(page, heading.split(' > ').pop() ?? '');
 
 /**
  * Leaves one wiki copy of each text: a fresh row bound for the wiki whose text an earlier
@@ -85,6 +90,9 @@ export function dedupeRows(rows: Row[], isFresh: (row: Row) => boolean): number 
   }
   return changed;
 }
+
+/** The wiki page for the writing of one topic on one page; the same name on another page is another topic. */
+export const topicDest = (page: string, topic: string) => destOf(page, topic);
 
 /** The default Morning Pages chapter: the page's date, else a heading's, else the page. */
 export function defaultBook(page: string, heading: string): string {
@@ -123,7 +131,7 @@ export function rowsFor(page: string, blocks: readonly Block[], judged: Readonly
     }
     return {
       page, block: b.id, lines: `${b.start}-${b.end}`, heading,
-      proposed: label, label, wiki, wiki_page: wikiPage, book,
+      proposed: label, label, wiki, wiki_page: wikiPage, book, topic: '', entry: '', topic_by: '',
       pasted: pasted ? 'yes' : 'no', by, reason, preview: preview(b.text),
     };
   });
@@ -178,6 +186,6 @@ export function readSheet(text: string): Row[] {
   }
   const [header, ...body] = records.filter((r) => r.some((f) => f !== ''));
   if (!header) return [];
-  for (const c of COLUMNS) if (!header.includes(c)) throw new Error(`the sheet has no '${c}' column`);
+  for (const c of COLUMNS) if (!header.includes(c) && !LATER.includes(c)) throw new Error(`the sheet has no '${c}' column`);
   return body.map((r) => Object.fromEntries(COLUMNS.map((c) => [c, r[header.indexOf(c)] ?? ''])) as Row);
 }
