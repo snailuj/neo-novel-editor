@@ -51,6 +51,7 @@
 //   Origin is the row (or the New page button) that opened the field. Inverses: a rename or
 //   a move is undone by another (links follow both ways); a new page has no undo in the
 //   pane (Folder-Actions leaves out page delete): its file is removed from the folder.
+import { key } from '../../librarian/links.ts';
 import { checkPath, checkTitle, PageRefused, titleOf, TREES, type Tree } from '../pages/identity.ts';
 import { titleIndex } from '../pages/titles.ts';
 import { convertPage } from './convert.ts';
@@ -208,6 +209,12 @@ export function judge(ask: Ask, entries: readonly Listed[]): Verdict {
     const clash = index.taken(tree, title, except);
     return clash ? refused('taken', `There is already a page called “${clash.title}” in ${place(clash.tree, folderOf(clash.path))}. Pick another title.`) : null;
   };
+  // the store's rule: a new title the other tree holds would re-point that page's links
+  const otherTree = (entry: Listed, title: string): Verdict | null => {
+    if (key(title) === key(entry.title)) return null;
+    const held = index.taken(entry.tree === 'wiki' ? 'sources' : 'wiki', title);
+    return held ? refused('other-tree', `There is already a page called “${held.title}” in ${place(held.tree, folderOf(held.path))}. Renaming this page to that title would change where links to “${held.title}” go. Pick another title.`) : null;
+  };
   if (ask.op === 'new') {
     const path = join(ask.folder, `${ask.value}.html`);
     return titleRefusal(ask.value)
@@ -226,6 +233,7 @@ export function judge(ask: Ask, entries: readonly Listed[]): Verdict {
     return titleRefusal(ask.value)
       ?? (safe(path) ? null : refused('unsafe', 'A title can\'t start with a dot or hold a backslash. Change the title.'))
       ?? taken(entry.tree, ask.value, entry.id)
+      ?? otherTree(entry, ask.value)
       ?? { kind: 'send', tree: entry.tree, path };
   }
   const folder = ask.value.trim().replace(/^\/+|\/+$/g, '');

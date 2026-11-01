@@ -70,7 +70,6 @@ test('a rename asks for its path in the same folder, or says why not', () => {
   assert.deepEqual(rename('wiki/People/Ada Vell.html', 'Ada Vell'), { kind: 'same' });
   assert.deepEqual(rename('wiki/People/Ada Vell.html', 'ada vell'), { kind: 'send', tree: 'wiki', path: 'People/ada vell.html' }, 'a change of case is its own page still');
   assert.deepEqual(rename('sources/Notes/Tides.html', 'harbour'), { kind: 'refused', code: 'taken', message: 'There is already a page called “Harbour” in sources. Pick another title.' });
-  assert.equal(rename('wiki/People/Ada Vell.html', 'Tides').kind, 'send', 'titles are unique within one tree only');
   const refused = (value: string) => {
     const v = rename('wiki/Harbour.html', value);
     assert.equal(v.kind, 'refused', value);
@@ -85,6 +84,21 @@ test('a rename asks for its path in the same folder, or says why not', () => {
   assert.deepEqual(rename('wiki/Gone.html', 'Here'), {
     kind: 'refused', code: 'missing', message: '“Gone” is no longer there. It may have been moved or removed outside NEO. Choose Refresh to see the pages as they are now.',
   });
+});
+
+// Rule: a rename onto a title the other tree holds is refused, as the store refuses it,
+// because it would move where that title's links go; a change of case alone, and a new
+// page, may share a title with the other tree.
+test('a rename onto a title of the other tree is refused in plain words', () => {
+  const rename = (id: string, value: string) => judge({ op: 'rename', id, value }, LISTED);
+  assert.deepEqual(rename('wiki/People/Ada Vell.html', 'tides'), {
+    kind: 'refused', code: 'other-tree',
+    message: 'There is already a page called “Tides” in sources/Notes. Renaming this page to that title would change where links to “Tides” go. Pick another title.',
+  });
+  const back = rename('sources/Notes/Tides.html', 'Ada Vell');
+  assert.equal(back.kind === 'refused' && back.code, 'other-tree', 'both ways');
+  assert.deepEqual(rename('wiki/Harbour.html', 'HARBOUR'), { kind: 'send', tree: 'wiki', path: 'HARBOUR.html' });
+  assert.deepEqual(judge({ op: 'new', tree: 'sources', folder: '', value: 'Ada Vell' }, LISTED), { kind: 'send', tree: 'sources', path: 'Ada Vell.html' });
 });
 
 // Rule: a move keeps the page's title and tree and asks for the path in the folder typed
