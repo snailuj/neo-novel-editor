@@ -386,3 +386,28 @@ test('a rename onto a file that arrived by sync is refused as taken, leaves no n
   assert.equal((await store.rename(FROM, 'Places/Quay.html', null)).id, 'wiki/Places/Quay.html');
   assert.equal(await store.recover(null), null);
 });
+
+// Rule: recovery acts only on a note whose every path is a page id or a chapter of the
+// library, so a note written by hand can never move or rewrite a file outside it.
+test('a note naming paths out of the library is ignored at recovery, and nothing outside changes', async (t) => {
+  const outside = tempDir(t, 'hoard-outside-');
+  writeFileSync(path.join(outside, 'Secret.html'), '<p>[[Harbour]]</p>');
+  const away = path.relative(fixture(t).library, outside).split(path.sep).join('/');
+  const notes = [
+    { from: `wiki/../${away}/Secret.html`, to: 'wiki/Stolen.html', files: [] },
+    { from: FROM, to: `wiki/../${away}/Moved.html`, files: [] },
+    { from: FROM, to: 'sources/Port.html', files: [] },
+    { from: FROM, to: 'wiki/Places/Port.html', files: [`${away}/Secret.html`] },
+    { from: FROM, to: 'wiki/Places/Port.html', files: ['book-fox-1/chapters/../../wiki/Index.html'] },
+  ];
+  for (const note of notes) {
+    const lib = fixture(t);
+    lib.put('.neo/pages/.rename.json', JSON.stringify({ version: 1, ...note, at: '2026-10-15T22:00:00.000Z' }));
+    assert.equal(await lib.store.recover(null), null, JSON.stringify(note));
+    assert.equal(lib.has(FROM), true, 'the page did not move');
+    assert.equal(lib.get('wiki/Index.html'), INDEX);
+    assert.ok(lib.lines.some((l) => l.level === 'warn' && /not a safe rename note/.test(l.message)), 'the note is logged as ignored');
+  }
+  assert.deepEqual(readdirSync(outside), ['Secret.html']);
+  assert.equal(readFileSync(path.join(outside, 'Secret.html'), 'utf8'), '<p>[[Harbour]]</p>');
+});
