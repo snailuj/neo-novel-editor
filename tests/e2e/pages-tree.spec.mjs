@@ -587,3 +587,39 @@ test('a list read earlier that answers later does not decide a page\'s links', a
     await fixture.close();
   }
 });
+
+// Rule: every key typed in the row editor lands in its field: the field keeps the focus
+// while it is typed in, for a rename and for a new page alike.
+test('typing in the field keeps the focus there, key after key', async () => {
+  const { profile, library } = await libraryProfile();
+  const fixture = await launchProfile(profile);
+  try {
+    const { page } = fixture;
+    await page.waitForFunction(() => !!window.hoard);
+    await seedBook(page, '<p>A line of the book.</p>');
+    const pane = page.locator('.hoard-wiki-pane');
+    const tree = pane.locator('.hoard-tree');
+    await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
+    await paneSettled(page);
+    await tree.getByRole('button', { name: 'Pages' }).click();
+    await tree.locator('.hoard-tree-name[data-key="wiki/Harbour.html"]').focus();
+    await page.keyboard.press('F2');
+    const rename = tree.getByLabel('New title for “Harbour”');
+    await expect(rename).toBeFocused();
+    await page.keyboard.type('Quay');
+    await expect(rename).toHaveValue('Quay');
+    await expect(rename).toBeFocused();
+    await page.keyboard.press('Escape');
+
+    await tree.getByRole('button', { name: 'New page' }).click();
+    const made = tree.getByLabel('Title of the new page in wiki');
+    await expect(made).toBeFocused();
+    await page.keyboard.type('Bea Lund');
+    await expect(made).toHaveValue('Bea Lund');
+    await page.keyboard.press('Enter');
+    await expect(tree.locator('.hoard-tree-status')).toHaveText('Made the page “Bea Lund” in wiki.');
+    expect(existsSync(path.join(library, 'wiki', 'Bea Lund.html'))).toBe(true);
+  } finally {
+    await fixture.close();
+  }
+});

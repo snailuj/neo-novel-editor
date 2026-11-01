@@ -167,10 +167,11 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
     submit.textContent = pending ? ACTION[ask.op].busy : ACTION[ask.op].label;
     submit.setAttribute('aria-disabled', String(pending));
     cancel.setAttribute('aria-disabled', String(pending));
-    // the form sits under the row it works on; for a new page, under its folder's row
-    const holder = rowButton(askKey(ask))?.closest('li');
-    if (holder) holder.querySelector(':scope > .hoard-tree-row')!.after(form);
-    else form.remove();
+    // the form sits under the row it works on; for a new page, under its folder's row. Moved
+    // only when elsewhere: a move takes the focus out of the field, even onto the same spot.
+    const row = rowButton(askKey(ask))?.closest('li')?.querySelector(':scope > .hoard-tree-row');
+    if (!row) form.remove();
+    else if (row.nextElementSibling !== form) row.after(form);
   };
 
   const draw = () => {
