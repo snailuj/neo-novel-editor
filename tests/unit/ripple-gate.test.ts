@@ -3,17 +3,18 @@
 // put back, nothing is left uncommitted, the refusal reaches the caller, and the card
 // stays waiting. Real git, and the real gate.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { Gate } from '../../src/hoard/git/gate.ts';
+import { Gate, GateRefused } from '../../src/hoard/git/gate.ts';
 import { textconvCommand } from '../../src/hoard/git/blame.ts';
 import { GitLayer, resolveSettings } from '../../src/hoard/git/layer.ts';
 import { ATTRIBUTES } from '../../src/hoard/git/start.ts';
 import { MarkStore } from '../../src/hoard/marks/store.ts';
 import { PageStore } from '../../src/hoard/pages/store.ts';
-import { DEFAULT_BRIEF } from '../../src/hoard/ripple/engine.ts';
+import { DEFAULT_BRIEF, Ripple } from '../../src/hoard/ripple/engine.ts';
+import { ownerOf } from '../../src/hoard/review/owner.ts';
 import { sha256 } from '../../src/hoard/ripple/rulings.ts';
 import { makeRipple } from '../../src/hoard/ripple/wire.ts';
 import { isolateGitConfig, tempDir, tempLibrary } from './git-support.ts';
@@ -34,7 +35,8 @@ async function setup(t: { after(fn: () => void): void }) {
     git: lib.git, library: lib.library, settings: resolveSettings({}, () => {}), attributesFile,
     textconv: textconvCommand(process.execPath, path.join(root, 'tools', 'git', 'neo-textconv.js')), log: () => {},
   });
-  layer.useGate(new Gate({ library: () => lib.library, log }));
+  const gate = new Gate({ library: () => lib.library, log });
+  layer.useGate(gate);
   t.after(async () => { layer.stop(); await layer.drained(); });
   await layer.open();
   await layer.keepHistory();
@@ -56,11 +58,11 @@ async function setup(t: { after(fn: () => void): void }) {
   };
   const status = async () => (await lib.git.run(lib.library, ['status', '--porcelain'])).stdout;
   const read = (rel: string) => (existsSync(path.join(lib.library, rel)) ? readFileSync(path.join(lib.library, rel), 'utf8') : null);
-  return { lib, layer, ripple, judged, status, read, warnings };
+  return { lib, layer, gate, store, marks, log, ripple, judged, status, read, warnings };
 }
 
 test('a claim the gate refuses leaves the page, the ruling log and the history as they were, and the card waiting', async (t) => {
-  const { ripple, judged, status, read, warnings } = await setup(t);
+  const { ripple, gate, judged, status, read, warnings } = await setup(t);
   const card = await judged([{ kind: 'claim', target: 'Harbour', anchor: 'made of timber', text: 'rebuilt in stone', reason: 'r', quote: 'The wall was rebuilt in stone' }]);
   const [page, rulings, head] = [read('wiki/Harbour.html'), read('.neo/ripple/rulings.jsonl'), await ripple.overview().proposals.length];
   assert.equal(await status(), '', 'a clean start');
@@ -70,6 +72,7 @@ test('a claim the gate refuses leaves the page, the ruling log and the history a
   assert.equal(await status(), '', 'nothing is left uncommitted');
   assert.deepEqual([ripple.overview().proposals.length, ripple.overview().proposals[0]!.status], [head, 'proposed'], 'the card is waiting');
   assert.ok(warnings.some((w) => /refused/.test(w.message)), 'the refusal is logged');
+  assert.deepEqual(gate.held(), [], 'the restored paths are no longer held out of the writer\'s commits');
 });
 
 test('a mint the gate refuses leaves no page, no sidecar and no ruling', async (t) => {
@@ -82,4 +85,35 @@ test('a mint the gate refuses leaves no page, no sidecar and no ruling', async (
   assert.equal(read('.neo/ripple/rulings.jsonl'), rulings);
   assert.equal(await status(), '');
   assert.equal(ripple.overview().proposals[0]!.status, 'proposed');
+});
+
+test('a restore that cannot put a file back throws, and the paths stay held', async (t) => {
+  const { lib, layer, gate, store, marks, log, status } = await setup(t);
+  const faulty = {
+    head: () => layer.head(), show: (c: string, r: string) => layer.show(c, r), changed: (a: string, b: string, u: string) => layer.changed(a, b, u),
+    release: (paths: readonly string[]) => layer.release(paths),
+    // after the gate refuses, something takes the page's place, so it cannot be written back
+    around: async <T>(paths: readonly string[], apply: () => Promise<T>) => {
+      try {
+        return await layer.around(paths, apply);
+      } catch (err) {
+        if (err instanceof GateRefused) {
+          const file = path.join(lib.library, 'wiki', 'Harbour.html');
+          rmSync(file);
+          mkdirSync(path.join(file, 'in'), { recursive: true });
+          writeFileSync(path.join(file, 'in', 'x'), 'x');
+        }
+        throw err;
+      }
+    },
+  };
+  const ripple = new Ripple({ library: () => lib.library, pages: store, marks, ownerOf: (root, id) => ownerOf(root, id), layer: faulty, log });
+  const asked = await ripple.ask({ page: 'wiki/Storm.html' });
+  writeFileSync(ripple.overview().jobs.find((j) => j.id === asked.job)!.answer, [{ kind: 'preflight', brief_sha256: sha256(DEFAULT_BRIEF), echo: ECHO },
+    { kind: 'claim', target: 'Harbour', anchor: 'made of timber', text: 'rebuilt in stone', reason: 'r', quote: 'The wall was rebuilt in stone' }].map((l) => JSON.stringify(l)).join('\n'));
+  await ripple.run();
+  await layer.commitNow('import-author');
+  assert.equal(await status(), '');
+  await assert.rejects(ripple.decide(ripple.overview().proposals[0]!.id, 'apply'), /could not put back wiki\/Harbour\.html/);
+  assert.deepEqual(gate.held(), ['.neo/ripple/rulings.jsonl', 'wiki/Harbour.html'], 'nothing is released while a file is not back');
 });

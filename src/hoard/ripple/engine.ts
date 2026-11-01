@@ -46,6 +46,8 @@ export interface RippleOptions {
     show(commit: string, rel: string): Promise<string | null>;
     changed(from: string, to: string, under: string): Promise<{ rel: string; byAuthor: boolean }[]>;
     around<T>(paths: readonly string[], apply: () => Promise<T>): Promise<Paired<T>>;
+    /** Lets the writer's commits take these paths again, once a refused edit of them is put back. */
+    release(paths: readonly string[]): void;
   };
   /** Who wrote each paragraph of a page; without it a librarian-owned page counts as the librarian's throughout. */
   blame?: (page: string) => Promise<BlameLine[]>;
@@ -436,12 +438,20 @@ export class Ripple {
   // library is as it was and the refusal goes to the caller.
   async #asLibrarian(label: string, subject: Record<string, unknown>, paths: readonly string[], apply: () => Promise<void>): Promise<void> {
     const before = paths.map((rel) => [rel, this.#read(rel)] as const);
+    // every file is tried; one that will not go back throws, so the gate keeps its paths held
     const restore = () => {
+      const failed: string[] = [];
       for (const [rel, text] of before) {
         const file = path.join(this.#lib, ...rel.split('/'));
-        if (text === null) rmSync(file, { force: true });
-        else writeWhole(file, text);
+        try {
+          if (text === null) rmSync(file, { force: true });
+          else writeWhole(file, text);
+        } catch (err) {
+          failed.push(rel);
+          this.#o.log('error', 'ripple: a refused change could not be put back', { path: rel, why: String(err) });
+        }
       }
+      if (failed.length) throw new Error(`The library check refused this change and ripple could not put back ${failed.join(', ')}; they are held out of the history until they are mended.`);
     };
     const done = await asLibrarian({ layer: this.#o.layer, log: this.#o.log }, label, subject, paths, async () => { await apply(); return null; }, restore);
     if (!done.ok && done.reason === 'refused') {
