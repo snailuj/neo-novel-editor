@@ -8,7 +8,7 @@
 // caller read (the rule wiki/write.ts keeps), so a change that arrived from another device
 // is never written over. Every refusal is logged; every request names its page by an id
 // that identity.ts has checked, so no path leaves its tree.
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
 import { opendir, readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { validateHoardRenameV1 } from '../../generated/validators.cjs';
@@ -101,6 +101,35 @@ export class PageStore {
     return path.join(this.o.library(), ref.tree, ...ref.path.split('/'));
   }
 
+  /**
+   * The page's file, refused when its real path leaves its tree. checkPath keeps `..` out
+   * of a path, but a symlinked folder or file inside a tree can still lead out of it. For
+   * a file not there yet, the nearest folder that is decides; a dangling link is refused.
+   */
+  protected inside(ref: PageRef): string {
+    const file = this.file(ref);
+    let root: string;
+    try {
+      root = realpathSync(path.join(this.o.library(), ref.tree));
+    } catch {
+      return file; // no tree yet, so nothing in it can lead out
+    }
+    const refuse = (why: string) => new PageRefused('unsafe', `${idOf(ref)} is not a page path: ${why}`);
+    for (let probe = file; ; probe = path.dirname(probe)) {
+      let real: string;
+      try {
+        real = realpathSync(probe);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT' && code !== 'ENOTDIR') throw err;
+        if (lstatSync(probe, { throwIfNoEntry: false })) throw refuse('it goes through a link that leads nowhere');
+        continue;
+      }
+      if (real !== root && !real.startsWith(root + path.sep)) throw refuse('a link in it leads out of its tree');
+      return file;
+    }
+  }
+
   /** Runs one request, logging it if it is refused. */
   protected async op<T>(name: string, run: () => Promise<T>): Promise<T> {
     try {
@@ -129,7 +158,9 @@ export class PageStore {
       for await (const d of handle) {
         if (d.name.startsWith('.')) continue;
         const at = rel ? `${rel}/${d.name}` : d.name;
-        if (d.isDirectory()) {
+        if (d.isSymbolicLink()) {
+          this.o.log('debug', `pages: ${path.join(dir, d.name)} is a link, so it is not followed`);
+        } else if (d.isDirectory()) {
           yield* this.#walk(tree, at);
         } else if (d.isFile() && d.name.endsWith('.html')) {
           try {
@@ -173,7 +204,7 @@ export class PageStore {
   read(id: string): Promise<PageFile | null> {
     return this.op('read', async () => {
       const ref = parseId(id);
-      const html = await readFile(this.file(ref), 'utf8').catch((err: NodeJS.ErrnoException) => {
+      const html = await readFile(this.inside(ref), 'utf8').catch((err: NodeJS.ErrnoException) => {
         if (err.code === 'ENOENT' || err.code === 'EISDIR') return null;
         throw err;
       });
@@ -184,7 +215,7 @@ export class PageStore {
   write(id: string, before: string, after: string): Promise<Written> {
     return this.#serial(() => this.op('write', async () => {
       const ref = parseId(id);
-      const file = this.file(ref);
+      const file = this.inside(ref);
       const now = await readFile(file, 'utf8').catch(() => null);
       const refuse = (reason: 'missing' | 'stale'): Written => {
         this.o.log('warn', 'pages.write.refused', { id, reason });
@@ -215,6 +246,7 @@ export class PageStore {
     return this.#serial(() => this.op('create', async () => {
       const ref = parseId(`${tree}/${checkPath(pagePath)}`);
       const title = this.checkTitle(ref.path);
+      this.inside(ref);
       const index = await this.#index();
       const clash = index.taken(ref.tree, title);
       if (clash || existsSync(this.file(ref))) {
@@ -256,6 +288,8 @@ export class PageStore {
       const start = performance.now();
       const from = parseId(id);
       const to = parseId(`${from.tree}/${checkPath(newPath)}`);
+      this.inside(from);
+      this.inside(to);
       const pending = await this.#journal();
       if (pending) {
         const finished = await this.#finish(pending, openBookId, start);

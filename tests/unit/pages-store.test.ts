@@ -163,3 +163,29 @@ test('create, resolve and rename walk the trees once between lists, and list pic
   await assert.rejects(store.create('wiki', 'Other/arrived.html', 'x'), (e: PageRefused) => e.code === 'taken', 'list took in the arrived title');
   assert.equal(has('wiki/Other/arrived.html'), false);
 });
+
+// Rule: no request reaches a file whose real path is outside its tree, whatever link leads there.
+test('a path through a symlinked folder or to a symlinked file is refused for every request', async (t) => {
+  const { store, library, put, get, has, logged } = pagesLibrary(t);
+  put('outside/Leak.html', '<p>secret</p>');
+  put('wiki/Tide.html', '<p>t</p>');
+  symlinkSync(path.join(library, 'outside'), path.join(library, 'wiki', 'link'), 'dir');
+  symlinkSync(path.join(library, 'outside', 'Leak.html'), path.join(library, 'wiki', 'Alias.html'));
+  assert.equal(get('wiki/link/Leak.html'), '<p>secret</p>', 'the link leads out of the tree');
+  const unsafe = (e: PageRefused) => e.code === 'unsafe';
+
+  await assert.rejects(store.read('wiki/link/Leak.html'), unsafe);
+  await assert.rejects(store.read('wiki/Alias.html'), unsafe);
+  await assert.rejects(store.write('wiki/link/Leak.html', '<p>secret</p>', '<p>changed</p>'), unsafe);
+  await assert.rejects(store.create('wiki', 'link/New.html', '<p>n</p>'), unsafe);
+  await assert.rejects(store.create('wiki', 'link/deeper/New.html', '<p>n</p>'), unsafe);
+  await assert.rejects(store.rename('wiki/Tide.html', 'link/Tide.html', null), unsafe);
+  await assert.rejects(store.rename('wiki/link/Leak.html', 'Leak.html', null), unsafe);
+  symlinkSync(path.join(library, 'outside', 'Gone.html'), path.join(library, 'wiki', 'Gone.html'));
+  await assert.rejects(store.create('wiki', 'Gone.html', '<p>g</p>'), unsafe, 'a link that leads nowhere yet');
+  assert.equal(get('outside/Leak.html'), '<p>secret</p>');
+  assert.equal(has('outside/New.html') || has('outside/deeper') || has('outside/Tide.html') || has('outside/Gone.html'), false, 'nothing was written outside');
+  assert.equal(has('wiki/Tide.html'), true);
+  assert.equal(logged('pages.refused').length, 8);
+  assert.deepEqual((await store.list()).map((p) => p.id), ['wiki/Tide.html'], 'list follows neither link');
+});
