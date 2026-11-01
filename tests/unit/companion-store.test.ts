@@ -12,9 +12,10 @@
 // - two reads of one chapter at once flag a page once;
 // - read while the writer is still typing, a name the caret is in or just after is left
 //   for a later read, since the word may not be finished;
-// - a page added after an earlier read is found by the next one.
+// - a page added after an earlier read is found by the next one;
+// - a chapter save with no page change does not rescan the page trees.
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { validateHoardCompanionV1, validateHoardMarksV1 } from '../../src/generated/validators.cjs';
@@ -220,4 +221,77 @@ test('a page added after an earlier read is found by the next one', async (t) =>
   assert.deepEqual(await companion.read({ bookId: 'book-a', chId: 'c1', before: '', after: html('The lighthouse.') }), { added: 0 });
   page('sources/Lighthouse.html');
   assert.deepEqual(await companion.read({ bookId: 'book-a', chId: 'c1', before: '', after: html('The lighthouse.') }), { added: 1 });
+});
+
+// Backdates every folder of the page trees, as a library that has been still for a while has
+// them, so the companion can trust their times.
+const LONG_AGO = new Date(Date.now() - 3_600_000);
+const settle = (library: string, ...dirs: string[]) => {
+  const old = LONG_AGO;
+  for (const d of ['wiki', 'sources', ...dirs]) if (existsSync(path.join(library, d))) utimesSync(path.join(library, d), old, old);
+};
+
+function counted(setupResult: Awaited<ReturnType<typeof setup>>, clock: () => number) {
+  const { library, store, marks, wrote, lines } = setupResult;
+  let lists = 0;
+  const pages = { list: () => { lists++; return store.list(); } };
+  const companion = new Companion({ library: () => library, marks, pages, wikiBook: () => null, clock, wrote: (n) => wrote.push(n), log: (level, message) => { lines.push({ level, message }); } });
+  return { companion, lists: () => lists };
+}
+
+test('a chapter save with no page change does not rescan the page trees', async (t) => {
+  const s = await setup(t);
+  s.page('wiki/a/Tide.html');
+  s.page('wiki/b/tide.html');
+  settle(s.library, 'wiki/a', 'wiki/b');
+  let at = 1_000;
+  const { companion, lists } = counted(s, () => at);
+  const read = (n: number) => companion.read({ bookId: 'book-a', chId: 'c1', before: '', after: html(`Tide ${n}, the kraken.`) });
+  assert.deepEqual(await read(1), { added: 2 });
+  at += 5_000;
+  await read(2);
+  await read(3);
+  assert.equal(lists(), 1);
+  assert.equal(s.logged('pages: these pages share one title, so a link reaches only the first').length, 1);
+});
+
+test('a page that arrives in a folder the companion knows is found though it has not rescanned', async (t) => {
+  const s = await setup(t);
+  s.page('wiki/a/Tide.html');
+  settle(s.library, 'wiki/a');
+  const { companion, lists } = counted(s, () => 1_000);
+  const read = () => companion.read({ bookId: 'book-a', chId: 'c1', before: '', after: html('A lighthouse.') });
+  assert.deepEqual(await read(), { added: 0 });
+  s.page('sources/Lighthouse.html');
+  assert.deepEqual(await read(), { added: 1 });
+  s.page('wiki/a/b/Lamp.html');
+  assert.deepEqual(await companion.read({ bookId: 'book-a', chId: 'c2', before: '', after: html('A lamp.') }), { added: 1 });
+  assert.equal(lists(), 3);
+});
+
+test('a page dropped into a folder that was empty when last scanned is found after the listing expires', async (t) => {
+  const s = await setup(t);
+  mkdirSync(path.join(s.library, 'wiki', 'Empty'));
+  settle(s.library, 'wiki/Empty');
+  let at = 1_000;
+  const { companion } = counted(s, () => at);
+  const read = () => companion.read({ bookId: 'book-a', chId: 'c1', before: '', after: html('A lighthouse.') });
+  assert.deepEqual(await read(), { added: 0 });
+  s.page('wiki/Empty/Lighthouse.html');
+  settle(s.library, 'wiki/Empty');
+  assert.deepEqual(await read(), { added: 0 });
+  at += 120_000;
+  assert.deepEqual(await read(), { added: 1 });
+});
+
+test('a folder changed in the same tick of a coarse file clock as the scan is not trusted', async (t) => {
+  const s = await setup(t);
+  const { companion } = counted(s, () => 1_000);
+  const read = () => companion.read({ bookId: 'book-a', chId: 'c1', before: '', after: html('A lighthouse.') });
+  assert.deepEqual(await read(), { added: 0 });
+  const wiki = path.join(s.library, 'wiki');
+  const was = statSync(wiki);
+  s.page('wiki/Lighthouse.html');
+  utimesSync(wiki, was.atime, was.mtime);
+  assert.deepEqual(await read(), { added: 1 });
 });

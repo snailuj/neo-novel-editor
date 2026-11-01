@@ -24,7 +24,7 @@ import { paragraphTexts } from '../html.ts';
 import { anchorAt } from '../marks/anchor.ts';
 import { newMark } from '../marks/model.ts';
 import { MarkFileError, type MarkStore, sidecarPath } from '../marks/store.ts';
-import { parseId, titleOf, type Tree } from '../pages/identity.ts';
+import { parseId, titleOf, TREES, type Tree } from '../pages/identity.ts';
 import { newParagraphs } from './delta.ts';
 import { findingWords, reported } from './finding.ts';
 import { mentionsIn, type WikiPage } from './mentions.ts';
@@ -39,6 +39,8 @@ export interface CompanionOptions {
   /** The Wiki book's id while it exists; its chapters are pages already and are not read. */
   wikiBook: () => string | null;
   now?: () => Date;
+  /** Milliseconds, for the page listing's age; Date.now unless a test sets it. */
+  clock?: () => number;
   newId?: () => string;
   head?: () => Promise<string | null>;
   wrote?: (name: string) => void;
@@ -74,6 +76,16 @@ const stampOf = (file: string): string => {
   }
 };
 
+// A listing of the pages is trusted while the folders it came from keep the times they had,
+// but never for longer than this: a folder that was empty then is not one of them, and a
+// page dropped into it moves no time the companion looks at.
+const LISTING_TTL_MS = 60_000;
+// A folder changed this close to the scan may have changed again within one tick of a
+// coarse file clock, so the scan that saw it is not trusted.
+const RACY_MS = 2_000;
+
+type Listed = { id: string; tree: Tree; title: string };
+
 const randomId = () => `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 const strings = (value: unknown): string[] =>
@@ -90,6 +102,9 @@ export class Companion {
   // a chapter's marks file that did not read, by its stamp then, so it is not read (and
   // logged) again at every save until it changes
   readonly #broken = new Map<string, string>();
+  // The last listing of the pages and the times of the folders holding them, so a chapter
+  // save with no page change walks neither tree again; null until the first read.
+  #listing: { pages: Listed[]; at: number; folders: Map<string, string> | null } | null = null;
 
   constructor(options: CompanionOptions) {
     this.#o = options;
@@ -233,7 +248,7 @@ export class Companion {
   // other name, which is the wiki's. This is done before the quiet pages are dropped, so
   // quieting a wiki page does not hand its name to the source.
   async #pages(): Promise<WikiPage[]> {
-    const listed = await this.#o.pages.list();
+    const listed = await this.#listed();
     const rank = (tree: Tree) => (tree === 'wiki' ? 0 : 1);
     const pages = [...listed]
       .sort((a, b) => rank(a.tree) - rank(b.tree) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
@@ -241,6 +256,43 @@ export class Companion {
     const taken = new Set<string>();
     for (const { tree, page } of pages) if (tree === 'wiki') for (const name of [page.title, ...page.aliases]) taken.add(key(name));
     return pages.filter(({ tree, page }) => tree === 'wiki' || !taken.has(key(page.title))).map(({ page }) => page);
+  }
+
+  // Pages are added, renamed and removed only in folders, so a folder whose time has not
+  // moved holds the same pages. Every folder on the way to a listed page is checked, the
+  // two trees' roots even when absent. Page bodies and sidecars are not in this: only a
+  // page's id and title are used.
+  async #listed(): Promise<Listed[]> {
+    const now = this.#o.clock ?? Date.now;
+    const kept = this.#listing;
+    if (kept && kept.folders && now() - kept.at < LISTING_TTL_MS && this.#sameFolders(kept.folders)) return kept.pages;
+    const at = now();
+    const pages = await this.#o.pages.list();
+    const folders = this.#folders(pages);
+    const recent = [...folders.values()].some((stamp) => Number(stamp) > Date.now() - RACY_MS);
+    this.#listing = { pages, at, folders: recent ? null : folders };
+    return pages;
+  }
+
+  #folders(pages: Listed[]): Map<string, string> {
+    const names = new Set<string>(TREES);
+    for (const { id } of pages) {
+      for (let slash = id.indexOf('/', id.indexOf('/') + 1); slash >= 0; slash = id.indexOf('/', slash + 1)) names.add(id.slice(0, slash));
+    }
+    return new Map([...names].map((name) => [name, this.#folderStamp(name)]));
+  }
+
+  #folderStamp(name: string): string {
+    try {
+      return String(statSync(path.join(this.#o.library(), ...name.split('/'))).mtimeMs);
+    } catch {
+      return 'absent';
+    }
+  }
+
+  #sameFolders(folders: Map<string, string>): boolean {
+    for (const [name, stamp] of folders) if (this.#folderStamp(name) !== stamp) return false;
+    return true;
   }
 
   #frontmatter(id: string): { aliases: string[]; pantsing: boolean } {
