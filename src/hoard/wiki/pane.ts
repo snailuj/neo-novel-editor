@@ -269,8 +269,11 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
     for (const fn of shownListeners) fn(chapter);
     tree.markShown(stored?.id ?? null);
     refreshNav();
-    // a page opened from the tree leaves the focus on its row
-    if (hadFocus && !tree.element.contains(document.activeElement)) title.focus();
+    // a page opened from the tree leaves the focus on its row, and a writer gone back to the
+    // book while the page was read stays there; a link drawn over falls to the body
+    const here = document.activeElement;
+    const inPane = !here || here === document.body || (root.contains(here) && !tree.element.contains(here));
+    if (hadFocus && inPane) title.focus();
   };
 
   /** A page shown (a Wiki book chapter or a stored page), and with at the words there marked and scrolled to. */

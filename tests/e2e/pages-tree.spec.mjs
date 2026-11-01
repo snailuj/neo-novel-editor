@@ -689,3 +689,38 @@ test('a writer back in the book while the list is read again keeps the focus the
     await fixture.close();
   }
 });
+
+// Rule: a page shown after a slow read takes the focus to its title only if the writer is
+// still in the pane; a writer gone back to the book stays there.
+test('a page read slowly does not take the writer out of the book', async () => {
+  const { profile } = await libraryProfile();
+  const fixture = await launchProfile(profile);
+  try {
+    const { app, page } = fixture;
+    await page.waitForFunction(() => !!window.hoard);
+    await seedBook(page, '<p>A line of the book.</p>');
+    const pane = page.locator('.hoard-wiki-pane');
+    await page.evaluate(() => window.hoard.wiki.pane.open('wiki/Harbour.html'));
+    await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
+    await paneSettled(page);
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tides');
+
+    await pane.getByRole('button', { name: '‹ Back' }).focus();
+    await hold(app, ['pages.list']);
+    await page.keyboard.press('Enter');
+    await heldOn(app, 'pages.list');
+    await caretInBook(page);
+    await letAllThrough(app);
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Harbour');
+    await page.waitForTimeout(300);
+    expect(await inManuscript(page)).toBe(true);
+
+    // still in the pane, the writer is taken to the title of the page shown
+    await pane.getByRole('button', { name: 'Forward ›' }).focus();
+    await page.keyboard.press('Enter');
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tides');
+    await expect(pane.locator('.hoard-wiki-title')).toBeFocused();
+  } finally {
+    await fixture.close();
+  }
+});
