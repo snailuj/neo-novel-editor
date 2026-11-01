@@ -243,6 +243,8 @@ export function judge(ask: Ask, entries: readonly Listed[]): Verdict {
   const folder = ask.value.trim().replace(/^\/+|\/+$/g, '');
   const path = join(folder, entry.path.slice(entry.path.lastIndexOf('/') + 1));
   if (path === entry.path) return { kind: 'same' };
+  // the store checks the title on a move too, so a title no link could name stops it
+  if (titleRefusal(entry.title)) return refused('title', `“${entry.title}” has a title no [[link]] can name, so it can't be moved. Rename it first, then move it.`);
   return (safe(path) ? null : refused('unsafe', 'A folder name can\'t be empty, be . or .., start with a dot, or hold a backslash. Change the folder.'))
     ?? taken(entry.tree, entry.title, entry.id)
     ?? { kind: 'send', tree: entry.tree, path };

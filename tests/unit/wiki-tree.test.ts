@@ -122,6 +122,17 @@ test('a move asks for the path in the folder typed, inside the same tree', () =>
   });
 });
 
+// Rule: the store checks a page's title on every move, so a page whose title no link could
+// name (it came by sync or import) is refused here, with the way out: rename it first.
+test('a page whose title no link could name is not moved, and the writer is told to rename it', () => {
+  const odd = [...LISTED, page('wiki/Notes [old].html')];
+  assert.deepEqual(judge({ op: 'move', id: 'wiki/Notes [old].html', value: 'Archive' }, odd), {
+    kind: 'refused', code: 'title',
+    message: '“Notes [old]” has a title no [[link]] can name, so it can\'t be moved. Rename it first, then move it.',
+  });
+  assert.deepEqual(judge({ op: 'rename', id: 'wiki/Notes [old].html', value: 'Old notes' }, odd), { kind: 'send', tree: 'wiki', path: 'Old notes.html' });
+});
+
 // Rule: a new page goes in the folder chosen, under the title typed, on the same rules.
 test('a new page asks for its path in the folder chosen, or says why not', () => {
   const make = (tree: Tree, folder: string, value: string) => judge({ op: 'new', tree, folder, value }, LISTED);
