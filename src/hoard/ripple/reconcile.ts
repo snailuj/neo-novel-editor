@@ -95,7 +95,7 @@ export async function reconcile(input: ReconcileInput): Promise<Reconciled> {
 
   if (wiki) {
     for (const change of changes.slice(state.cursor.changes)) {
-      if (!change || change.kind !== 'page-imported' || change.bookId !== wiki.bookId) continue;
+      if (!change || change.kind !== 'page-imported' || change.bookId !== wiki.bookId || !change.chId) continue;
       const html = input.read(change.dest);
       if (html !== null) take(change.chId, html, 'imported');
     }
