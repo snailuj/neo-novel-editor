@@ -108,7 +108,7 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
   const cancel = button('hoard-tree-cancel', 'Cancel');
   const actions = el('div', 'hoard-tree-actions');
   actions.append(submit, cancel);
-  form.append(label, input, hint, error, folders, actions);
+  form.append(label, input, error, hint, folders, actions);
 
   // The writer is in the pane while the focus is there, or after a click there that left
   // the focus nowhere (a button takes no focus from a click on a Mac): the tree may then

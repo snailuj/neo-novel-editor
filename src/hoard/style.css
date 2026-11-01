@@ -138,6 +138,7 @@ body[data-hoard-wiki] .chapter-body p { text-indent: 0; text-align: start; hyphe
 .hoard-tree-act { opacity: 0; }
 .hoard-tree-row:hover .hoard-tree-act, .hoard-tree-row:focus-within .hoard-tree-act { opacity: 1; }
 .hoard-tree-editor { margin-block: 4px 8px; margin-inline-start: 1.2em; }
+.hoard-tree-editor .hoard-label { margin-block-end: 6px; font-size: 11px; }
 .hoard-tree-input {
   display: block; box-sizing: border-box; inline-size: 100%; min-block-size: 44px; padding-inline: 6px;
   font: inherit; font-size: 12px; color: inherit; background: transparent;
