@@ -261,6 +261,11 @@ export class PageStore {
         const finished = await this.#finish(pending, openBookId, start);
         if (pending.from === id && pending.to === idOf(to)) return finished;
       }
+      // a repeat of a rename that finished, say a request sent again: the page is already there
+      if (id !== idOf(to) && !existsSync(this.file(from)) && existsSync(this.file(to))) {
+        this.o.log('info', 'pages.rename.done-already', { from: id, to: idOf(to) });
+        return { id: idOf(to), from: id, rewrittenFiles: 0, rewrittenLinks: 0, skipped: 0, deferred: [] };
+      }
       if (id === idOf(to)) {
         if (!existsSync(this.file(from))) throw new PageRefused('missing', `${id} is not a page`);
         return { id, from: id, rewrittenFiles: 0, rewrittenLinks: 0, skipped: 0, deferred: [] };

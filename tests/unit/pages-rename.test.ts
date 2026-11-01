@@ -330,3 +330,17 @@ test('a rename leaves alone a file changed from outside after it was read, and l
   assert.equal(done.rewrittenFiles, 4);
   assert.deepEqual(logged('pages.rename.changed').map((l) => (l.data as { file: string }).file), ['wiki/Index.html']);
 });
+
+// Rule: asking again for a rename that has already happened succeeds and changes nothing.
+test('a rename repeated after it succeeded is a logged no-op, not a missing page', async (t) => {
+  const { store, get, logged } = fixture(t);
+  await store.rename(FROM, 'Places/Port.html', null);
+  const after = get('wiki/Index.html');
+  const again = await store.rename(FROM, 'Places/Port.html', null);
+  assert.deepEqual(again, { id: 'wiki/Places/Port.html', from: FROM, rewrittenFiles: 0, rewrittenLinks: 0, skipped: 0, deferred: [] });
+  assert.equal(get('wiki/Index.html'), after);
+  assert.equal(logged('pages.rename.done-already').length, 1);
+  assert.equal(logged('pages.refused').length, 0);
+  // with neither the page nor its target there, it is still refused
+  await assert.rejects(store.rename(FROM, 'Places/Quay.html', null), (e: PageRefused) => e.code === 'missing');
+});
