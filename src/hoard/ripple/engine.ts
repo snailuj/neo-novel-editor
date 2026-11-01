@@ -14,7 +14,7 @@
 // never writes such a page's bytes. Calls run one at a time, so two runs never write one
 // packet twice.
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { validateHoardPageV1 } from '../../generated/validators.cjs';
 import type { HoardPageV1 } from '../../generated/hoard-page-v1.js';
@@ -22,6 +22,7 @@ import { oneName, writeWhole } from '../files.ts';
 import type { BlameLine } from '../git/blame.ts';
 import type { Paired } from '../git/layer.ts';
 import { PageRefused, titleOf } from '../pages/identity.ts';
+import { asLibrarian } from '../review/edit.ts';
 import type { PageStore } from '../pages/store.ts';
 import { inline } from '../wiki/inline.ts';
 import { plan, type Plan } from './apply.ts';
@@ -392,7 +393,7 @@ export class Ripple {
     if (made.type === 'write') {
       const page = made.page;
       const proposal: RippleProposal = { ...p, at, status: 'applied', outcome: 'written', ...(made.delta ? { delta: made.delta } : {}) };
-      await this.#o.layer.around([page.id, this.#rulingsRel], async () => {
+      await this.#asLibrarian('ripple.apply', { page: page.id, proposal: p.id }, [page.id, this.#rulingsRel], async () => {
         const written = await this.#o.pages.write(page.id, made.before, made.html);
         if (!written.ok) throw new Error(`${page.title} changed while ripple was working on it (${written.reason}). Apply again to read it afresh.`);
         const state = this.#rulings.read();
@@ -407,7 +408,7 @@ export class Ripple {
     const id = `wiki/${made.title}.html`;
     let created = false;
     try {
-      await this.#o.layer.around([id, sidecarRel(id), this.#rulingsRel], async () => {
+      await this.#asLibrarian('ripple.apply', { page: id, proposal: p.id }, [id, sidecarRel(id), this.#rulingsRel], async () => {
         const html = made.paragraphs.map((t) => `<p data-block="${randomBytes(3).toString('hex')}">${inline(t).html || '<br>'}</p>`).join('');
         await this.#o.pages.create('wiki', `${made.title}.html`, html);
         created = true;
@@ -428,6 +429,24 @@ export class Ripple {
     }
     this.#o.log('info', 'ripple.mint', { page: id, proposal: p.id });
     return { proposal, said: `${made.title} is a new page in the wiki.`, page: id };
+  }
+
+  // A librarian edit of `paths` (one commit, GitLayer.around). When the pre-commit gate
+  // refuses it, every path is put back as it was (a file the edit made is removed), so the
+  // library is as it was and the refusal goes to the caller.
+  async #asLibrarian(label: string, subject: Record<string, unknown>, paths: readonly string[], apply: () => Promise<void>): Promise<void> {
+    const before = paths.map((rel) => [rel, this.#read(rel)] as const);
+    const restore = () => {
+      for (const [rel, text] of before) {
+        const file = path.join(this.#lib, ...rel.split('/'));
+        if (text === null) rmSync(file, { force: true });
+        else writeWhole(file, text);
+      }
+    };
+    const done = await asLibrarian({ layer: this.#o.layer, log: this.#o.log }, label, subject, paths, async () => { await apply(); return null; }, restore);
+    if (!done.ok && done.reason === 'refused') {
+      throw new Error(`The library check refused this change, so nothing was written: ${done.findings.map((f) => `${f.path}: ${f.message}`).join('; ')}`);
+    }
   }
 
   /** What waits: jobs for the judge, proposals for the author. Reads; never writes. */
