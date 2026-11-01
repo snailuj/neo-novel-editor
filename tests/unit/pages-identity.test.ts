@@ -2,7 +2,7 @@
 // its tree folder or inside a hidden one; a page's title is its file name without .html.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { checkPath, idOf, parseId, PageRefused, titleOf } from '../../src/hoard/pages/identity.ts';
+import { checkPath, checkTitle, idOf, parseId, PageRefused, titleOf } from '../../src/hoard/pages/identity.ts';
 
 test('an id is the tree and the path, and parses back to the same page', () => {
   const ref = { tree: 'wiki', path: 'People/Novin\'a.html' } as const;
@@ -30,4 +30,13 @@ test('an id for a tree that does not exist, or with a bad path, is refused', () 
     assert.throws(() => parseId(id), PageRefused, id);
   }
   assert.throws(() => parseId(42 as unknown as string), PageRefused);
+});
+
+// Rule: a title is refused, in the window as in the store, when no [[link]] could name it:
+// empty, spaces at an end, or one of the link grammar's stops or a control character.
+test('a title no link could name is refused, from the path alone', () => {
+  assert.equal(checkTitle('People/Ada Vell.html'), 'Ada Vell');
+  for (const bad of ['.html', ' .html', 'A /B .html', 'A[1].html', 'A|B.html', 'A#B.html', 'A^B.html', 'A\u0007.html', 'A].html']) {
+    assert.throws(() => checkTitle(bad), (e: PageRefused) => e.code === 'title', bad);
+  }
 });

@@ -17,7 +17,7 @@ import { key } from '../../librarian/links.ts';
 import { booksWithOwnRepo } from '../git/commit.ts';
 import type { GitLayer } from '../git/layer.ts';
 import { writeWhole } from '../files.ts';
-import { checkPath, idOf, PageRefused, parseId, titleOf, TREES, type PageRef, type Tree } from './identity.ts';
+import { checkPath, checkTitle, idOf, PageRefused, parseId, titleOf, TREES, type PageRef, type Tree } from './identity.ts';
 import { editsFor, rewriteHtml, type Retarget, type WindowEdit } from './rewrite.ts';
 import { Titles } from './titles.ts';
 
@@ -85,9 +85,6 @@ const sameFile = (a: string, b: string) => {
   const [x, y] = [statSync(a), statSync(b)];
   return x.ino === y.ino && x.dev === y.dev;
 };
-
-// A title becomes the target of a [[link]], which the grammar ends at ] | # or ^.
-const UNLINKABLE = /[[\]|#^\p{Cc}]/u;
 
 export class PageStore {
   protected readonly o: PageStoreOptions;
@@ -236,19 +233,10 @@ export class PageStore {
     }));
   }
 
-  /** Refuses a title no link could name; the title is the file name without .html. */
-  protected checkTitle(p: string): string {
-    const title = titleOf(p);
-    if (title.trim() === '' || title !== title.trim() || UNLINKABLE.test(title)) {
-      throw new PageRefused('title', `${JSON.stringify(title)} cannot be a page title: it is empty, has spaces at an end, or holds one of [ ] | # ^`);
-    }
-    return title;
-  }
-
   create(tree: Tree, pagePath: string, html: string): Promise<PageEntry> {
     return this.#serial(() => this.op('create', async () => {
       const ref = parseId(`${tree}/${checkPath(pagePath)}`);
-      const title = this.checkTitle(ref.path);
+      const title = checkTitle(ref.path);
       this.inside(ref);
       const index = await this.#index();
       const clash = index.taken(ref.tree, title);
@@ -389,7 +377,7 @@ export class PageStore {
       throw new PageRefused('missing', `${id} is no longer on disk`);
     }
     const oldTitle = titleOf(from.path);
-    const newTitle = this.checkTitle(to.path);
+    const newTitle = checkTitle(to.path);
     const clash = index.taken(to.tree, newTitle, id);
     if (clash) throw new PageRefused('taken', `${JSON.stringify(newTitle)} is already a page in ${to.tree} (${clash.id})`);
     // a file that arrived by sync since the titles were walked; a case-only rename on a
