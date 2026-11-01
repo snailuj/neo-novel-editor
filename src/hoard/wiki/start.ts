@@ -111,12 +111,13 @@ function bookTarget(store: WikiStore): Target {
   };
 }
 
-function treeTarget(into: PageImport): Target {
+function treeTarget(into: PageImport, wrote: () => Promise<unknown>): Target {
   return {
     where: into.tree === 'wiki' ? 'the wiki' : 'sources',
     sort: (picks) => into.sort(picks),
     apply: async (sorted) => {
       const a = await into.apply(sorted as ReturnType<PageImport['sort']>);
+      await wrote();
       return { bookId: null, imported: a.imported.length, updated: a.updated.length, marks: a.marks, marksLeft: a.marksLeft, keptAsText: a.keptAsText, attachments: a.attachments, missing: a.missing };
     },
     bookId: () => null,
@@ -228,10 +229,10 @@ class Targets {
   readonly #trees: Record<Tree, Target>;
   readonly #make: (book?: string) => WikiStore;
 
-  constructor(make: (book?: string) => WikiStore, tree: (tree: Tree) => PageImport) {
+  constructor(make: (book?: string) => WikiStore, tree: (tree: Tree) => PageImport, wrote: () => Promise<unknown>) {
     this.#make = make;
     this.wiki = make();
-    this.#trees = { sources: treeTarget(tree('sources')), wiki: treeTarget(tree('wiki')) };
+    this.#trees = { sources: treeTarget(tree('sources'), wrote), wiki: treeTarget(tree('wiki'), wrote) };
   }
 
   for(to: Tree | null, book: string | null): Target {
@@ -280,7 +281,12 @@ async function pickImportedBook(host: NeoMainHost): Promise<{ bookId: string | n
   return { bookId: shown[answer.response]?.bookId ?? null };
 }
 
-export function startWiki(host: NeoMainHost, layer: GitLayer, marks: MarkStore, pageMarks?: PageMarks): WikiStore {
+/**
+ * `pageMarks` holds the marks of imported pages; `pagesWrote` is told when an import has
+ * written page files, so the page store reads its trees again (pages/store.ts).
+ */
+export function startWiki(host: NeoMainHost, layer: GitLayer, marks: MarkStore, o: { pageMarks?: PageMarks; pagesWrote?: () => Promise<unknown> } = {}): WikiStore {
+  const { pageMarks, pagesWrote = () => Promise.resolve() } = o;
   const targets = new Targets((book) => new WikiStore({
     library: () => host.paths.library(),
     marks,
@@ -297,7 +303,7 @@ export function startWiki(host: NeoMainHost, layer: GitLayer, marks: MarkStore, 
     wrote: (name) => layer.wrote(name),
     commit: (part) => layer.commitNow(part === 'author' ? 'import-author' : 'import'),
     log: host.log.bind(host),
-  }));
+  }), pagesWrote);
   const wiki = targets.wiki;
   host.handle('wiki.pages', () => wiki.pages());
   host.handle('wiki.page', (payload) => wiki.page(checked('wiki.page', validateHoardWikiPageV1, payload).chId));
