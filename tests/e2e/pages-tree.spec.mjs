@@ -514,3 +514,35 @@ test('the link clicked last is the page shown', async () => {
     await fixture.close();
   }
 });
+
+// Rule: a page made from the tree opens in the pane only if the writer has not gone to
+// another page while it was made; the page they went to stays.
+test('a page made while the writer reads another leaves the pane where they went', async () => {
+  const { profile, library } = await libraryProfile();
+  const fixture = await launchProfile(profile);
+  try {
+    const { app, page } = fixture;
+    await page.waitForFunction(() => !!window.hoard);
+    await seedBook(page, '<p>A line of the book.</p>');
+    const pane = page.locator('.hoard-wiki-pane');
+    const tree = pane.locator('.hoard-tree');
+    await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
+    await paneSettled(page);
+    await tree.getByRole('button', { name: 'Pages' }).click();
+    await tree.getByRole('button', { name: 'New page' }).click();
+    const field = tree.getByLabel('Title of the new page in wiki');
+    await field.fill('Bea Lund');
+    await hold(app, ['pages.create']);
+    await field.press('Enter');
+    await tree.locator('.hoard-tree-name[data-key="wiki/Harbour.html"]').click();
+    await expect(pane.locator('.hoard-wiki-line')).toHaveText(['The wiki harbour faces east.']);
+    await letAllThrough(app);
+    await expect(tree.locator('.hoard-tree-status')).toHaveText('Made the page “Bea Lund” in wiki.');
+    expect(existsSync(path.join(library, 'wiki', 'Bea Lund.html'))).toBe(true);
+    await page.waitForTimeout(300);
+    await expect(pane.locator('.hoard-wiki-line')).toHaveText(['The wiki harbour faces east.']);
+    expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('wiki/Harbour.html');
+  } finally {
+    await fixture.close();
+  }
+});

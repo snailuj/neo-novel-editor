@@ -103,6 +103,7 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
       // the page shown may be the one renamed, or hold a link to it
       if (history.current) await showCurrent();
     },
+    moves: () => moves,
     listed: (entries) => { listed = entries; },
     paneRoot: root,
   });

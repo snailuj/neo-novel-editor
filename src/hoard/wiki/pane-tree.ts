@@ -22,6 +22,8 @@ export interface TreeHost {
   open(id: string): Promise<void>;
   /** A page renamed or moved: the trail follows it and the page shown is read again. */
   renamed(from: string, to: string): Promise<void>;
+  /** How many times the writer has gone to a page in the pane: one made opens only if none since. */
+  moves(): number;
   /** Each list read, which the pane's links on a stored page resolve against. */
   listed(entries: Listed[]): void;
   /** The pane's section: the tree takes the focus only from inside it. */
@@ -292,6 +294,7 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
     let said = '';
     let left = '';
     let renamed: { from: string; to: string } | null = null;
+    const moves = host.moves();
     try {
       if (ask.op === 'new') {
         await neo.invoke('pages.create', { tree: verdict.tree, path: verdict.path, html: newPageHtml() });
@@ -334,7 +337,7 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
     status.textContent = said;
     alert.textContent = left;
     if (hadFocus) focusRow(to);
-    if (ask.op === 'new') await host.open(to);
+    if (ask.op === 'new' && host.moves() === moves) await host.open(to);
   };
 
   /** One event through the table; the focus moves only when it is in the pane (or `focus` says it was). */
