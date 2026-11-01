@@ -26,6 +26,6 @@ const options = parseArgs(process.argv.slice(2));
 const { differing } = await generate(options);
 if (options.check && differing.length > 0) {
   for (const file of differing) console.error(`out of date: ${file}`);
-  console.error('Run `npm run gen` and commit the result.');
+  console.error('Run `npm run gen`.');
   process.exitCode = 1;
 }

@@ -147,11 +147,20 @@ test('a title the tree holds is refused, folded as links fold it, and nothing mo
   assert.equal(get('wiki/Index.html'), INDEX);
   assert.equal(has('.neo/pages/.rename.json'), false);
   assert.equal(logged('pages.refused').length, 1);
-  // another tree may hold the title: the wiki page then wins its links
-  assert.equal((await store.rename(FROM, 'Lantern2.html', null)).id, 'wiki/Lantern2.html');
-  await store.create('sources', 'Beacon.html', '<p>s</p>');
-  assert.equal((await store.rename('wiki/Lantern2.html', 'Beacon.html', null)).id, 'wiki/Beacon.html');
-  assert.equal(logged('pages.rename.shadows').length, 1);
+});
+
+// Rule: a rename never moves links between the trees; a new title the other tree holds is refused.
+test('a rename onto a title the other tree holds is refused both ways, and nothing moves', async (t) => {
+  const { store, get, has, put, logged } = pagesLibrary(t);
+  put('wiki/Tide.html', '<p>w</p>');
+  put('sources/Moon.html', '<p>s</p>');
+  put('wiki/Index.html', '<p>[[Tide]] [[Moon]]</p>');
+  await assert.rejects(store.rename('sources/Moon.html', 'Deep/TIDE.html', null), (e: PageRefused) => e.code === 'other-tree');
+  await assert.rejects(store.rename('wiki/Tide.html', 'moon.html', null), (e: PageRefused) => e.code === 'other-tree');
+  assert.ok(has('sources/Moon.html') && has('wiki/Tide.html'), 'neither page moved');
+  assert.equal(get('wiki/Index.html'), '<p>[[Tide]] [[Moon]]</p>', 'no link was re-pointed');
+  assert.deepEqual(logged('pages.refused').map((l) => (l.data as { code: string }).code), ['other-tree', 'other-tree']);
+  assert.equal((await store.rename('sources/Moon.html', 'Deep/Moon.html', null)).id, 'sources/Deep/Moon.html', 'a move keeping its own title is allowed');
 });
 
 test('a rename refuses a missing page, a title no link can name, and a path out of the tree, and logs each', async (t) => {
@@ -262,6 +271,7 @@ test('a rename is one commit credited to the author, holding the move, the sidec
     'D .neo/pages/wiki/People/Harbour.html.json', 'A .neo/pages/wiki/Places/Port.html.json',
     'D wiki/People/Harbour.html', 'A wiki/Places/Port.html',
     'M wiki/Index.html', 'M sources/Notes.html', 'M book-fox-1/chapters/c1.html', 'M book-owl-2/chapters/c1.html',
+    'A .neo/pages/renames.json',
   ].sort());
   const rest = await lib.git.run(lib.library, ['status', '--porcelain']);
   assert.equal(rest.stdout.trim(), '', 'the library is clean, the rename note included');
@@ -290,4 +300,114 @@ test('a different rename started while one is unfinished finishes the first', as
   assert.equal(left.get('wiki/Index.html'), INDEX_AFTER.replace('[[Lantern]]', '[[Beacon]]'));
   assert.equal(left.has('wiki/Beacon.html'), true);
   assert.equal(left.has('.neo/pages/.rename.json'), false);
+});
+
+// Rule: a write acknowledged as landed is never undone by a rename running beside it.
+test('a write sent while a rename runs is never acknowledged and then written over', async (t) => {
+  const big = `<p>[[Harbour]]</p>${'<p>filler text</p>'.repeat(50000)}`;
+  for (let round = 0; round < 5; round++) {
+    let sent: Promise<unknown> | null = null;
+    const lib = pagesLibrary(t, { onStep: (step: string) => { if (step === 'move' && !sent) sent = lib.store.write('wiki/Index.html', big, `${big}<p>TYPED</p>`); } });
+    lib.put('wiki/Harbour.html', '<p>h</p>');
+    lib.put('wiki/Index.html', big);
+    await lib.store.rename('wiki/Harbour.html', 'Port.html', null);
+    assert.ok(sent, 'the write was sent part way through the rename');
+    const written = await sent;
+    const now = lib.get('wiki/Index.html');
+    assert.ok(now.startsWith('<p>[[Port]]</p>'), 'the rename rewrote the link');
+    if ((written as { ok: boolean }).ok) assert.ok(now.includes('TYPED'), `round ${round}: an acknowledged write was lost`);
+    else assert.deepEqual(written, { ok: false, reason: 'stale' }, 'the writer is told the page moved on');
+  }
+});
+
+// Rule: a rename writes a file only while it still holds what the rename read.
+test('a rename leaves alone a file changed from outside after it was read, and logs it', async (t) => {
+  const { store, get, put, logged } = fixture(t, {
+    onStep: (step: string, file: string) => { if (step === 'rewrite' && file === 'wiki/Index.html') put('wiki/Index.html', '<p>[[Harbour]] typed elsewhere</p>'); },
+  });
+  const done = await store.rename(FROM, 'Places/Port.html', null);
+  assert.equal(get('wiki/Index.html'), '<p>[[Harbour]] typed elsewhere</p>', 'the outside change stands');
+  assert.equal(get('sources/Notes.html'), '<p>See [[Port|x]].</p>', 'the other files were rewritten');
+  assert.equal(done.rewrittenFiles, 4);
+  assert.deepEqual(logged('pages.rename.changed').map((l) => (l.data as { file: string }).file), ['wiki/Index.html']);
+});
+
+// Rule: asking again for a rename that has already happened succeeds and changes nothing.
+test('a rename repeated after it succeeded is a logged no-op, not a missing page', async (t) => {
+  const { store, get, logged } = fixture(t);
+  await store.rename(FROM, 'Places/Port.html', null);
+  const after = get('wiki/Index.html');
+  const again = await store.rename(FROM, 'Places/Port.html', null);
+  assert.deepEqual(again, { id: 'wiki/Places/Port.html', from: FROM, rewrittenFiles: 0, rewrittenLinks: 0, skipped: 0, deferred: [] });
+  assert.equal(get('wiki/Index.html'), after);
+  assert.equal(logged('pages.rename.done-already').length, 1);
+  assert.equal(logged('pages.refused').length, 0);
+  // with neither the page nor its target there, it is still refused
+  await assert.rejects(store.rename(FROM, 'Places/Quay.html', null), (e: PageRefused) => e.code === 'missing');
+});
+
+// Rule: only a rename that this library recorded as finished is answered as done already.
+test('a rename of a page that is gone is refused as before when no finished rename matches it', async (t) => {
+  const { store, put, has, get, library } = fixture(t);
+  put('wiki/Places/Port.html', '<p>another page by that name</p>');
+  await assert.rejects(store.rename('wiki/Never.html', 'Places/Port.html', null), (e: PageRefused) => e.code === 'missing');
+  // a page moved away by sync, while another page holds the name it was to take
+  await store.rename('wiki/Lantern.html', 'Beacon.html', null);
+  await assert.rejects(store.rename('wiki/Lantern.html', 'Places/Port.html', null), (e: PageRefused) => e.code === 'missing');
+  assert.equal(get('wiki/Places/Port.html'), '<p>another page by that name</p>');
+  // the record is the library's, so a new store answers the finished rename too, and the record stays bounded
+  const record = JSON.parse(get('.neo/pages/renames.json')) as { from: string; to: string }[];
+  assert.deepEqual(record.at(-1), { from: 'wiki/Lantern.html', to: 'wiki/Beacon.html' });
+  assert.equal((await new PageStore({ library: () => library, log: () => {} }).rename('wiki/Lantern.html', 'Beacon.html', null)).id, 'wiki/Beacon.html');
+  assert.equal(has('wiki/Lantern.html'), false);
+});
+
+test('the record of finished renames keeps the last fifty', async (t) => {
+  const { store, put, get } = pagesLibrary(t);
+  put('wiki/P0.html', '<p>p</p>');
+  for (let i = 0; i < 55; i++) await store.rename(`wiki/P${i}.html`, `P${i + 1}.html`, null);
+  const record = JSON.parse(get('.neo/pages/renames.json')) as { from: string; to: string }[];
+  assert.equal(record.length, 50);
+  assert.deepEqual(record[0], { from: 'wiki/P5.html', to: 'wiki/P6.html' });
+});
+
+// Rule: a rename never writes its note unless the target path is free on disk, whatever
+// the cached titles say, so a refused rename leaves nothing to block the next one.
+test('a rename onto a file that arrived by sync is refused as taken, leaves no note, and the next rename works', async (t) => {
+  const { store, put, get, has, logged } = fixture(t);
+  await store.list();
+  put('wiki/Places/Port.html', '<p>arrived from another device</p>');
+  await assert.rejects(store.rename(FROM, 'Places/Port.html', null), (e: PageRefused) => e.code === 'taken');
+  assert.equal(has('.neo/pages/.rename.json'), false, 'no note of a rename is left');
+  assert.equal(has(FROM), true);
+  assert.equal(get('wiki/Places/Port.html'), '<p>arrived from another device</p>');
+  assert.equal(get('wiki/Index.html'), INDEX);
+  assert.equal(logged('pages.refused').length, 1);
+  assert.equal((await store.rename(FROM, 'Places/Quay.html', null)).id, 'wiki/Places/Quay.html');
+  assert.equal(await store.recover(null), null);
+});
+
+// Rule: recovery acts only on a note whose every path is a page id or a chapter of the
+// library, so a note written by hand can never move or rewrite a file outside it.
+test('a note naming paths out of the library is ignored at recovery, and nothing outside changes', async (t) => {
+  const outside = tempDir(t, 'hoard-outside-');
+  writeFileSync(path.join(outside, 'Secret.html'), '<p>[[Harbour]]</p>');
+  const away = path.relative(fixture(t).library, outside).split(path.sep).join('/');
+  const notes = [
+    { from: `wiki/../${away}/Secret.html`, to: 'wiki/Stolen.html', files: [] },
+    { from: FROM, to: `wiki/../${away}/Moved.html`, files: [] },
+    { from: FROM, to: 'sources/Port.html', files: [] },
+    { from: FROM, to: 'wiki/Places/Port.html', files: [`${away}/Secret.html`] },
+    { from: FROM, to: 'wiki/Places/Port.html', files: ['book-fox-1/chapters/../../wiki/Index.html'] },
+  ];
+  for (const note of notes) {
+    const lib = fixture(t);
+    lib.put('.neo/pages/.rename.json', JSON.stringify({ version: 1, ...note, at: '2026-10-15T22:00:00.000Z' }));
+    assert.equal(await lib.store.recover(null), null, JSON.stringify(note));
+    assert.equal(lib.has(FROM), true, 'the page did not move');
+    assert.equal(lib.get('wiki/Index.html'), INDEX);
+    assert.ok(lib.lines.some((l) => l.level === 'warn' && /not a safe rename note/.test(l.message)), 'the note is logged as ignored');
+  }
+  assert.deepEqual(readdirSync(outside), ['Secret.html']);
+  assert.equal(readFileSync(path.join(outside, 'Secret.html'), 'utf8'), '<p>[[Harbour]]</p>');
 });

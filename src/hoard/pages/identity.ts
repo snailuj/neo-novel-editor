@@ -12,7 +12,7 @@ export interface PageRef {
 
 /** A request the store will not carry out; `code` is stable for callers, `message` for the log. */
 export class PageRefused extends Error {
-  readonly code: 'unsafe' | 'taken' | 'missing' | 'stale' | 'title';
+  readonly code: 'unsafe' | 'taken' | 'other-tree' | 'missing' | 'stale' | 'title';
 
   constructor(code: PageRefused['code'], message: string) {
     super(message);
