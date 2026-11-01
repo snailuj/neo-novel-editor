@@ -33,7 +33,7 @@ test('list of a library with neither folder is empty, and a symlinked folder is 
   assert.deepEqual(await store.list(), []);
   put('outside/Leak.html', '<p>x</p>');
   mkdirSync(path.join(library, 'wiki'));
-  symlinkSync(path.join(library, 'outside'), path.join(library, 'wiki', 'link'), 'dir');
+  symlinkSync(path.join(library, 'outside'), path.join(library, 'wiki', 'link'), 'junction');
   assert.deepEqual(await store.list(), []);
 });
 
@@ -169,7 +169,7 @@ test('a path through a symlinked folder or to a symlinked file is refused for ev
   const { store, library, put, get, has, logged } = pagesLibrary(t);
   put('outside/Leak.html', '<p>secret</p>');
   put('wiki/Tide.html', '<p>t</p>');
-  symlinkSync(path.join(library, 'outside'), path.join(library, 'wiki', 'link'), 'dir');
+  symlinkSync(path.join(library, 'outside'), path.join(library, 'wiki', 'link'), 'junction');
   symlinkSync(path.join(library, 'outside', 'Leak.html'), path.join(library, 'wiki', 'Alias.html'));
   assert.equal(get('wiki/link/Leak.html'), '<p>secret</p>', 'the link leads out of the tree');
   const unsafe = (e: PageRefused) => e.code === 'unsafe';
