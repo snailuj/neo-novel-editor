@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "A page edited by its id, version 1: the page's HTML as the caller read it and with the change, and whose change it is. Written only while the file still holds before. A librarian edit is refused unless the page is a librarian-owned wiki page.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["page", "before", "after", "as"],
+  "properties": {
+    "page": {
+      "description": "A page's id, <tree>/<path>.",
+      "type": "string",
+      "pattern": "^(wiki|sources)/.+$"
+    },
+    "before": { "type": "string" },
+    "after": { "type": "string" },
+    "as": { "enum": ["librarian", "author"] }
+  }
+}
