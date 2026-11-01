@@ -83,7 +83,7 @@ test('the writer\'s own change is written and left for the next checkpoint', asy
   const { options, page, history } = await wiki(t);
   const was = await history();
   const told: (string | undefined)[] = [];
-  const layer = { around: () => { throw new Error('the writer\'s change is no librarian edit'); }, wrote: (name?: string) => { told.push(name); } };
+  const layer = { around: () => { throw new Error('the writer\'s change is no librarian edit'); }, wrote: (name?: string) => { told.push(name); }, release: () => {} };
   assert.deepEqual(await writePage({ ...options, layer }, { chId: 'c1', before: BEFORE, after: AFTER, as: 'author' }), { ok: true });
   assert.equal(page(), AFTER);
   assert.deepEqual(told, ['book-fox-1']);

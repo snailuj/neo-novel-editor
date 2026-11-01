@@ -30,7 +30,7 @@ export interface PageWriterOptions {
   library(): string;
   /** The wiki book's id and whether it lists the page, or null when there is no wiki. */
   listed(chId: string): { bookId: string } | null;
-  layer: Pick<GitLayer, 'around' | 'wrote'>;
+  layer: Pick<GitLayer, 'around' | 'wrote' | 'release'>;
   log(level: 'error' | 'warn' | 'info' | 'debug', message: string, data?: unknown): void;
 }
 

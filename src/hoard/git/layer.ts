@@ -80,6 +80,11 @@ export class GitLayer {
     this.#gate = gate;
   }
 
+  /** Refused librarian edit's paths, put back: the writer's commits take them again. */
+  release(paths: readonly string[]): void {
+    this.#gate?.release(paths);
+  }
+
   status(): RepoState {
     return this.#state;
   }

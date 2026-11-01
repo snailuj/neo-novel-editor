@@ -6,6 +6,8 @@
 //   after the writer's pending work is committed as theirs;
 // - Gate-Refusal-Reverts: a librarian edit the pre-commit gate refuses is put back on disk
 //   and is not in history;
+// - Restored-Paths-Are-Released: once a refused librarian edit is put back, the page is no
+//   longer held out of the writer's commits, so the author's next edit to it is checkpointed;
 // - Author-Edits-Both-Trees: an author edit lands in either tree;
 // - Edit-Needs-Current-Page: an edit lands only while the file holds what the caller read;
 // - Owners-List-Only-Librarian: review.owners names the librarian's pages among those asked.
@@ -96,6 +98,21 @@ test('Gate-Refusal-Reverts: a librarian edit the gate refuses is put back on dis
   assert.ok(!written.ok && written.reason === 'refused' && written.findings.some((f) => f.path === OURS), JSON.stringify(written));
   assert.equal(page(OURS), BEFORE);
   assert.deepEqual(await history(), was);
+});
+
+test('Restored-Paths-Are-Released: after a refused librarian edit is put back, the author\'s next edit to the page is checkpointed', async (t) => {
+  const { o, layer, library: lib, page, history } = await library(t);
+  const gate = new Gate({ library: () => lib, log: () => {} });
+  layer.useGate(gate);
+  const written = await editPage(o, { page: OURS, before: BEFORE, after: '<p data-block="b 1">The quay is very old.</p>', as: 'librarian' });
+  assert.ok(!written.ok && written.reason === 'refused');
+  assert.equal(page(OURS), BEFORE);
+  assert.deepEqual(gate.held(), [], 'the restored page is not held');
+  assert.deepEqual(await editPage(o, { page: OURS, before: BEFORE, after: AFTER, as: 'author' }), { ok: true });
+  const was = await history();
+  await layer.commitNow('import-author');
+  assert.equal(await layer.show('HEAD', OURS), AFTER, 'the writer\'s checkpoint took the author\'s edit');
+  assert.equal((await history()).length, was.length + 1);
 });
 
 test('Author-Edits-Both-Trees: an author edit to a sources page lands', async (t) => {

@@ -283,6 +283,12 @@ export class Gate {
     if (this.#held.delete(rel)) this.#o.log('info', 'git.gate: the writer saved a held file, so their next commit takes it', { path: rel });
   }
 
+  /** A refused edit's files were put back as they were: nothing of the librarian's is left in them, so they are the writer's again. */
+  release(paths: readonly string[]): void {
+    const freed = paths.filter((rel) => this.#held.delete(rel));
+    if (freed.length) this.#o.log('info', 'git.gate: a refused edit was put back, so its files are no longer held', { paths: freed });
+  }
+
   /**
    * Judges the staged files (deleted ones are skipped). A librarian edit with a finding
    * throws GateRefused and holds its files; any other commit logs what is new and goes on.

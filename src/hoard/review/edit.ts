@@ -33,10 +33,10 @@ export type Edited = Written | { ok: false; reason: 'owned' };
 /**
  * Runs `swap` (which writes `paths` and returns why it could not, or null) between the
  * librarian's two commits. A gate refusal calls `restore` and answers 'refused'; any
- * other error goes on.
+ * other error goes on. A restored file is released from the gate's hold.
  */
 export async function asLibrarian(
-  o: { layer: Pick<GitLayer, 'around'>; log: Log },
+  o: { layer: Pick<GitLayer, 'around' | 'release'>; log: Log },
   label: string,
   subject: Record<string, unknown>,
   paths: readonly string[],
@@ -51,6 +51,7 @@ export async function asLibrarian(
   } catch (err) {
     if (!(err instanceof GateRefused)) throw err;
     await restore();
+    o.layer.release(paths); // the gate holds a refused file until the writer saves it; put back, it is theirs again
     o.log('warn', `${label}: the library check refused the librarian's change, so the page is as it was`, { ...subject, findings: err.findings });
     return { ok: false, reason: 'refused', findings: err.findings };
   }
@@ -69,7 +70,7 @@ export interface PageEdit {
 export interface PageEditorOptions {
   library(): string;
   store: Pick<PageStore, 'write'>;
-  layer: Pick<GitLayer, 'around'>;
+  layer: Pick<GitLayer, 'around' | 'release'>;
   log: Log;
 }
 
