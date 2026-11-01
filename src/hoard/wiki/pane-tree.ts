@@ -318,16 +318,14 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
         renamed = { from: ask.id, to: done.id };
       }
     } catch (err) {
-      const hadFocus = focusInPane();
       await reads.fresh();
       const told = explain(ask, entries, err);
       console.warn('hoard: pages tree: refused', { op: ask.op, code: told.code, message: told.message });
-      dispatch({ type: 'refused', message: told.message }, hadFocus);
+      dispatch({ type: 'refused', message: told.message });
       // the folder of a new page may have gone while the store worked
       dispatch({ type: 'listed' });
       return;
     }
-    const hadFocus = focusInPane();
     editor = step(editor, { type: 'done' }, entries).editor;
     reveal(to);
     active = to;
@@ -337,12 +335,14 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
     if (renamed) await host.renamed(renamed.from, renamed.to);
     status.textContent = said;
     alert.textContent = left;
-    if (hadFocus) focusRow(to);
+    // asked only now: the writer may have gone back to the book while the list was read
+    if (focusInPane()) focusRow(to);
     if (ask.op === 'new' && host.moves() === moves) await host.open(to);
   };
 
-  /** One event through the table; the focus moves only when it is in the pane (or `focus` says it was). */
-  function dispatch(e: EditorEvent, focus = focusInPane()) {
+  /** One event through the table; the focus moves only when it is in the pane. */
+  function dispatch(e: EditorEvent) {
+    const focus = focusInPane();
     const was = editor;
     const next = step(editor, e, entries);
     editor = next.editor;

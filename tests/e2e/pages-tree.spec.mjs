@@ -659,3 +659,33 @@ test('a new page whose folder is removed outside NEO moves up, title kept', asyn
     await fixture.close();
   }
 });
+
+// Rule: after a change, the tree puts the focus on the page's row only if the writer is
+// still in the pane once the list is back; a writer gone back to the book stays there.
+test('a writer back in the book while the list is read again keeps the focus there', async () => {
+  const { profile } = await libraryProfile();
+  const fixture = await launchProfile(profile);
+  try {
+    const { app, page } = fixture;
+    await page.waitForFunction(() => !!window.hoard);
+    await seedBook(page, '<p>A line of the book.</p>');
+    const pane = page.locator('.hoard-wiki-pane');
+    const tree = pane.locator('.hoard-tree');
+    await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
+    await paneSettled(page);
+    await tree.getByRole('button', { name: 'Pages' }).click();
+    await tree.locator('.hoard-tree-name[data-key="wiki/Harbour.html"]').focus();
+    await page.keyboard.press('F2');
+    await page.keyboard.type('Quay');
+    await hold(app, ['pages.list']);
+    await page.keyboard.press('Enter');
+    await heldOn(app, 'pages.list');
+    await caretInBook(page);
+    await letAllThrough(app);
+    await expect(tree.locator('.hoard-tree-status')).toHaveText(/^Renamed “Harbour” to “Quay”\./);
+    await page.waitForTimeout(300);
+    expect(await inManuscript(page)).toBe(true);
+  } finally {
+    await fixture.close();
+  }
+});
