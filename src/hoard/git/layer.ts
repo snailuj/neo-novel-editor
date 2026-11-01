@@ -127,32 +127,35 @@ export class GitLayer {
    * librarian's; no checkpoint runs in between, and pairs run one at a time. A failed
    * author commit refuses the edit: apply never runs. An apply that fails still has
    * what it changed committed as the librarian's before its error goes on. In a library
-   * with no history apply runs alone.
+   * with no history apply runs alone. With `as` 'author' the edit is the author's own
+   * (a page rename): both commits are theirs, and the edit's is not judged as a
+   * librarian's is.
    */
-  around<T>(paths: readonly string[], apply: () => Promise<T>): Promise<Paired<T>> {
-    const run = this.#pairs.then(() => this.#around(paths, apply));
+  around<T>(paths: readonly string[], apply: () => Promise<T>, as: Who = 'librarian'): Promise<Paired<T>> {
+    const run = this.#pairs.then(() => this.#around(paths, apply, as));
     this.#pairs = run.catch(() => {});
     return run;
   }
 
-  async #around<T>(paths: readonly string[], apply: () => Promise<T>): Promise<Paired<T>> {
+  async #around<T>(paths: readonly string[], apply: () => Promise<T>, as: Who): Promise<Paired<T>> {
     if (this.#state.state !== 'tracked') return { result: await apply(), before: null, after: null };
     const { log } = this.#o;
     const start = performance.now();
     await this.#checkpoints.pause();
     try {
-      const before = await this.#commitAs('author', 'librarian-before');
+      const [first, last]: [Reason, Reason] = as === 'author' ? ['page-before', 'page-rename'] : ['librarian-before', 'librarian-after'];
+      const before = await this.#commitAs('author', first);
       let result: T;
       try {
         result = await apply();
       } catch (err) {
-        await this.#commitAs('librarian', 'librarian-after', paths).catch((late: unknown) => {
+        await this.#commitAs(as, last, paths).catch((late: unknown) => {
           log('error', 'git.librarian: the edit failed, and so did its commit', { message: String(late) });
         });
         throw err;
       }
-      const after = await this.#commitAs('librarian', 'librarian-after', paths);
-      log('info', 'git.librarian', { paths, before, after, ms: Math.round(performance.now() - start) });
+      const after = await this.#commitAs(as, last, paths);
+      log('info', as === 'author' ? 'git.author-pair' : 'git.librarian', { paths, before, after, ms: Math.round(performance.now() - start) });
       return { result, before, after };
     } finally {
       this.#checkpoints.resume();

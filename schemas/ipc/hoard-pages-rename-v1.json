@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "A request to rename or move a page, version 1. newPath is inside the page's own tree. Links to the page are rewritten in every page and chapter; openBookId is the book open in the window, whose chapters the main half does not write but hands back as edits.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "newPath", "openBookId"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "newPath": { "type": "string", "minLength": 1 },
+    "openBookId": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] }
+  }
+}

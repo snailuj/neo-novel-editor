@@ -25,6 +25,7 @@ import { startLibrarianPairs } from './git/librarian-main.ts';
 import { createGit } from './git/runner.ts';
 import { ATTRIBUTES } from './git/start.ts';
 import { MarkStore } from './marks/store.ts';
+import { startPages } from './pages/main.ts';
 import { startReview } from './review/main.ts';
 import { startRipple } from './ripple/main.ts';
 import { SearchClient, type WorkerProcess } from './search/client.ts';
@@ -150,5 +151,6 @@ export function activate(host: NeoMainHost): void {
   startReview(host, marks, { layer, wiki });
   startRipple(host, layer, marks, wiki);
   startSearch(host);
-  layer.open().catch((err: unknown) => host.log('error', 'git.open failed', String(err)));
+  const opened = layer.open().catch((err: unknown) => host.log('error', 'git.open failed', String(err)));
+  startPages(host, layer, opened);
 }
