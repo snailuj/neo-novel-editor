@@ -383,6 +383,11 @@ export class PageStore {
       index = await this.#index();
     }
     if (!index.has(id)) throw new PageRefused('missing', `${id} is not a page`);
+    // a page deleted, say by sync, since the titles were walked
+    if (!existsSync(this.file(from))) {
+      this.#titles = null;
+      throw new PageRefused('missing', `${id} is no longer on disk`);
+    }
     const oldTitle = titleOf(from.path);
     const newTitle = this.checkTitle(to.path);
     const clash = index.taken(to.tree, newTitle, id);

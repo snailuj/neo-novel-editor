@@ -28,6 +28,20 @@ const fs = require('node:fs');
 let s = '';
 process.stdin.on('data', (d) => (s += d)).on('end', () => {
   fs.appendFileSync(${JSON.stringify(path.join(dir, 'calls.txt'))}, 'x');
+  if (s.includes('Find where each entry starts')) {
+    // Every block starts an entry, titled by its text.
+    const starts = [...s.matchAll(/<block id="(b\\d+)"[^>]*>\\n([^\\n]*)/g)].map(([, id, text]) => ({ start: id, title: text, summary: 's' }));
+    process.stdout.write(JSON.stringify(starts));
+    return;
+  }
+  if (s.includes('Group the entries')) {
+    // Entries about an otter share a topic; the rest stand alone.
+    const ids = [...s.matchAll(/<entry id="(e\\d+)"[^>]*title="([^"]*)"/g)];
+    const otters = ids.filter(([, , t]) => /otter/i.test(t)).map(([, id]) => id);
+    const rest = ids.filter(([, , t]) => !/otter/i.test(t)).map(([, id, t]) => ({ name: t, entries: [id] }));
+    process.stdout.write(JSON.stringify([...(otters.length ? [{ name: 'Otters', entries: otters }] : []), ...rest]));
+    return;
+  }
   const out = [...s.matchAll(/<block id="(b\\d+)" heading="([^"]*)"[^>]*>\\n([\\s\\S]*?)\\n<\\/block>/g)].map(([, id, h, text]) => ({
     id, label: /otter/i.test(text) ? 'writing' : /Morning Pages/.test(h) ? 'morning-pages' : 'tasks', pasted: false, reason: 'stub',
   }));
@@ -137,4 +151,150 @@ test('text repeated across pages goes to the wiki once', async () => {
   await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, 'Scratch.md', 'Copy.md'], dir);
   const rows = readSheet(readFileSync(sheet, 'utf8'));
   assert.deepEqual(rows.filter((r) => r.preview === 'The otter again.').map((r) => [r.page, r.wiki]), [['Scratch.md', 'yes'], ['Copy.md', 'no']]);
+});
+
+test('group cuts classified pages into entries and topics, once unless asked again', async () => {
+  const { dir, vault, judge } = setup();
+  writeFileSync(path.join(vault, 'Scratch.md'), 'The otter again.\n\n- [ ] Shop\n\nA second otter.');
+  const sheet = path.join(dir, 'sheet.csv');
+  await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, 'Scratch.md'], dir);
+  const calls = () => readFileSync(path.join(dir, 'calls.txt'), 'utf8').length;
+  const before = calls();
+
+  const r = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Scratch.md'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(calls() - before, 3, 'one entry call, two topic votes');
+  const rows = readSheet(readFileSync(sheet, 'utf8'));
+  assert.deepEqual(rows.map((x) => [x.entry, x.topic, x.topic_by, x.wiki_page]), [
+    ['e1', 'Otters', 'judge', 'Scratch-Otters-(snippets)'],
+    ['e2', '- [ ] Shop', 'judge', ''],
+    ['e3', 'Otters', 'judge', 'Scratch-Otters-(snippets)'],
+  ]);
+  const text = readFileSync(path.join(dir, 'outlines', 'Scratch.md'), 'utf8');
+  assert.match(text, /## Otters \(2 entries\)/);
+  assert.match(r.stdout, /Grouped 1 of 1 pages/);
+
+  await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Scratch.md'], dir);
+  assert.equal(calls() - before, 3, 'a grouped page is left alone');
+  await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, '--redo', 'Scratch.md'], dir);
+  assert.equal(calls() - before, 6, '--redo groups it again');
+});
+
+test('group needs a judge and a page classified as it now stands', async () => {
+  const { dir, vault, judge } = setup();
+  const sheet = path.join(dir, 'sheet.csv');
+  await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, 'Scratch.md'], dir);
+  assert.equal((await run(['group', '--vault', vault, '--sheet', sheet, 'Scratch.md'], dir)).code, 2);
+  const unknown = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Daily/2026-01-01.md'], dir);
+  assert.equal(unknown.code, 3);
+  assert.match(unknown.stderr, /classify it first/);
+  writeFileSync(path.join(vault, 'Scratch.md'), 'The otter, changed.\n\n- [ ] Shop');
+  const changed = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Scratch.md'], dir);
+  assert.equal(changed.code, 3);
+  assert.match(changed.stderr, /classify it again first/);
+  writeFileSync(path.join(vault, 'Scratch.md'), 'The otter again.');
+  const shrunk = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Scratch.md'], dir);
+  assert.equal(shrunk.code, 3, 'a block gone from the page counts as a change too');
+  assert.match(shrunk.stderr, /classify it again first/);
+});
+
+test('when the outline cannot be written the page is not marked grouped', async () => {
+  const { dir, vault, judge } = setup();
+  const sheet = path.join(dir, 'sheet.csv');
+  await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, 'Scratch.md'], dir);
+  mkdirSync(path.join(dir, 'outlines', 'Scratch.md'), { recursive: true }); // a folder where the file should go
+  const r = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Scratch.md'], dir);
+  assert.equal(r.code, 3);
+  assert.ok(readSheet(readFileSync(sheet, 'utf8')).every((x) => x.entry === ''), 'a re-run will group it');
+  // A page grouped after it saves the sheet, but not the failed page's grouping.
+  await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, '--pages', 'pages.txt'], dir);
+  const both = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Scratch.md', 'Daily/2026-01-01.md'], dir);
+  assert.equal(both.code, 3);
+  const rows = readSheet(readFileSync(sheet, 'utf8'));
+  assert.ok(rows.filter((x) => x.page === 'Scratch.md').every((x) => x.entry === ''));
+  assert.ok(rows.filter((x) => x.page !== 'Scratch.md').every((x) => x.entry !== ''));
+});
+
+test('each page gets its own outline, in the folders the page sits in', async () => {
+  const { dir, vault, judge } = setup();
+  mkdirSync(path.join(vault, 'A'));
+  writeFileSync(path.join(vault, 'A', 'B.md'), 'An otter in a folder.');
+  writeFileSync(path.join(vault, 'A - B.md'), 'An otter beside it.');
+  const sheet = path.join(dir, 'sheet.csv');
+  await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, 'A/B.md', 'A - B.md'], dir);
+  const r = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'A/B.md', 'A - B.md'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(readFileSync(path.join(dir, 'outlines', 'A', 'B.md'), 'utf8'), /in a folder/);
+  assert.match(readFileSync(path.join(dir, 'outlines', 'A - B.md'), 'utf8'), /beside it/);
+});
+
+test('a failed outline write leaves the last outline whole', async () => {
+  const { dir, vault, judge } = setup();
+  const sheet = path.join(dir, 'sheet.csv');
+  await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, 'Scratch.md'], dir);
+  await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Scratch.md'], dir);
+  const file = path.join(dir, 'outlines', 'Scratch.md');
+  const last = readFileSync(file, 'utf8');
+  mkdirSync(`${file}.tmp`); // the temporary file cannot be written
+  const r = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, '--redo', 'Scratch.md'], dir);
+  assert.equal(r.code, 3);
+  assert.equal(readFileSync(file, 'utf8'), last);
+});
+
+test('a page name that only starts with two dots still gets its outline', async () => {
+  const { dir, vault, judge } = setup();
+  writeFileSync(path.join(vault, '..draft.md'), 'An otter, dotted.');
+  const sheet = path.join(dir, 'sheet.csv');
+  await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, '..draft.md'], dir);
+  const r = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, '..draft.md'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(readFileSync(path.join(dir, 'outlines', '..draft.md'), 'utf8'), /dotted/);
+});
+
+test('group counts a block moved under another heading as a change', async () => {
+  const { dir, vault, judge } = setup();
+  writeFileSync(path.join(vault, 'Scratch.md'), '## Ideas\nThe otter again.\n\n## Shopping\n- [ ] Shop');
+  const sheet = path.join(dir, 'sheet.csv');
+  await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, 'Scratch.md'], dir);
+  writeFileSync(path.join(vault, 'Scratch.md'), '## Ideas\n\n## Shopping\nThe otter again.\n\n- [ ] Shop');
+  const moved = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Scratch.md'], dir);
+  assert.equal(moved.code, 3);
+  assert.match(moved.stderr, /classify it again first/);
+  await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, 'Scratch.md'], dir);
+  const again = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Scratch.md'], dir);
+  assert.equal(again.code, 0, again.stderr);
+});
+
+test('a page that cannot be read is counted, and the pages after it still run', async () => {
+  const { dir, vault, judge } = setup();
+  const sheet = path.join(dir, 'sheet.csv');
+  await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, 'Scratch.md', 'Daily/2026-01-01.md'], dir);
+  rmSync(path.join(vault, 'Scratch.md'));
+  mkdirSync(path.join(vault, 'Scratch.md')); // there, but not a file
+  const grouped = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, 'Scratch.md', 'Daily/2026-01-01.md'], dir);
+  assert.equal(grouped.code, 3);
+  assert.match(grouped.stdout, /Grouped 1 of 2 pages/);
+  assert.ok(readSheet(readFileSync(sheet, 'utf8')).filter((x) => x.page !== 'Scratch.md').every((x) => x.entry !== ''));
+  const classified = await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, 'Scratch.md', 'Daily/2026-01-01.md'], dir);
+  assert.equal(classified.code, 3);
+  assert.match(classified.stderr, /Scratch\.md/);
+});
+
+test('pages outside the vault are refused before they are read', async () => {
+  const { dir, vault, judge } = setup();
+  writeFileSync(path.join(dir, 'outside.md'), 'An otter outside.');
+  const sheet = path.join(dir, 'sheet.csv');
+  const classified = await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, 'Scratch.md', '../outside.md'], dir);
+  assert.equal(classified.code, 3);
+  assert.match(classified.stderr, /\.\.\/outside\.md: outside the vault/);
+  const rows = readSheet(readFileSync(sheet, 'utf8'));
+  assert.ok(!rows.some((x) => x.page === '../outside.md'));
+  // A row someone wrote by hand is refused too, and nothing of the page reaches the judge.
+  writeFileSync(sheet, writeSheet([...rows, { ...rows[0]!, page: '../outside.md' }]));
+  const calls = () => readFileSync(path.join(dir, 'calls.txt'), 'utf8').length;
+  const before = calls();
+  const grouped = await run(['group', '--vault', vault, '--sheet', sheet, '--judge', judge, '../outside.md'], dir);
+  assert.equal(grouped.code, 3);
+  assert.match(grouped.stderr, /outside the vault/);
+  assert.equal(calls(), before);
 });
