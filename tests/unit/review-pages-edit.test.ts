@@ -13,6 +13,8 @@
 // - Author-Save-Frees-A-Held-Page: an author save of a held page frees it, and the next
 //   checkpoint commits it as the author's; a librarian edit, or an author save that
 //   was refused, does not say the author saved;
+// - Refused-Edit-Keeps-Earlier-Hold: a refused librarian edit never frees a hold that
+//   existed before it;
 // - Author-Edits-Both-Trees: an author edit lands in either tree;
 // - Edit-Needs-Current-Page: an edit lands only while the file holds what the caller read;
 // - Owners-List-Only-Librarian: review.owners names the librarian's pages among those asked.
@@ -183,6 +185,20 @@ test('Author-Save-Frees-A-Held-Page: a librarian edit and a refused author save 
   assert.deepEqual(await editPage(hooked, { page: OURS, before: BEFORE, after: AFTER, as: 'author' }), { ok: false, reason: 'stale' });
   assert.deepEqual(await editPage(hooked, { page: 'wiki/Gone.html', before: BEFORE, after: AFTER, as: 'author' }), { ok: false, reason: 'missing' });
   assert.deepEqual(saved, []);
+});
+
+test('Refused-Edit-Keeps-Earlier-Hold: a librarian edit to a page the gate already holds is refused, and the hold stays', async (t) => {
+  const { o, gate, page, CHANGED, history } = await heldPage(t);
+  const was = await history();
+  const lines: string[] = [];
+  const logged = { ...o, log: (_level: string, message: string) => { lines.push(message); } };
+  // an edit the gate would refuse again: putting it back must not hand the writer's held text to their commits
+  const written = await editPage(logged, { page: OURS, before: CHANGED, after: '<p data-block="b 3">Again.</p>', as: 'librarian' });
+  assert.deepEqual(written, { ok: false, reason: 'held' });
+  assert.deepEqual(gate.held(), [OURS]);
+  assert.equal(page(OURS), CHANGED);
+  assert.deepEqual(await history(), was, 'no commit was made');
+  assert.ok(lines.some((l) => /still holds the page/.test(l)), JSON.stringify(lines));
 });
 
 test('Author-Edits-Both-Trees: an author edit to a sources page lands', async (t) => {

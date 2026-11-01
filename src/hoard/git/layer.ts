@@ -80,6 +80,12 @@ export class GitLayer {
     this.#gate = gate;
   }
 
+  /** Those of `paths` the gate holds out of the writer's commits. */
+  held(paths: readonly string[]): string[] {
+    const held = new Set(this.#gate?.held());
+    return paths.filter((rel) => held.has(rel));
+  }
+
   /** Refused librarian edit's paths, put back: the writer's commits take them again. */
   release(paths: readonly string[]): void {
     this.#gate?.release(paths);

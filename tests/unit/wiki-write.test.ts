@@ -5,6 +5,7 @@
 // - a change the pre-commit gate refuses leaves the page as it was, and out of history;
 // - a refused change whose restore fails stays held and is reported as an error, and a newer
 //   file is not written over;
+// - a refused librarian change never frees a hold that existed before it;
 // - the writer's own change is left for the next checkpoint, as their typing is;
 // - a page the wiki does not list is not written.
 import assert from 'node:assert/strict';
@@ -93,7 +94,7 @@ test('a refused change whose restore fails stays held and is reported as an erro
     const r = await fn();
     writeFileSync(path.join(library, PAGE), changed);
     return r;
-  })) as typeof layer.around, wrote: layer.wrote.bind(layer), release: layer.release.bind(layer) };
+  })) as typeof layer.around, wrote: layer.wrote.bind(layer), release: layer.release.bind(layer), held: layer.held.bind(layer) };
   const log = (level: string, _message: string, data?: unknown) => { logged.push({ level, data }); };
   await assert.rejects(writePage({ ...options, layer: wrapped, log }, { chId: 'c1', before: BEFORE, after: bad, as: 'librarian' }));
   assert.deepEqual(gate.held(), [PAGE], 'the page is still held');
@@ -101,11 +102,30 @@ test('a refused change whose restore fails stays held and is reported as an erro
   assert.ok(logged.some((l) => l.level === 'error' && (l.data as { chId?: string }).chId === 'c1'), JSON.stringify(logged));
 });
 
+test('a librarian change to a page the gate already holds is refused, and the hold stays', async (t) => {
+  const { options, layer, library, page } = await wiki(t);
+  const gate = new Gate({ library: () => library, log: () => {} });
+  layer.useGate(gate);
+  const bad = '<p data-block="b 1">The quay is very old.</p>';
+  const changed = '<p data-block="b 2">Changed meanwhile.</p>';
+  // the first refusal cannot be put back: another device rewrote the page after the swap
+  const wrapped = { ...layer, around: (async (paths: readonly string[], fn: () => Promise<unknown>) => layer.around(paths, async () => {
+    const r = await fn();
+    writeFileSync(path.join(library, PAGE), changed);
+    return r;
+  })) as typeof layer.around, wrote: layer.wrote.bind(layer), release: layer.release.bind(layer), held: layer.held.bind(layer) };
+  await assert.rejects(writePage({ ...options, layer: wrapped, log: () => {} }, { chId: 'c1', before: BEFORE, after: bad, as: 'librarian' }));
+  assert.deepEqual(gate.held(), [PAGE]);
+  assert.deepEqual(await writePage({ ...options, log: () => {} }, { chId: 'c1', before: changed, after: bad, as: 'librarian' }), { ok: false, reason: 'held' });
+  assert.deepEqual(gate.held(), [PAGE]);
+  assert.equal(page(), changed);
+});
+
 test('the writer\'s own change is written and left for the next checkpoint', async (t) => {
   const { options, page, history } = await wiki(t);
   const was = await history();
   const told: (string | undefined)[] = [];
-  const layer = { around: () => { throw new Error('the writer\'s change is no librarian edit'); }, wrote: (name?: string) => { told.push(name); }, release: () => {} };
+  const layer = { around: () => { throw new Error('the writer\'s change is no librarian edit'); }, wrote: (name?: string) => { told.push(name); }, release: () => {}, held: () => [] };
   assert.deepEqual(await writePage({ ...options, layer }, { chId: 'c1', before: BEFORE, after: AFTER, as: 'author' }), { ok: true });
   assert.equal(page(), AFTER);
   assert.deepEqual(told, ['book-fox-1']);
