@@ -291,3 +291,33 @@ test('a different rename started while one is unfinished finishes the first', as
   assert.equal(left.has('wiki/Beacon.html'), true);
   assert.equal(left.has('.neo/pages/.rename.json'), false);
 });
+
+// Rule: a write acknowledged as landed is never undone by a rename running beside it.
+test('a write sent while a rename runs is never acknowledged and then written over', async (t) => {
+  const big = `<p>[[Harbour]]</p>${'<p>filler text</p>'.repeat(50000)}`;
+  for (let round = 0; round < 5; round++) {
+    let sent: Promise<unknown> | null = null;
+    const lib = pagesLibrary(t, { onStep: (step: string) => { if (step === 'move' && !sent) sent = lib.store.write('wiki/Index.html', big, `${big}<p>TYPED</p>`); } });
+    lib.put('wiki/Harbour.html', '<p>h</p>');
+    lib.put('wiki/Index.html', big);
+    await lib.store.rename('wiki/Harbour.html', 'Port.html', null);
+    assert.ok(sent, 'the write was sent part way through the rename');
+    const written = await sent;
+    const now = lib.get('wiki/Index.html');
+    assert.ok(now.startsWith('<p>[[Port]]</p>'), 'the rename rewrote the link');
+    if ((written as { ok: boolean }).ok) assert.ok(now.includes('TYPED'), `round ${round}: an acknowledged write was lost`);
+    else assert.deepEqual(written, { ok: false, reason: 'stale' }, 'the writer is told the page moved on');
+  }
+});
+
+// Rule: a rename writes a file only while it still holds what the rename read.
+test('a rename leaves alone a file changed from outside after it was read, and logs it', async (t) => {
+  const { store, get, put, logged } = fixture(t, {
+    onStep: (step: string, file: string) => { if (step === 'rewrite' && file === 'wiki/Index.html') put('wiki/Index.html', '<p>[[Harbour]] typed elsewhere</p>'); },
+  });
+  const done = await store.rename(FROM, 'Places/Port.html', null);
+  assert.equal(get('wiki/Index.html'), '<p>[[Harbour]] typed elsewhere</p>', 'the outside change stands');
+  assert.equal(get('sources/Notes.html'), '<p>See [[Port|x]].</p>', 'the other files were rewritten');
+  assert.equal(done.rewrittenFiles, 4);
+  assert.deepEqual(logged('pages.rename.changed').map((l) => (l.data as { file: string }).file), ['wiki/Index.html']);
+});

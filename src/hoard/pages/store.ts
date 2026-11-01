@@ -8,7 +8,7 @@
 // caller read (the rule wiki/write.ts keeps), so a change that arrived from another device
 // is never written over. Every refusal is logged; every request names its page by an id
 // that identity.ts has checked, so no path leaves its tree.
-import { existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import { opendir, readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { validateHoardRenameV1 } from '../../generated/validators.cjs';
@@ -71,6 +71,13 @@ export interface Renamed {
 const JOURNAL = '.neo/pages/.rename.json';
 const CHAPTER = /^(book-[^/]+)\/chapters\/([^/]+)\.html$/;
 const sidecarOf = (id: string) => `.neo/pages/${id}.json`;
+const readNow = (file: string): string | null => {
+  try {
+    return readFileSync(file, 'utf8');
+  } catch {
+    return null;
+  }
+};
 const sameFile = (a: string, b: string) => {
   const [x, y] = [statSync(a), statSync(b)];
   return x.ino === y.ino && x.dev === y.dev;
@@ -167,7 +174,7 @@ export class PageStore {
   }
 
   write(id: string, before: string, after: string): Promise<Written> {
-    return this.op('write', async () => {
+    return this.#serial(() => this.op('write', async () => {
       const ref = parseId(id);
       const file = this.file(ref);
       const now = await readFile(file, 'utf8').catch(() => null);
@@ -184,7 +191,7 @@ export class PageStore {
       }
       this.o.log('info', 'pages.write', { id, bytes: Buffer.byteLength(after), changed: after !== now });
       return { ok: true };
-    });
+    }));
   }
 
   /** Refuses a title no link could name; the title is the file name without .html. */
@@ -197,7 +204,7 @@ export class PageStore {
   }
 
   create(tree: Tree, pagePath: string, html: string): Promise<PageEntry> {
-    return this.op('create', async () => {
+    return this.#serial(() => this.op('create', async () => {
       const ref = parseId(`${tree}/${checkPath(pagePath)}`);
       const title = this.checkTitle(ref.path);
       const clash = titleIndex(await this.#scan()).taken(ref.tree, title);
@@ -209,10 +216,11 @@ export class PageStore {
       const s = await stat(this.file(ref));
       this.o.log('info', 'pages.create', { id: idOf(ref), bytes: s.size });
       return { id: idOf(ref), tree: ref.tree, path: ref.path, title, size: s.size, mtime: s.mtimeMs };
-    });
+    }));
   }
 
-  // Renames run one at a time: each reads the library the last one left.
+  // Writes, creates and renames run one at a time: each reads the library the last one
+  // left, so a write cannot land between a rename's read of a file and its rewrite.
   #serial<T>(run: () => Promise<T>): Promise<T> {
     const next = this.#tail.then(run);
     this.#tail = next.catch(() => {});
@@ -401,6 +409,11 @@ export class PageStore {
       result.skipped += out.skipped;
       if (out.html === html) continue;
       step?.('rewrite', rel);
+      // another device, or an editor outside NEO, may have written the file since it was read
+      if (readNow(abs(rel)) !== html) {
+        this.o.log('warn', 'pages.rename.changed', { file: rel, reason: 'the file changed after the rename read it, so its links are left' });
+        continue;
+      }
       writeWhole(abs(rel), out.html);
       result.rewrittenFiles++;
       result.rewrittenLinks += out.rewritten;
