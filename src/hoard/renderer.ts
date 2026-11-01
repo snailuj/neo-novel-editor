@@ -63,7 +63,7 @@ NeoPlugins.register({
       bookId: () => wiki.pages()?.bookId ?? null,
       show: (chId, at) => wiki.pane.open(chId, at ?? undefined),
     });
-    const companion = startCompanion(neo, { marks, wiki: () => wiki.pages() });
+    const companion = startCompanion(neo, { marks, wikiBook: () => wiki.pages()?.bookId ?? null, pages: () => neo.invoke('pages.list') as Promise<{ id: string; tree: string; title: string }[]> });
     const ripple = startRipple(neo, { wikiId: () => wiki.pages()?.bookId ?? null, show: async (chId) => { await wiki.reindex(); await wiki.pane.open(chId); } });
     Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, librarian, review, paneMarks, search, companion, ripple }) });
   },
