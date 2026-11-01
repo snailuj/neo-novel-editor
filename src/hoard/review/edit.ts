@@ -33,10 +33,11 @@ export type Edited = Written | { ok: false; reason: 'owned' };
 /**
  * Runs `swap` (which writes `paths` and returns why it could not, or null) between the
  * librarian's two commits. A gate refusal calls `restore` and answers 'refused'; any
- * other error goes on.
+ * other error goes on. A restored file is released from the gate's hold; a `restore` that
+ * throws leaves it held and the error goes on.
  */
 export async function asLibrarian(
-  o: { layer: Pick<GitLayer, 'around'>; log: Log },
+  o: { layer: Pick<GitLayer, 'around' | 'release'>; log: Log },
   label: string,
   subject: Record<string, unknown>,
   paths: readonly string[],
@@ -51,6 +52,7 @@ export async function asLibrarian(
   } catch (err) {
     if (!(err instanceof GateRefused)) throw err;
     await restore();
+    o.layer.release(paths); // the gate holds a refused file until the writer saves it; put back, it is theirs again
     o.log('warn', `${label}: the library check refused the librarian's change, so the page is as it was`, { ...subject, findings: err.findings });
     return { ok: false, reason: 'refused', findings: err.findings };
   }
@@ -69,7 +71,7 @@ export interface PageEdit {
 export interface PageEditorOptions {
   library(): string;
   store: Pick<PageStore, 'write'>;
-  layer: Pick<GitLayer, 'around'>;
+  layer: Pick<GitLayer, 'around' | 'release'>;
   log: Log;
 }
 
@@ -90,7 +92,14 @@ export async function editPage(o: PageEditorOptions, ask: PageEdit): Promise<Edi
     o.log('warn', 'pages.edit: the librarian writes only its own wiki pages, so the page is as it was', { page });
     return { ok: false, reason: 'owned' };
   }
-  return asLibrarian(o, 'pages.edit', { page }, [page], swap, async () => { await o.store.write(page, after, before); });
+  const restore = async (): Promise<void> => {
+    const put = await o.store.write(page, after, before);
+    if (put.ok) return;
+    // The page is no longer what the swap wrote, so the refused text may still be on disk: it stays held.
+    o.log('error', 'pages.edit: the refused librarian change could not be put back, so the page stays held', { page, reason: put.reason });
+    throw new Error(`pages.edit: could not put ${page} back after the library check refused the change (${put.reason})`);
+  };
+  return asLibrarian(o, 'pages.edit', { page }, [page], swap, restore);
 }
 
 const CHUNK = 64;

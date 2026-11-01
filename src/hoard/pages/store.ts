@@ -8,7 +8,7 @@
 // caller read (the rule wiki/write.ts keeps), so a change that arrived from another device
 // is never written over. Every refusal is logged; every request names its page by an id
 // that identity.ts has checked, so no path leaves its tree.
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
 import { opendir, readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { validateHoardRenameV1 } from '../../generated/validators.cjs';
@@ -16,8 +16,8 @@ import type { HoardRenameV1 } from '../../generated/hoard-rename-v1.js';
 import { key } from '../../librarian/links.ts';
 import { booksWithOwnRepo } from '../git/commit.ts';
 import type { GitLayer } from '../git/layer.ts';
-import { writeWhole } from '../files.ts';
-import { checkPath, idOf, PageRefused, parseId, titleOf, TREES, type PageRef, type Tree } from './identity.ts';
+import { linkProblem, writeWhole } from '../files.ts';
+import { checkPath, idOf, marksOf, PageRefused, parseId, titleOf, TREES, type PageRef, type Tree } from './identity.ts';
 import { editsFor, rewriteHtml, type Retarget, type WindowEdit } from './rewrite.ts';
 import { Titles } from './titles.ts';
 
@@ -29,7 +29,7 @@ export interface PageStoreOptions {
   layer?: Pick<GitLayer, 'around' | 'wrote'>;
   log: (level: Level, message: string, data?: unknown) => void;
   /** Told before each step of a rename, so a test can stop it part way; the step may throw. */
-  onStep?: (step: 'journal' | 'move' | 'sidecar' | 'rewrite', file: string) => void;
+  onStep?: (step: 'journal' | 'move' | 'sidecar' | 'marks' | 'rewrite', file: string) => void;
 }
 
 export interface PageEntry {
@@ -117,20 +117,9 @@ export class PageStore {
     } catch {
       return file; // no tree yet, so nothing in it can lead out
     }
-    const refuse = (why: string) => new PageRefused('unsafe', `${idOf(ref)} is not a page path: ${why}`);
-    for (let probe = file; ; probe = path.dirname(probe)) {
-      let real: string;
-      try {
-        real = realpathSync(probe);
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        if (code !== 'ENOENT' && code !== 'ENOTDIR') throw err;
-        if (lstatSync(probe, { throwIfNoEntry: false })) throw refuse('it goes through a link that leads nowhere');
-        continue;
-      }
-      if (real !== root && !real.startsWith(root + path.sep)) throw refuse('a link in it leads out of its tree');
-      return file;
-    }
+    const problem = linkProblem(root, file);
+    if (problem) throw new PageRefused('unsafe', `${idOf(ref)} is not a page path: ${problem === 'out' ? 'a link in it leads out of its tree' : 'it goes through a link that leads nowhere'}`);
+    return file;
   }
 
   /** Runs one request, logging it if it is refused. */
@@ -468,6 +457,8 @@ export class PageStore {
       if (there(plan.from)) named.add(plan.from);
       if (there(sidecarOf(plan.from))) named.add(sidecarOf(plan.from));
       if (there(sidecarOf(plan.from)) || there(sidecarOf(plan.to))) named.add(sidecarOf(plan.to));
+      if (there(marksOf(plan.from))) named.add(marksOf(plan.from));
+      if (there(marksOf(plan.from)) || there(marksOf(plan.to))) named.add(marksOf(plan.to));
     }
     for (const rel of plan.files) if (rel === plan.to || there(rel)) named.add(rel);
     // a note left by a stopped run is committed with the writer's pending work first; its removal belongs to this commit
@@ -532,6 +523,12 @@ export class PageStore {
     if (plan.from !== plan.to && existsSync(sideFrom)) {
       step?.('sidecar', sideFrom);
       this.#moveFile(sideFrom, sideTo);
+    }
+    // the page's marks follow it; the same rule as its sidecar, so a run that stopped after either is finished by the next
+    const [marksFrom, marksTo] = [abs(marksOf(plan.from)), abs(marksOf(plan.to))];
+    if (plan.from !== plan.to && existsSync(marksFrom)) {
+      step?.('marks', marksFrom);
+      this.#moveFile(marksFrom, marksTo);
     }
     const retarget = this.#retarget(titleOf(parseId(plan.from).path), titleOf(parseId(plan.to).path));
     for (const rel of plan.files) {

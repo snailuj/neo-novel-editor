@@ -3,9 +3,10 @@
 // - a sidecar that does not read as the schema says is never written over;
 // - each action reads the file afresh, so what another device wrote is kept;
 // - actions on one file run one at a time, so none is lost;
+// - page marks never read or write through a link that leaves .neo/marks;
 // - reading never writes, and the main half, not the window, says when and by whom.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import type { Mark } from '../../src/generated/hoard-marks-v1.js';
@@ -227,4 +228,31 @@ test('a page sidecar that does not read is reported and never written over', asy
     assert.equal(readFileSync(file, 'utf8'), junk);
   }
   assert.ok(lines.some((l) => l.level === 'error' && /Harbour\.html\.json/.test(String(l.message) + JSON.stringify(l.data))));
+});
+
+// Rule: page marks never read or write through a link that leaves .neo/marks.
+test('page marks are not read or written through a link that leaves .neo/marks', async (t) => {
+  const { library, store, lines } = storeFor(t);
+  const outside = path.join(library, 'outside');
+  mkdirSync(outside, { recursive: true });
+  mkdirSync(path.join(library, '.neo', 'marks', 'wiki'), { recursive: true });
+  const theirs = JSON.stringify({ version: 1, marks: [] });
+  writeFileSync(path.join(outside, 'Leak.html.json'), theirs);
+  symlinkSync(outside, path.join(library, '.neo', 'marks', 'wiki', 'link'), 'junction');
+  symlinkSync(path.join(outside, 'Nowhere.json'), path.join(library, '.neo', 'marks', 'wiki', 'Gone.html.json'));
+  assert.ok(existsSync(path.join(library, '.neo', 'marks', 'wiki', 'link', 'Leak.html.json')), 'the link leads out');
+  const unsafe = (e: unknown) => e instanceof PageRefused && e.code === 'unsafe';
+
+  await assert.rejects(store.list('wiki/link/Leak.html'), unsafe);
+  await assert.rejects(store.add({ page: 'wiki/link/Leak.html', kind: 'comment', anchor, body: 'x' }, 'author'), unsafe);
+  await assert.rejects(store.add({ page: 'wiki/link/deeper/New.html', kind: 'comment', anchor, body: 'x' }, 'author'), unsafe);
+  await assert.rejects(store.add({ page: 'wiki/Gone.html', kind: 'comment', anchor, body: 'x' }, 'author'), unsafe, 'a link that leads nowhere');
+  await assert.rejects(store.list('wiki/Gone.html'), unsafe);
+  assert.deepEqual(readdirSync(outside).sort(), ['Leak.html.json'], 'nothing was written outside');
+  assert.equal(readFileSync(path.join(outside, 'Leak.html.json'), 'utf8'), theirs);
+  assert.ok(lines.some((l) => l.level === 'warn' && /marks/.test(l.message)), JSON.stringify(lines));
+
+  assert.deepEqual(await store.list('wiki/Fine.html'), [], 'a page beside the links is read');
+  await store.add({ page: 'wiki/Fine.html', kind: 'comment', anchor, body: 'ok' }, 'author');
+  assert.equal((await store.list('wiki/Fine.html')).length, 1, 'and written');
 });

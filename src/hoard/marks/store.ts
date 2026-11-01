@@ -9,12 +9,12 @@
 // crash leaves the old file or the new one. Actions on one file wait for each other.
 // A file that does not read as the schema says is reported and left alone: no action
 // writes over it until someone mends it. Reading never writes.
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import type { HoardMarksV1, Mark, MarkAnchor, MarkKind, MarkState, MarkWho } from '../../generated/hoard-marks-v1.js';
 import { validateHoardMarksV1 } from '../../generated/validators.cjs';
-import { oneName, writeWhole } from '../files.ts';
-import { parseId } from '../pages/identity.ts';
+import { linkProblem, oneName, writeWhole } from '../files.ts';
+import { marksOf, PageRefused } from '../pages/identity.ts';
 import { isSuggestion, newMark, reply, transition } from './model.ts';
 
 type Level = 'error' | 'warn' | 'info' | 'debug';
@@ -82,8 +82,7 @@ export function sidecarPath(library: string, bookId: string, chId: string): stri
 
 /** A page's sidecar; throws PageRefused for an id that is not a safe page id. */
 export function pageSidecarPath(library: string, page: string): string {
-  const ref = parseId(page);
-  return path.join(library, '.neo', 'marks', ref.tree, ...ref.path.split('/')) + '.json';
+  return path.join(library, ...marksOf(page).split('/'));
 }
 
 const fileOf = (library: string, target: MarkTarget) =>
@@ -202,7 +201,26 @@ export class MarkStore {
     return next;
   }
 
+  // Page marks live under .neo/marks, and a link in that folder could lead a read or a write
+  // out of the library. Like a page file (PageStore.inside), the real path of the nearest part
+  // that exists must stay inside it. A chapter's sidecar is not under it and is not looked at.
+  #contained(file: string): void {
+    const dir = path.join(this.#o.library(), '.neo', 'marks');
+    if (path.relative(dir, file).startsWith('..')) return;
+    let root: string;
+    try {
+      root = realpathSync(dir);
+    } catch {
+      return; // no folder yet, so nothing in it can lead out
+    }
+    const problem = linkProblem(root, file);
+    if (!problem) return;
+    this.#o.log('warn', 'marks.refused', { file, reason: problem });
+    throw new PageRefused('unsafe', `${file} is not a marks path: ${problem === 'out' ? 'a link in it leads out of .neo/marks' : 'it goes through a link that leads nowhere'}`);
+  }
+
   #read(file: string): HoardMarksV1 {
+    this.#contained(file);
     if (!existsSync(file)) return { version: 1, marks: [] };
     let data: unknown;
     try {
@@ -224,6 +242,7 @@ export class MarkStore {
   }
 
   #write(file: string, marks: Mark[], trace: Record<string, unknown>): void {
+    this.#contained(file);
     const data: HoardMarksV1 = { version: 1, marks };
     if (!validateHoardMarksV1(data)) throw new TypeError(`marks: refusing to write ${file}: ${JSON.stringify(validateHoardMarksV1.errors)}`);
     writeWhole(file, `${JSON.stringify(data, null, 2)}\n`);
