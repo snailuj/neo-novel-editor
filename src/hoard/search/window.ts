@@ -40,6 +40,10 @@ const frames = (n: number) => new Promise<void>((resolve) => {
   next(n);
 });
 
+/** What a failed library search left unsearched, by scope. The book scope never asks the main half. */
+export const notSearched = (s: 'all' | 'pages' | 'book', why: string) =>
+  `The wiki and sources pages${s === 'all' ? ' and other books' : ''} were not searched: ${why}`;
+
 const count = (n: number) => n.toLocaleString('en');
 
 // The selection on the page, when it lies in one paragraph of the manuscript.
@@ -216,7 +220,7 @@ export function startSearch(neo: NeoApiV4, wiki: WikiSide) {
     }
     if (found?.cloud) lines.push(`${count(found.cloud)} file${found.cloud === 1 ? ' is' : 's are'} in iCloud and not on this computer yet, so not searched.`);
     if (found?.unreadable) lines.push(`${count(found.unreadable)} book${found.unreadable === 1 ? '' : 's'} could not be read.`);
-    if (failed) lines.push(`Other books were not searched: ${failed}`);
+    if (failed) lines.push(notSearched(s, failed));
     status.textContent = lines.join(' ');
   };
 
