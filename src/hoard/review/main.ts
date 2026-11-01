@@ -10,6 +10,7 @@ import { targeted, type MarkStore } from '../marks/store.ts';
 import type { PageStore } from '../pages/store.ts';
 import type { WikiStore } from '../wiki/store.ts';
 import { writePage } from '../wiki/write.ts';
+import type { AuthorSaved } from './saved.ts';
 import { editPage, librarianAmong, librarianInTree } from './edit.ts';
 import { librarianPages } from './owner.ts';
 import { validateHoardPagesEditV1, validateHoardReviewOwnersV1, validateHoardReviewVerdictV1, validateHoardWikiEditV1 } from '../../generated/validators.cjs';
@@ -24,7 +25,7 @@ function checked<T>(name: string, validate: Validator<T>, payload: unknown): T {
   return payload;
 }
 
-export function startReview(host: NeoMainHost, marks: MarkStore, o: { layer: GitLayer; wiki: WikiStore; pages: PageStore; authorSavedPage?: (page: string) => void }): void {
+export function startReview(host: NeoMainHost, marks: MarkStore, o: { layer: GitLayer; wiki: WikiStore; pages: PageStore; authorSavedPage?: AuthorSaved }): void {
   const log = host.log.bind(host);
   host.handle('wiki.edit', (payload) => writePage({
     library: () => host.paths.library(),
@@ -34,6 +35,7 @@ export function startReview(host: NeoMainHost, marks: MarkStore, o: { layer: Git
     },
     layer: o.layer,
     log,
+    saved: o.authorSavedPage,
   }, checked('wiki.edit', validateHoardWikiEditV1, payload)));
   host.handle('pages.edit', (payload) => editPage({
     library: () => host.paths.library(),

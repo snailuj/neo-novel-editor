@@ -32,6 +32,8 @@ export interface PageWriterOptions {
   listed(chId: string): { bookId: string } | null;
   layer: Pick<GitLayer, 'around' | 'wrote' | 'release' | 'held'>;
   log(level: 'error' | 'warn' | 'info' | 'debug', message: string, data?: unknown): void;
+  /** Told the book and chapter ids once the author's edit is written; never for the librarian's. */
+  saved?: (bookId: string, chId: string) => void;
 }
 
 export async function writePage(o: PageWriterOptions, ask: PageWrite): Promise<PageWritten> {
@@ -54,6 +56,7 @@ export async function writePage(o: PageWriterOptions, ask: PageWrite): Promise<P
     if (refused) return { ok: false, reason: refused };
     o.layer.wrote(bookId);
     o.log('info', 'wiki.edit', { chId, as: 'author' });
+    o.saved?.(bookId, chId);
     return { ok: true };
   }
 
