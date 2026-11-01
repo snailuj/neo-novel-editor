@@ -370,3 +370,19 @@ test('the record of finished renames keeps the last fifty', async (t) => {
   assert.equal(record.length, 50);
   assert.deepEqual(record[0], { from: 'wiki/P5.html', to: 'wiki/P6.html' });
 });
+
+// Rule: a rename never writes its note unless the target path is free on disk, whatever
+// the cached titles say, so a refused rename leaves nothing to block the next one.
+test('a rename onto a file that arrived by sync is refused as taken, leaves no note, and the next rename works', async (t) => {
+  const { store, put, get, has, logged } = fixture(t);
+  await store.list();
+  put('wiki/Places/Port.html', '<p>arrived from another device</p>');
+  await assert.rejects(store.rename(FROM, 'Places/Port.html', null), (e: PageRefused) => e.code === 'taken');
+  assert.equal(has('.neo/pages/.rename.json'), false, 'no note of a rename is left');
+  assert.equal(has(FROM), true);
+  assert.equal(get('wiki/Places/Port.html'), '<p>arrived from another device</p>');
+  assert.equal(get('wiki/Index.html'), INDEX);
+  assert.equal(logged('pages.refused').length, 1);
+  assert.equal((await store.rename(FROM, 'Places/Quay.html', null)).id, 'wiki/Places/Quay.html');
+  assert.equal(await store.recover(null), null);
+});

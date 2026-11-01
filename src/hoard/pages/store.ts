@@ -362,6 +362,11 @@ export class PageStore {
     const newTitle = this.checkTitle(to.path);
     const clash = index.taken(to.tree, newTitle, id);
     if (clash) throw new PageRefused('taken', `${JSON.stringify(newTitle)} is already a page in ${to.tree} (${clash.id})`);
+    // a file that arrived by sync since the titles were walked; a case-only rename on a
+    // case-folding disk finds its own file there, which is no clash
+    if (existsSync(this.file(to)) && !sameFile(this.file(from), this.file(to))) {
+      throw new PageRefused('taken', `${newId} is already a file on disk`);
+    }
     const plan: HoardRenameV1 = { version: 1, from: id, to: newId, files: [], at: new Date().toISOString() };
     if (newTitle === oldTitle) return plan;
 
