@@ -3,13 +3,20 @@
   "description": "A mark the writer makes from the window, version 1: a comment with its words, a highlight, or a suggestion (insertion, deletion or substitution) with the words it proposes. Only an insertion has an empty quote. The main half adds the time, the author and the commit, and the mark's model refuses proposed words where they do not belong or are missing.",
   "type": "object",
   "additionalProperties": false,
+  "oneOf": [
+    { "required": ["page"], "properties": { "page": true, "bookId": false, "chId": false } },
+    { "required": ["bookId", "chId"], "properties": { "bookId": true, "chId": true, "page": false } }
+  ],
   "required": [
-    "bookId",
-    "chId",
     "kind",
     "anchor"
   ],
   "properties": {
+    "page": {
+      "description": "A page's id, <tree>/<path>, in place of bookId and chId.",
+      "type": "string",
+      "pattern": "^(wiki|sources)/.+$"
+    },
     "bookId": {
       "type": "string",
       "minLength": 1

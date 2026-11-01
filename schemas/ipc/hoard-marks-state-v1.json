@@ -3,13 +3,20 @@
   "description": "The writer changes a mark's state from the window, version 1: resolves or reopens a comment or highlight, or accepts or withdraws (rejected) a suggestion. Flagging is the librarian's (hoard-review-verdict-v1). The mark's life decides which changes are allowed.",
   "type": "object",
   "additionalProperties": false,
+  "oneOf": [
+    { "required": ["page"], "properties": { "page": true, "bookId": false, "chId": false } },
+    { "required": ["bookId", "chId"], "properties": { "bookId": true, "chId": true, "page": false } }
+  ],
   "required": [
-    "bookId",
-    "chId",
     "markId",
     "state"
   ],
   "properties": {
+    "page": {
+      "description": "A page's id, <tree>/<path>, in place of bookId and chId.",
+      "type": "string",
+      "pattern": "^(wiki|sources)/.+$"
+    },
     "bookId": {
       "type": "string",
       "minLength": 1

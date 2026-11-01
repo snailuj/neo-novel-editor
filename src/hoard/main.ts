@@ -23,7 +23,7 @@ import { GitLayer, resolveSettings } from './git/layer.ts';
 import { startLibrarianPairs } from './git/librarian-main.ts';
 import { createGit } from './git/runner.ts';
 import { ATTRIBUTES } from './git/start.ts';
-import { MarkStore } from './marks/store.ts';
+import { MarkStore, targeted } from './marks/store.ts';
 import { startPages } from './pages/main.ts';
 import { startReview } from './review/main.ts';
 import { startRipple } from './ripple/main.ts';
@@ -108,10 +108,13 @@ function startMarks(host: NeoMainHost, layer: GitLayer): MarkStore {
     wrote: (name) => layer.wrote(name),
     log: host.log.bind(host),
   });
-  host.handle('marks.list', (payload) => store.list(checked('marks.list', validateHoardMarksListV1, payload).bookId));
-  host.handle('marks.add', (payload) => store.add(checked('marks.add', validateHoardMarksAddV1, payload), 'author'));
-  host.handle('marks.reply', (payload) => store.reply(checked('marks.reply', validateHoardMarksReplyV1, payload), 'author'));
-  host.handle('marks.state', (payload) => store.setState(checked('marks.state', validateHoardMarksStateV1, payload), 'author'));
+  host.handle('marks.list', (payload) => {
+    const { page, bookId } = checked('marks.list', validateHoardMarksListV1, payload);
+    return page !== undefined ? store.list(page) : store.listBook(bookId as string);
+  });
+  host.handle('marks.add', (payload) => store.add(targeted(checked('marks.add', validateHoardMarksAddV1, payload)), 'author'));
+  host.handle('marks.reply', (payload) => store.reply(targeted(checked('marks.reply', validateHoardMarksReplyV1, payload)), 'author'));
+  host.handle('marks.state', (payload) => store.setState(targeted(checked('marks.state', validateHoardMarksStateV1, payload)), 'author'));
   return store;
 }
 
@@ -224,5 +227,5 @@ export function activate(host: NeoMainHost): void {
   startSearch(host);
   const opened = layer.open().catch((err: unknown) => host.log('error', 'git.open failed', String(err)));
   const { store } = startPages(host, layer, opened);
-  startRipple(host, layer, store);
+  startRipple(host, layer, store, marks);
 }

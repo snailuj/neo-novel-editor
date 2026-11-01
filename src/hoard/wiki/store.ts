@@ -32,7 +32,7 @@ import { oneName, writeJson, writeWhole } from '../files.ts';
 import { anchorAt, anchorPoint } from '../marks/anchor.ts';
 import { newMark } from '../marks/model.ts';
 import type { MarkStore } from '../marks/store.ts';
-import { ownerOf } from '../review/owner.ts';
+import { ownerFromFrontmatter } from '../review/owner.ts';
 import { convertPage, pageHtml, type Block, type ConvertedPage } from './convert.ts';
 import { inline } from './inline.ts';
 
@@ -254,7 +254,7 @@ export class WikiStore {
     const chapterFile = (chId: string) => path.join(this.#library, bookId!, 'chapters', `${oneName(chId, 'chId')}.html`);
     if (this.#o.commit) {
       pages.forEach((page, n) => {
-        const theirs = ownerOf(page.page.frontmatter) === 'author';
+        const theirs = ownerFromFrontmatter(page.page.frontmatter) === 'author';
         writeWhole(chapterFile(chIds[n]!), theirs ? page.page.html : pageHtml(page.page.blocks, 'author'));
       });
       await this.#o.commit('author');

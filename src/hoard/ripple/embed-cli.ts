@@ -14,10 +14,10 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { writeWhole } from '../files.ts';
 import { PageStore } from '../pages/store.ts';
+import { ownerOf } from '../review/owner.ts';
 import { EmbedderMissing, GEMMA, loadEmbedder } from './embedder.ts';
 import { packetOf, rippleFiles } from './engine.ts';
 import { pagesCorpus, readLibrary } from './library.ts';
-import { shimOwnerOf } from './stage3-shim.ts';
 import { Rulings } from './rulings.ts';
 import type { Embed } from './shortlist.ts';
 
@@ -32,7 +32,7 @@ export interface TopUp {
 export async function topUp(library: string, embed: Embed, log: (message: string) => void = () => {}): Promise<TopUp> {
   const quiet = () => {};
   const store = new PageStore({ library: () => library, log: quiet });
-  const pages = await readLibrary({ root: library, store, ownerOf: shimOwnerOf(quiet), log: quiet });
+  const pages = await readLibrary({ root: library, store, ownerOf: (root, page) => ownerOf(root, page, quiet), log: quiet });
   if (!pages.pages.length) throw new Error(`${library} has no pages yet`);
   const state = new Rulings(() => library).read();
   const waiting = [...state.jobs.values()].filter((j) => j.state === 'packeted' && !existsSync(rippleFiles(library, j.id).answer));

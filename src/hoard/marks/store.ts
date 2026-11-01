@@ -1,6 +1,7 @@
 // The marks sidecars, on the main side. One file per chapter that has marks, at
 // .neo/<bookId>/chapters/<chId>.json, mirroring the chapter's own path as the spec has
-// it. The window never names a path, a time or an author: it sends ids and words, and
+// it, and one per page (wiki/ or sources/) that has marks, at .neo/marks/<tree>/<path>.json
+// with the page's .html kept in the name. A page is named by its id, <tree>/<path>. The window never names a path, a time or an author: it sends ids and words, and
 // this file decides the rest.
 //
 // Each action reads the file afresh, changes it and writes it whole (temporary file,
@@ -13,6 +14,7 @@ import path from 'node:path';
 import type { HoardMarksV1, Mark, MarkAnchor, MarkKind, MarkState, MarkWho } from '../../generated/hoard-marks-v1.js';
 import { validateHoardMarksV1 } from '../../generated/validators.cjs';
 import { oneName, writeWhole } from '../files.ts';
+import { parseId } from '../pages/identity.ts';
 import { isSuggestion, newMark, reply, transition } from './model.ts';
 
 type Level = 'error' | 'warn' | 'info' | 'debug';
@@ -29,15 +31,33 @@ export interface MarkStoreOptions {
 }
 
 interface ChapterIds { bookId: string; chId: string }
+interface PageTarget { page: string }
+/** Where marks live: a chapter of a book, or a page named by its id. */
+export type MarkTarget = ChapterIds | PageTarget;
 
-export interface AddRequest extends ChapterIds {
+const isPage = (target: MarkTarget): target is PageTarget => 'page' in target;
+const labelOf = (target: MarkTarget) => (isPage(target) ? target.page : `${target.bookId}/${target.chId}`);
+
+/**
+ * A validated request from the window names its place as page, or as bookId and chId
+ * (the schemas allow nothing else); this gives the store the one it was sent.
+ */
+export function targeted<R extends { page?: string; bookId?: string; chId?: string }>(req: R): Omit<R, 'page' | 'bookId' | 'chId'> & MarkTarget {
+  const { page, bookId, chId, ...rest } = req;
+  if (page !== undefined) return { ...rest, page };
+  if (bookId === undefined || chId === undefined) throw new TypeError('a marks request names a page, or a book and a chapter');
+  return { ...rest, bookId, chId };
+}
+
+interface Body {
   kind: MarkKind;
   anchor: Omit<MarkAnchor, 'commit'>;
   body?: string;
   proposed?: string;
 }
-export interface ReplyRequest extends ChapterIds { markId: string; body: string }
-export interface StateRequest extends ChapterIds { markId: string; state: MarkState }
+export type AddRequest = MarkTarget & Body;
+export type ReplyRequest = MarkTarget & { markId: string; body: string };
+export type StateRequest = MarkTarget & { markId: string; state: MarkState };
 
 export interface Listed {
   chapters: Record<string, Mark[]>;
@@ -60,6 +80,15 @@ export function sidecarPath(library: string, bookId: string, chId: string): stri
   return path.join(chaptersDir(library, bookId), `${oneName(chId, 'chId')}.json`);
 }
 
+/** A page's sidecar; throws PageRefused for an id that is not a safe page id. */
+export function pageSidecarPath(library: string, page: string): string {
+  const ref = parseId(page);
+  return path.join(library, '.neo', 'marks', ref.tree, ...ref.path.split('/')) + '.json';
+}
+
+const fileOf = (library: string, target: MarkTarget) =>
+  isPage(target) ? pageSidecarPath(library, target.page) : sidecarPath(library, target.bookId, target.chId);
+
 function randomId(prefix: 'm' | 'e'): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -72,7 +101,8 @@ export class MarkStore {
     this.#o = options;
   }
 
-  async list(bookId: string): Promise<Listed> {
+  /** Every chapter's marks in a book. A page is read with list(). */
+  async listBook(bookId: string): Promise<Listed> {
     const dir = chaptersDir(this.#o.library(), bookId);
     const out: Listed = { chapters: {}, unreadable: [] };
     if (!existsSync(dir)) return out;
@@ -89,6 +119,12 @@ export class MarkStore {
     return out;
   }
 
+  /** One page's marks, after any write to it queued before; throws MarkFileError for a file that does not read. */
+  async list(page: string): Promise<Mark[]> {
+    const file = pageSidecarPath(this.#o.library(), page);
+    return this.#queued(file, async () => this.#read(file).marks);
+  }
+
   /** One chapter's marks, after any write to it queued before; throws MarkFileError for a file that does not read. */
   async chapter(bookId: string, chId: string): Promise<Mark[]> {
     const file = sidecarPath(this.#o.library(), bookId, chId);
@@ -96,7 +132,7 @@ export class MarkStore {
   }
 
   async add(req: AddRequest, who: MarkWho): Promise<{ id: string; marks: Mark[] }> {
-    const file = sidecarPath(this.#o.library(), req.bookId, req.chId);
+    const file = fileOf(this.#o.library(), req);
     return this.#queued(file, async () => {
       const data = this.#read(file);
       const commit = this.#o.head ? await this.#o.head() : null;
@@ -110,9 +146,12 @@ export class MarkStore {
     });
   }
 
-  /** Marks made elsewhere (an import), added after the chapter's own. */
-  async addAll(bookId: string, chId: string, made: Mark[]): Promise<void> {
-    const file = sidecarPath(this.#o.library(), bookId, chId);
+  /** Marks made elsewhere (an import), added after the chapter's or the page's own. */
+  async addAll(page: string, made: Mark[]): Promise<void>;
+  async addAll(bookId: string, chId: string, made: Mark[]): Promise<void>;
+  async addAll(first: string, second: string | Mark[], third?: Mark[]): Promise<void> {
+    const [target, made] = typeof second === 'string' ? [{ bookId: first, chId: second }, third ?? []] : [{ page: first }, second];
+    const file = fileOf(this.#o.library(), target);
     await this.#queued(file, async () => {
       if (made.length === 0) return;
       const data = this.#read(file);
@@ -141,12 +180,12 @@ export class MarkStore {
     }, `review:${req.state}`);
   }
 
-  async #change(req: ChapterIds & { markId: string }, change: (mark: Mark) => Mark, action: string): Promise<{ marks: Mark[] }> {
-    const file = sidecarPath(this.#o.library(), req.bookId, req.chId);
+  async #change(req: MarkTarget & { markId: string }, change: (mark: Mark) => Mark, action: string): Promise<{ marks: Mark[] }> {
+    const file = fileOf(this.#o.library(), req);
     return this.#queued(file, async () => {
       const data = this.#read(file);
       const i = data.marks.findIndex((m) => m.id === req.markId);
-      if (i === -1) throw new RangeError(`no mark ${req.markId} in ${req.bookId}/${req.chId}`);
+      if (i === -1) throw new RangeError(`no mark ${req.markId} in ${labelOf(req)}`);
       const marks = data.marks.slice();
       marks[i] = change(marks[i]);
       this.#write(file, marks, { action, id: req.markId });

@@ -3,10 +3,25 @@
 /**
  * The librarian's verdict on the writer's suggestion, version 1: accepted once the change is applied, or flagged with the reason it gives as its comment.
  */
-export interface HoardReviewVerdictV1 {
-  bookId: string;
-  chId: string;
+export type HoardReviewVerdictV1 = {
+  /**
+   * A page's id, <tree>/<path>, in place of bookId and chId.
+   */
+  page?: string;
+  bookId?: string;
+  chId?: string;
   markId: string;
   state: "accepted" | "flagged";
   reason?: string;
-}
+} & (
+  | {
+      page: unknown;
+      bookId?: never;
+      chId?: never;
+    }
+  | {
+      bookId: unknown;
+      chId: unknown;
+      page?: never;
+    }
+);

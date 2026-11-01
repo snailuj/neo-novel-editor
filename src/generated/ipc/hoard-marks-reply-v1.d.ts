@@ -3,9 +3,24 @@
 /**
  * The writer's reply to a mark's thread, version 1.
  */
-export interface HoardMarksReplyV1 {
-  bookId: string;
-  chId: string;
+export type HoardMarksReplyV1 = {
+  /**
+   * A page's id, <tree>/<path>, in place of bookId and chId.
+   */
+  page?: string;
+  bookId?: string;
+  chId?: string;
   markId: string;
   body: string;
-}
+} & (
+  | {
+      page: unknown;
+      bookId?: never;
+      chId?: never;
+    }
+  | {
+      bookId: unknown;
+      chId: unknown;
+      page?: never;
+    }
+);

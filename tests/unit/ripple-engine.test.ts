@@ -19,10 +19,11 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { GitLayer, resolveSettings } from '../../src/hoard/git/layer.ts';
+import { MarkStore } from '../../src/hoard/marks/store.ts';
+import { ownerOf } from '../../src/hoard/review/owner.ts';
 import { topUp } from '../../src/hoard/ripple/embed-cli.ts';
 import { DEFAULT_BRIEF, Ripple, type RippleOptions } from '../../src/hoard/ripple/engine.ts';
 import { sha256 } from '../../src/hoard/ripple/rulings.ts';
-import { shimMarks, shimOwnerOf } from '../../src/hoard/ripple/stage3-shim.ts';
 import { isolateGitConfig, log as gitLog, tempDir, tempLibrary } from './git-support.ts';
 import { pagesLibrary } from './pages-support.ts';
 
@@ -37,9 +38,9 @@ function setup(t: T, extra: { library?: string; layer?: RippleOptions['layer']; 
   let clock = Date.parse(AT);
   const now = () => new Date((clock += 1000));
   const arounds: string[][] = [];
-  const marks = shimMarks({ library: () => library, head: async () => null, wrote: () => {}, now, log: lib.log });
+  const marks = new MarkStore({ library: () => library, now, log: lib.log });
   const ripple = new Ripple({
-    library: () => library, pages: lib.store, marks, ownerOf: shimOwnerOf(lib.log), now, log: lib.log,
+    library: () => library, pages: lib.store, marks, ownerOf: (root, id) => ownerOf(root, id, lib.log), now, log: lib.log,
     layer: extra.layer ?? {
       head: async () => null,
       show: async () => null,
@@ -332,8 +333,8 @@ test('a ripple write to a page is a librarian commit of that page\'s own file, a
   await layer.keepHistory();
   const { PageStore } = await import('../../src/hoard/pages/store.ts');
   const store = new PageStore({ library: () => lib.library, layer, log: () => {} });
-  const marks = shimMarks({ library: () => lib.library, head: () => layer.head(), wrote: (n) => layer.wrote(n), log: () => {} });
-  const ripple = new Ripple({ library: () => lib.library, pages: store, marks, ownerOf: shimOwnerOf(() => {}), layer, log: () => {} });
+  const marks = new MarkStore({ library: () => lib.library, head: () => layer.head(), wrote: (n) => layer.wrote(n), log: () => {} });
+  const ripple = new Ripple({ library: () => lib.library, pages: store, marks, ownerOf: (root, id) => ownerOf(root, id), layer, log: () => {} });
   const put = (rel: string, text: string) => lib.write(rel, text);
   put('wiki/Harbour.html', '<p data-block="a1">The harbour wall is made of timber.</p>');
   put('.neo/pages/wiki/Harbour.html.json', JSON.stringify({ version: 1, source: { path: '/v/x.md', name: 'x', sha256: 'a'.repeat(64) }, frontmatter: { type: 'lore' }, imported: AT }));

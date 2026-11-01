@@ -5,9 +5,10 @@ import { BrowserWindow, dialog, shell } from 'electron';
 import { mkdirSync } from 'node:fs';
 import { validateHoardRippleAskV1, validateHoardRippleDecideV1, validateHoardRippleRunV1 } from '../../generated/validators.cjs';
 import type { GitLayer } from '../git/layer.ts';
+import type { MarkStore } from '../marks/store.ts';
 import type { PageStore } from '../pages/store.ts';
+import { ownerOf } from '../review/owner.ts';
 import { Ripple } from './engine.ts';
-import { shimMarks, shimOwnerOf } from './stage3-shim.ts';
 import { describeRun } from './summary.ts';
 
 type Validator<T> = { (data: unknown): data is T; errors?: { instancePath: string; message?: string }[] | null };
@@ -20,14 +21,14 @@ function checked<T>(name: string, validate: Validator<T>, payload: unknown): T {
   return payload;
 }
 
-export function startRipple(host: NeoMainHost, layer: GitLayer, pages: PageStore): Ripple {
+export function startRipple(host: NeoMainHost, layer: GitLayer, pages: PageStore, marks: MarkStore): Ripple {
   const log = host.log.bind(host);
   const library = () => host.paths.library();
   const ripple = new Ripple({
     library,
     pages,
-    marks: shimMarks({ library, head: () => layer.head(), wrote: (name) => layer.wrote(name), log }),
-    ownerOf: shimOwnerOf(log),
+    marks,
+    ownerOf: (root, page) => ownerOf(root, page, log),
     layer,
     wrote: (name) => layer.wrote(name),
     log,

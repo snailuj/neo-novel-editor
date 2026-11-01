@@ -1,10 +1,18 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "description": "A request for every mark of one book, version 1.",
+  "description": "A request for every mark of one book, or of one page by its id, version 1.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["bookId"],
+  "oneOf": [
+    { "required": ["page"], "properties": { "page": true, "bookId": false } },
+    { "required": ["bookId"], "properties": { "bookId": true, "page": false } }
+  ],
   "properties": {
+    "page": {
+      "description": "A page's id, <tree>/<path>, in place of bookId and chId.",
+      "type": "string",
+      "pattern": "^(wiki|sources)/.+$"
+    },
     "bookId": { "type": "string", "minLength": 1 }
   }
 }
