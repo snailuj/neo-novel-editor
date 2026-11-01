@@ -426,17 +426,26 @@ async function hold(app, channels) {
     handlers.set('plugin:invoke', async (e, id, channel, payload) => {
       const out = real(e, id, channel, payload);
       if (!globalThis.__holding.includes(channel)) return out;
-      const gate = new Promise((resolve) => { globalThis.__waiting.push({ channel, resolve }); });
-      await Promise.allSettled([out, gate]);
+      const held = { channel, ready: false };
+      globalThis.__waiting.push(held);
+      const gate = new Promise((resolve) => { held.resolve = resolve; });
+      await out.catch(() => {});
+      held.ready = true;
+      await gate;
       globalThis.__answered++;
       return out;
     });
   }, channels);
 }
 
-// The oldest (or newest) reply held on a channel let through, once its call is in.
+// Done once n replies on a channel are worked out and held.
+async function heldOn(app, channel, n = 1) {
+  await expect.poll(() => app.evaluate((_, channel) => globalThis.__waiting.filter((w) => w.channel === channel && w.ready).length, channel)).toBeGreaterThanOrEqual(n);
+}
+
+// The oldest (or newest) reply held on a channel let through, once one is worked out.
 async function letThrough(app, channel, newest = false) {
-  await expect.poll(() => app.evaluate((_, channel) => globalThis.__waiting.some((w) => w.channel === channel), channel)).toBe(true);
+  await heldOn(app, channel);
   const before = await app.evaluate((_, [channel, newest]) => {
     const at = globalThis.__waiting.map((w) => w.channel)[newest ? 'lastIndexOf' : 'indexOf'](channel);
     globalThis.__waiting.splice(at, 1)[0].resolve();
@@ -542,6 +551,38 @@ test('a page made while the writer reads another leaves the pane where they went
     await page.waitForTimeout(300);
     await expect(pane.locator('.hoard-wiki-line')).toHaveText(['The wiki harbour faces east.']);
     expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('wiki/Harbour.html');
+  } finally {
+    await fixture.close();
+  }
+});
+
+// Rule: a stored page's links are drawn against the list read for that showing, so a list
+// read earlier that answers later (the tree's, say) never decides them.
+test('a list read earlier that answers later does not decide a page\'s links', async () => {
+  const { profile, library } = await libraryProfile();
+  const fixture = await launchProfile(profile);
+  try {
+    const { app, page } = fixture;
+    await page.waitForFunction(() => !!window.hoard);
+    await seedBook(page, '<p>A line of the book.</p>');
+    const pane = page.locator('.hoard-wiki-pane');
+    const tree = pane.locator('.hoard-tree');
+    await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
+    await paneSettled(page);
+    await expect(pane.locator('.hoard-wiki-missing')).toHaveText('[[Lost]]');
+
+    await hold(app, ['pages.list', 'pages.read']);
+    await tree.getByRole('button', { name: 'Pages' }).click();
+    await heldOn(app, 'pages.list');
+    await writeFile(path.join(library, 'wiki', 'Lost.html'), '<p data-block="l1">Found again.</p>');
+    await page.evaluate(() => { window.hoard.wiki.pane.reload(); });
+    await heldOn(app, 'pages.list', 2);
+    await letThrough(app, 'pages.list', true);
+    await heldOn(app, 'pages.read');
+    await letThrough(app, 'pages.list');
+    await expect(tree.locator('.hoard-tree-name[data-key="wiki/Harbour.html"]')).toBeVisible();
+    await letAllThrough(app);
+    await expect(pane.getByRole('button', { name: '[[Lost]]' })).toBeVisible();
   } finally {
     await fixture.close();
   }

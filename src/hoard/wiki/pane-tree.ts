@@ -24,8 +24,6 @@ export interface TreeHost {
   renamed(from: string, to: string): Promise<void>;
   /** How many times the writer has gone to a page in the pane: one made opens only if none since. */
   moves(): number;
-  /** Each list read, which the pane's links on a stored page resolve against. */
-  listed(entries: Listed[]): void;
   /** The pane's section: the tree takes the focus only from inside it. */
   paneRoot: HTMLElement;
 }
@@ -250,7 +248,6 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
       entries = listed;
       roots = buildTree(entries);
       listedOnce = true;
-      host.listed(entries);
       alert.textContent = '';
       status.textContent = '';
       // a field on a page the list no longer has goes, and the alert says why

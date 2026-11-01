@@ -68,8 +68,6 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
   // the page drawn: a Wiki book chapter, or a stored page, or neither
   let shown: PageRead | null = null;
   let stored: StoredRead | null = null;
-  // the last pages.list, which a stored page's links resolve against
-  let listed: Listed[] | null = null;
   let asked = 0;
   // pages the writer has gone to (opened, Back, Forward, a link followed): a link waits on
   // nothing once the writer goes on from it
@@ -104,7 +102,6 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
       if (history.current) await showCurrent();
     },
     moves: () => moves,
-    listed: (entries) => { listed = entries; },
     paneRoot: root,
   });
   root.append(tree.element, nav, title, where, status, body, empty);
@@ -188,13 +185,10 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
     line.scrollIntoView({ block: 'center' });
   };
 
-  const readList = async () => {
-    listed = (await neo.invoke('pages.list')) as Listed[];
-    return listed;
-  };
+  const readList = async () => (await neo.invoke('pages.list')) as Listed[];
   // A stored page's links: a stored page by title, wiki first, then the Wiki book.
-  const storedResolver = (): Resolver => {
-    const index = titleIndex(listed ?? []);
+  const storedResolver = (library: readonly Listed[]): Resolver => {
+    const index = titleIndex(library);
     const book = o.resolve();
     return { get: (target) => index.resolve(target)?.id ?? book.get(target) };
   };
@@ -205,9 +199,9 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
     const fromStored = !!stored;
     // a page gone to since (Back, another link) stands over this one
     const mine = ++moves;
-    if (fromStored) await readList();
+    const library = fromStored ? await readList() : null;
     if (mine !== moves) return;
-    const id = (fromStored ? storedResolver() : o.resolve()).get(target);
+    const id = (library ? storedResolver(library) : o.resolve()).get(target);
     if (id) await open(id);
     else status.textContent = `No page is called “${target}” now. It may have been renamed or removed outside NEO.`;
   };
@@ -241,10 +235,12 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
     await beforeLeaving();
     if (mine !== asked) return;
     let page: PageRead | StoredRead | null;
+    // read for each stored page drawn, so its links reach the library as it is now; this
+    // showing's own list, so one read earlier and answered later never decides them
+    let library: Listed[] = [];
     try {
       if (isStored(id)) {
-        // read for each stored page drawn, so its links reach the library as it is now
-        await readList();
+        library = await readList();
         page = (await neo.invoke('pages.read', { id })) as StoredRead | null;
       } else {
         page = (await neo.invoke('wiki.page', { chId: id })) as PageRead | null;
@@ -267,7 +263,7 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
         : 'That page is no longer in the wiki.';
     } else {
       status.textContent = stored ? 'Read-only: this page can\'t be changed in the pane yet.' : '';
-      render(page, stored ? storedResolver() : o.resolve());
+      render(page, stored ? storedResolver(library) : o.resolve());
       if (at) markAt(at);
     }
     for (const fn of shownListeners) fn(chapter);
