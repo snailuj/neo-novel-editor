@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Tree } from '../../src/hoard/pages/identity.ts';
-import { buildTree, CLOSED, explain, foldersIn, judge, newPageHtml, step, visibleRows, type Editor, type EditorEvent } from '../../src/hoard/wiki/tree.ts';
+import { buildTree, CLOSED, explain, foldersIn, judge, newPageHtml, sharedReads, step, visibleRows, type Editor, type EditorEvent } from '../../src/hoard/wiki/tree.ts';
 
 const page = (id: string) => {
   const tree = id.slice(0, id.indexOf('/')) as Tree;
@@ -240,4 +240,28 @@ test('a new page is one empty paragraph with its own block id', () => {
   const [a, b] = [newPageHtml(), newPageHtml()];
   assert.match(a, /^<p data-block="[0-9a-f]{6}"><br><\/p>$/);
   assert.notEqual(a, b, 'each new page has a block id of its own');
+});
+
+// Rule: asks for the list while a read is out share that read, but a read asked for after a
+// change never takes the answer of one that started before it: it waits, then reads anew.
+test('a read after a change starts after any read already out', async () => {
+  const answers: ((v: string) => void)[] = [];
+  let calls = 0;
+  const reads = sharedReads(() => { calls++; return new Promise<string>((resolve) => answers.push(resolve)); });
+  const first = reads.shared();
+  const again = reads.shared();
+  assert.equal(calls, 1, 'a second ask shares the read out');
+  const fresh = reads.fresh();
+  await Promise.resolve();
+  assert.equal(calls, 1, 'the fresh read waits for the one out');
+  answers[0]!('before the change');
+  assert.deepEqual(await Promise.all([first, again]), ['before the change', 'before the change']);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls, 2, 'then reads anew');
+  answers[1]!('after the change');
+  assert.equal(await fresh, 'after the change');
+  const idle = reads.fresh();
+  assert.equal(calls, 3, 'with nothing out it reads at once');
+  answers[2]!('x');
+  await idle;
 });

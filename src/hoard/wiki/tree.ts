@@ -331,3 +331,21 @@ export function step(editor: Editor, e: EditorEvent, entries: readonly Listed[])
       return stay;
   }
 }
+
+// ---- reading the list ---------------------------------------------------------------------
+/**
+ * Reads of the list: an ask while a read is out shares it (Refresh pressed twice reads once),
+ * but fresh(), asked for after a change, waits for any read already out and reads anew, so
+ * an answer from before the change is never taken for one after it.
+ */
+export function sharedReads<T>(read: () => Promise<T>) {
+  let out: Promise<T> | null = null;
+  const shared = (): Promise<T> => (out ??= read().finally(() => { out = null; }));
+  return {
+    shared,
+    async fresh(): Promise<T> {
+      if (out) await out.catch(() => {});
+      return shared();
+    },
+  };
+}

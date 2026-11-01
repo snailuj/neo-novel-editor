@@ -13,7 +13,7 @@ import { claim } from '../keys.ts';
 import { renamePage, type PagesWindow } from '../pages/window.ts';
 import { titleOf, type Tree } from '../pages/identity.ts';
 import {
-  buildTree, CLOSED, explain, folderOf, foldersIn, judge, newPageHtml, place, step, visibleRows,
+  buildTree, CLOSED, explain, folderOf, foldersIn, judge, newPageHtml, place, sharedReads, step, visibleRows,
   type Ask, type Editor, type EditorEvent, type Folder, type Listed, type Row,
 } from './tree.ts';
 
@@ -57,7 +57,6 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
   const open = new Set<string>(['wiki', 'sources']);
   let unfolded = false;
   let listedOnce = false;
-  let reading: Promise<void> | null = null;
   let generation = 0;
   // the row in the Tab order, and the page shown in the pane
   let active = 'wiki';
@@ -270,11 +269,9 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
       if (mine === generation) refreshButton.setAttribute('aria-disabled', 'false');
     }
   };
+  const reads = sharedReads(read);
   /** The list read again; a second call while one reads waits for that one. */
-  const refresh = (): Promise<void> => {
-    if (!reading) reading = read().finally(() => { reading = null; });
-    return reading;
-  };
+  const refresh = (): Promise<void> => reads.shared();
 
   const setFolded = (folded: boolean) => {
     unfolded = !folded;
@@ -320,7 +317,7 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
       }
     } catch (err) {
       const hadFocus = focusInPane();
-      await refresh();
+      await reads.fresh();
       const told = explain(ask, entries, err);
       console.warn('hoard: pages tree: refused', { op: ask.op, code: told.code, message: told.message });
       dispatch({ type: 'refused', message: told.message }, hadFocus);
@@ -330,7 +327,8 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
     editor = step(editor, { type: 'done' }, entries).editor;
     reveal(to);
     active = to;
-    await refresh();
+    // a read that started before the change would miss it
+    await reads.fresh();
     // after the list, so the page read again resolves its links by the new title
     if (renamed) await host.renamed(renamed.from, renamed.to);
     status.textContent = said;
