@@ -24,8 +24,19 @@ export const IGNORED = [
   '_catalog.txt',
 ];
 
-/** The spec's chapter line: diff and merge a paragraph per line, never touch line ends. */
-export const ATTRIBUTES = 'book-*/chapters/*.html diff=neochapter merge=neochapter -text';
+/**
+ * The attribute lines: diff and merge a paragraph per line, never touch line ends, for a
+ * book's chapters and for every page of either tree (at any depth). Each line is added
+ * to .gitattributes on its own, so a library started before pages gets the page lines.
+ */
+export const ATTRIBUTE_LINES: readonly string[] = [
+  'book-*/chapters/*.html diff=neochapter merge=neochapter -text',
+  'wiki/**/*.html diff=neochapter merge=neochapter -text',
+  'sources/**/*.html diff=neochapter merge=neochapter -text',
+];
+
+/** The lines as a file's text, without the final newline: the attributes file blame names. */
+export const ATTRIBUTES = ATTRIBUTE_LINES.join('\n');
 
 /** Adds the lines a file lacks at its end; returns whether it wrote. */
 function ensureLines(file: string, wanted: readonly string[]): boolean {
@@ -65,7 +76,7 @@ export async function keepHistory(git: Git, library: string, options: StartOptio
   const started = repo.state === 'untracked';
   if (started) await git.run(library, ['init', '-q']);
   ensureLines(path.join(library, '.gitignore'), IGNORED);
-  ensureLines(path.join(library, '.gitattributes'), [ATTRIBUTES]);
+  ensureLines(path.join(library, '.gitattributes'), ATTRIBUTE_LINES);
   const committed = await commitAll(git, library, { who: 'author', reason: 'start', ...options });
   return { started, committed };
 }

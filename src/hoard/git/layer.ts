@@ -4,7 +4,7 @@
 // uncommitted when NEO last stopped (a quit, a crash) is committed on opening. A
 // librarian edit runs between two commits of its own (around).
 import { validateHoardSettingsV1 } from '../../generated/validators.cjs';
-import { blameChapter, type BlameLine } from './blame.ts';
+import { blameChapter, blamePage, type BlameLine } from './blame.ts';
 import { Checkpoints, type Clock } from './checkpoints.ts';
 import type { Gate } from './gate.ts';
 import { commitAll, whoFor, type Identity, type Reason, type Who } from './commit.ts';
@@ -171,12 +171,16 @@ export class GitLayer {
     return started;
   }
 
-  async blame(ids: { bookId: unknown; chId: unknown }): Promise<BlameLine[]> {
+  /** Who wrote each block of a book's chapter, or of a page named by its id. */
+  async blame(target: { bookId: unknown; chId: unknown } | { page: unknown }): Promise<BlameLine[]> {
     if (this.#state.state !== 'tracked') return [];
     const { git, library, settings, attributesFile, textconv, log } = this.#o;
     const start = performance.now();
-    const lines = await blameChapter(git, library, ids, { librarian: settings.librarian, attributesFile, textconv });
-    log('debug', 'git.blame', { ...ids, lines: lines.length, ms: Math.round(performance.now() - start) });
+    const options = { librarian: settings.librarian, attributesFile, textconv };
+    const lines = 'page' in target
+      ? await blamePage(git, library, target.page, options)
+      : await blameChapter(git, library, target, options);
+    log('debug', 'git.blame', { ...target, lines: lines.length, ms: Math.round(performance.now() - start) });
     return lines;
   }
 
