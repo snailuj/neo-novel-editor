@@ -1,15 +1,27 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "description": "A request for the chapters of one book that are the librarian's, version 1, from their page sidecars.",
+  "description": "A request for the librarian's pages, version 1, from their page sidecars: those of one book's chapters, those among the named pages, or those in one tree.",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "bookId"
+  "oneOf": [
+    { "required": ["bookId"], "properties": { "bookId": true, "pages": false, "tree": false } },
+    { "required": ["pages"], "properties": { "pages": true, "bookId": false, "tree": false } },
+    { "required": ["tree"], "properties": { "tree": true, "bookId": false, "pages": false } }
   ],
   "properties": {
     "bookId": {
       "type": "string",
       "minLength": 1
+    },
+    "pages": {
+      "description": "Page ids, <tree>/<path>, to be asked about.",
+      "type": "array",
+      "maxItems": 10000,
+      "items": { "type": "string", "pattern": "^(wiki|sources)/.+$" }
+    },
+    "tree": {
+      "description": "Every librarian page in this tree.",
+      "enum": ["wiki", "sources"]
     }
   }
 }
