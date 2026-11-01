@@ -73,6 +73,8 @@ export interface PageEditorOptions {
   store: Pick<PageStore, 'write'>;
   layer: Pick<GitLayer, 'around' | 'release'>;
   log: Log;
+  /** Told the page's id once the author's edit of it is written; never for the librarian's. */
+  saved?: (page: string) => void;
 }
 
 export async function editPage(o: PageEditorOptions, ask: PageEdit): Promise<Edited> {
@@ -86,6 +88,7 @@ export async function editPage(o: PageEditorOptions, ask: PageEdit): Promise<Edi
     const refused = await swap();
     if (refused) return { ok: false, reason: refused };
     o.log('info', 'pages.edit', { page, as: 'author' });
+    o.saved?.(page);
     return { ok: true };
   }
   if (await ownerOf(o.library(), page, o.log) !== 'librarian') {

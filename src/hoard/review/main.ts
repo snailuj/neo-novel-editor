@@ -24,7 +24,7 @@ function checked<T>(name: string, validate: Validator<T>, payload: unknown): T {
   return payload;
 }
 
-export function startReview(host: NeoMainHost, marks: MarkStore, o: { layer: GitLayer; wiki: WikiStore; pages: PageStore }): void {
+export function startReview(host: NeoMainHost, marks: MarkStore, o: { layer: GitLayer; wiki: WikiStore; pages: PageStore; authorSavedPage?: (page: string) => void }): void {
   const log = host.log.bind(host);
   host.handle('wiki.edit', (payload) => writePage({
     library: () => host.paths.library(),
@@ -40,6 +40,7 @@ export function startReview(host: NeoMainHost, marks: MarkStore, o: { layer: Git
     store: o.pages,
     layer: o.layer,
     log,
+    saved: o.authorSavedPage,
   }, checked('pages.edit', validateHoardPagesEditV1, payload)));
   host.handle('review.owners', async (payload) => {
     const ask = checked('review.owners', validateHoardReviewOwnersV1, payload);

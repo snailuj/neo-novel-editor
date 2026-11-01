@@ -146,14 +146,20 @@ async function keepHistory(host: NeoMainHost, layer: GitLayer) {
 export function activate(host: NeoMainHost): void {
   host.handle('ping', ping);
   const layer = startHistory(host);
-  startGate(host, layer);
+  const gate = startGate(host, layer);
   const pairs = startLibrarianPairs(host, layer);
+  // The one place the author's save of a page is heard: a held page is theirs again, and a
+  // librarian pair waiting for the save is woken.
+  const authorSavedPage = (page: string): void => {
+    gate.saved(page);
+    pairs.landed({ page });
+  };
   const marks = startMarks(host, layer);
   const wiki = startWiki(host, layer, marks);
   startRipple(host, layer, marks, wiki);
   startSearch(host);
   const opened = layer.open().catch((err: unknown) => host.log('error', 'git.open failed', String(err)));
-  const { store: pages } = startPages(host, layer, opened, (page) => pairs.landed({ page }));
-  startReview(host, marks, { layer, wiki, pages });
+  const { store: pages } = startPages(host, layer, opened, authorSavedPage);
+  startReview(host, marks, { layer, wiki, pages, authorSavedPage });
   startCompanion(host, layer, marks, wiki, pages);
 }
