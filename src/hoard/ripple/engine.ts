@@ -178,13 +178,15 @@ export class Ripple {
     return { text: bytes.toString('utf8'), sha256: sha256(bytes.toString('utf8')) };
   }
 
-  // The change log's lines as parsed; reconcile picks out the page events and ignores the rest.
-  #changes(): unknown[] {
+  // The change log's lines as parsed; reconcile picks out the page events and ignores the
+  // rest. A line that does not parse is logged the run that first reads it (index >= unread).
+  #changes(unread: number): unknown[] {
     const text = this.#read('.neo/changes.jsonl') ?? '';
-    return text.split('\n').filter((l) => l.trim()).map((line) => {
+    return text.split('\n').filter((l) => l.trim()).map((line, i) => {
       try {
         return JSON.parse(line) as unknown;
-      } catch {
+      } catch (err) {
+        if (i >= unread) this.#o.log('warn', 'ripple: a line of the change log does not parse, so it is skipped', { line: i + 1, why: String(err) });
         return null;
       }
     });
@@ -217,7 +219,7 @@ export class Ripple {
     this.#setUp();
     let state = this.#rulings.read();
     const rec = await reconcile({
-      state, pages: library.pages, head: await this.#o.layer.head(), changes: this.#changes(),
+      state, pages: library.pages, head: await this.#o.layer.head(), changes: this.#changes(state.cursor?.changes ?? 0),
       changed: (from, to, under) => this.#o.layer.changed(from, to, under),
       show: (commit, rel) => this.#o.layer.show(commit, rel),
       read: (id) => this.#html(id),

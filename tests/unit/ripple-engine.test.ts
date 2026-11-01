@@ -284,6 +284,19 @@ test('a re-run makes no new card for a change the writer has waiting or rejected
   assert.equal(waiting[0]!.id, claim!.id, 'the waiting card is the first one, not a second copy');
 });
 
+test('a change-log line that does not parse is logged once, and the lines after it still count', async (t) => {
+  const { ripple, page, put, p, logged } = setup(t);
+  page('wiki/Harbour.html', p('The harbour wall.'), 'librarian');
+  await ripple.run();
+  page('wiki/Quay.html', p('The quay.'), 'librarian');
+  const good = JSON.stringify({ version: 1, at: AT, kind: 'page-imported', page: 'wiki/Quay.html', src: '/v/Quay.md' });
+  put('.neo/changes.jsonl', `{"kind": "page-imp\n${good}\n`);
+  assert.equal((await ripple.run()).made, 1);
+  assert.deepEqual(logged('ripple: a line of the change log does not parse, so it is skipped').map((l) => (l.data as { line: number }).line), [1]);
+  await ripple.run();
+  assert.equal(logged('ripple: a line of the change log does not parse, so it is skipped').length, 1, 'a line already read is not logged again');
+});
+
 test('a page named by title in one answer and by id in the next is one card', async (t) => {
   const { ripple, page, put, p } = setup(t);
   page('wiki/Harbour.html', p('The harbour wall is made of timber.'), 'librarian');
