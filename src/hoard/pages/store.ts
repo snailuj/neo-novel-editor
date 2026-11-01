@@ -388,6 +388,11 @@ export class PageStore {
     if (existsSync(this.file(to)) && !sameFile(this.file(from), this.file(to))) {
       throw new PageRefused('taken', `${newId} is already a file on disk`);
     }
+    // what a deleted page left under its id would stop the move half way, every time it is retried
+    for (const [mine, theirs] of [[sidecarOf(id), sidecarOf(newId)], [marksOf(id), marksOf(newId)]] as const) {
+      const [here, there] = [path.join(this.o.library(), ...mine.split('/')), path.join(this.o.library(), ...theirs.split('/'))];
+      if (existsSync(there) && !(existsSync(here) && sameFile(here, there))) throw new PageRefused('taken', `${theirs} is left over from an earlier page of that name`);
+    }
     const plan: HoardRenameV1 = { version: 1, from: id, to: newId, files: [], at: new Date().toISOString() };
     if (newTitle === oldTitle) return plan;
 

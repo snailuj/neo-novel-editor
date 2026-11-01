@@ -450,3 +450,20 @@ test('a rename of a page deleted since the titles were walked is refused as miss
   assert.equal((await store.rename('wiki/Lantern.html', 'Lamp.html', null)).id, 'wiki/Lamp.html');
   assert.equal(await store.recover(null), null);
 });
+
+// Rule: a rename onto an id with a leftover sidecar or marks file is refused before anything moves.
+for (const [what, leftover] of [['sidecar', '.neo/pages/wiki/Places/Port.html.json'], ['marks file', '.neo/marks/wiki/Places/Port.html.json']] as const) {
+  test(`a rename onto an id with a leftover ${what} is refused before anything moves, and succeeds once it is gone`, async (t) => {
+    const { store, put, get, has, library } = fixture(t);
+    put(leftover, '{"left":"over"}');
+    const was = Object.fromEntries(Object.keys(FILES).map((rel) => [rel, get(rel)]));
+    await assert.rejects(store.rename(FROM, 'Places/Port.html', null), (e: PageRefused) => e.code === 'taken' && e.message.includes(leftover));
+    await assert.rejects(store.rename(FROM, 'Places/Port.html', null), (e: PageRefused) => e.code === 'taken', 'a retry is refused the same way, not stuck on a journal');
+    assert.equal(has('.neo/pages/.rename.json'), false, 'no note of a rename was written');
+    assert.equal(has('wiki/Places/Port.html'), false, 'the page did not move');
+    assert.equal(get(leftover), '{"left":"over"}', 'the leftover is untouched');
+    for (const [rel, text] of Object.entries(was)) assert.equal(get(rel), text, rel);
+    rmSync(path.join(library, leftover));
+    assert.equal((await store.rename(FROM, 'Places/Port.html', null)).id, 'wiki/Places/Port.html');
+  });
+}
