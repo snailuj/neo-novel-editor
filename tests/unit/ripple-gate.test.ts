@@ -186,3 +186,36 @@ test('a mint whose page has appeared meanwhile makes no librarian commit and lea
   assert.equal(read('wiki/Stone Wall.html'), '<p data-block="w1">The author made this page.</p>');
   assert.equal(read('.neo/pages/wiki/Stone Wall.html.json'), LORE, 'the sidecar that came with it is left alone too');
 });
+
+// Rule: Ripple puts back only what it wrote. A refused change is restored to a file only
+// while the file still holds the bytes Ripple wrote; one the writer has changed since is
+// left as they have it, stays held, is logged and reaches the caller.
+test('a refused change is not put back over words the author typed after Ripple wrote', async (t) => {
+  const { lib, layer, gate, store, marks, log, warnings } = await setup(t);
+  const typed = '<p data-block="n1">The author typed this.</p>';
+  const racy = new Proxy(layer, {
+    get: (target, key) => {
+      if (key !== 'around') { const v = Reflect.get(target, key); return typeof v === 'function' ? v.bind(target) : v; }
+      // the writer types into the page after Ripple's write and before the gate looks
+      return (paths: readonly string[], apply: () => Promise<unknown>, ...rest: unknown[]) =>
+        (target.around as (...a: unknown[]) => unknown)(paths, async () => {
+          const result = await apply();
+          const file = path.join(lib.library, 'wiki', 'Harbour.html');
+          writeFileSync(file, `${readFileSync(file, 'utf8')}${typed}`);
+          return result;
+        }, ...rest);
+    },
+  }) as typeof layer;
+  const ripple = new Ripple({ library: () => lib.library, pages: store, marks, ownerOf: (root, id) => ownerOf(root, id), layer: racy, log });
+  const asked = await ripple.ask({ page: 'wiki/Storm.html' });
+  writeFileSync(ripple.overview().jobs.find((j) => j.id === asked.job)!.answer, [{ kind: 'preflight', brief_sha256: sha256(DEFAULT_BRIEF), echo: ECHO },
+    { kind: 'claim', target: 'Harbour', anchor: 'made of timber', text: 'rebuilt in stone', reason: 'r', quote: 'The wall was rebuilt in stone' }].map((l) => JSON.stringify(l)).join('\n'));
+  await ripple.run();
+  await layer.commitNow('import-author');
+  await assert.rejects(ripple.decide(ripple.overview().proposals[0]!.id, 'apply'), /wiki\/Harbour\.html changed since ripple wrote it/);
+  const page = readFileSync(path.join(lib.library, 'wiki', 'Harbour.html'), 'utf8');
+  assert.ok(page.includes('The author typed this.'), 'the newer words survive');
+  assert.deepEqual(gate.held(), ['.neo/ripple/rulings.jsonl', 'wiki/Harbour.html'], 'nothing is released while a file is not settled');
+  assert.ok(warnings.some((w) => w.message === 'ripple.restore.conflict' && (w.data as { page: string }).page === 'wiki/Harbour.html'));
+  assert.equal(ripple.overview().proposals[0]!.status, 'proposed');
+});

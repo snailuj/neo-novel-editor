@@ -454,19 +454,27 @@ export class Ripple {
   // library is as it was and the refusal goes to the caller.
   async #asLibrarian(label: string, subject: Record<string, unknown>, paths: readonly string[], apply: () => Promise<Error | null>): Promise<void> {
     const before = paths.map((rel) => [rel, this.#read(rel)] as const);
+    // What the apply left on disk. A file the writer changed after that is theirs: it is not
+    // put back, and (the restore throwing) it and its fellows stay held until it is mended.
+    let written: ReadonlyMap<string, string | null> = new Map();
     // every file is tried; one that will not go back throws, so the gate keeps its paths held
     const restore = () => {
       const failed: string[] = [];
+      const changed: string[] = [];
       for (const [rel, text] of before) {
         const file = path.join(this.#lib, ...rel.split('/'));
         try {
-          if (text === null) rmSync(file, { force: true });
+          if (this.#read(rel) !== written.get(rel)) {
+            changed.push(rel);
+            this.#o.log('warn', 'ripple.restore.conflict', { page: subject.page ?? null, path: rel });
+          } else if (text === null) rmSync(file, { force: true });
           else writeWhole(file, text);
         } catch (err) {
           failed.push(rel);
           this.#o.log('error', 'ripple: a refused change could not be put back', { path: rel, why: String(err) });
         }
       }
+      if (changed.length) throw new Error(`The library check refused this change, but ${changed.join(', ')} changed since ripple wrote it, so ripple left it as it is. It stays held out of the history until you save it.`);
       if (failed.length) throw new Error(`The library check refused this change and ripple could not put back ${failed.join(', ')}; they are held out of the history until they are mended.`);
     };
     // An apply that did not write returns why, rather than throwing: a throw reaches the git
@@ -475,6 +483,7 @@ export class Ripple {
     let unwritten: Error | null = null;
     const done = await asLibrarian({ layer: this.#o.layer, log: this.#o.log }, label, subject, paths, async () => {
       unwritten = await apply();
+      written = new Map(paths.map((rel) => [rel, this.#read(rel)] as const));
       return unwritten ? 'stale' : null;
     }, restore);
     if (unwritten) throw unwritten;
