@@ -38,6 +38,17 @@ export type MarkTarget = ChapterIds | PageTarget;
 const isPage = (target: MarkTarget): target is PageTarget => 'page' in target;
 const labelOf = (target: MarkTarget) => (isPage(target) ? target.page : `${target.bookId}/${target.chId}`);
 
+/**
+ * A validated request from the window names its place as page, or as bookId and chId
+ * (the schemas allow nothing else); this gives the store the one it was sent.
+ */
+export function targeted<R extends { page?: string; bookId?: string; chId?: string }>(req: R): Omit<R, 'page' | 'bookId' | 'chId'> & MarkTarget {
+  const { page, bookId, chId, ...rest } = req;
+  if (page !== undefined) return { ...rest, page };
+  if (bookId === undefined || chId === undefined) throw new TypeError('a marks request names a page, or a book and a chapter');
+  return { ...rest, bookId, chId };
+}
+
 interface Body {
   kind: MarkKind;
   anchor: Omit<MarkAnchor, 'commit'>;

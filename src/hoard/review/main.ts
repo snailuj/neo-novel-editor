@@ -5,7 +5,7 @@
 // A change made from the Wiki pane, beside another book, is written here (wiki.edit,
 // wiki/write.ts), since no window holds that page.
 import type { GitLayer } from '../git/layer.ts';
-import type { MarkStore } from '../marks/store.ts';
+import { targeted, type MarkStore } from '../marks/store.ts';
 import type { WikiStore } from '../wiki/store.ts';
 import { writePage } from '../wiki/write.ts';
 import { librarianPages } from './owner.ts';
@@ -38,7 +38,7 @@ export function startReview(host: NeoMainHost, marks: MarkStore, o: { layer: Git
   });
   host.handle('review.verdict', async (payload) => {
     const { reason, ...req } = checked('review.verdict', validateHoardReviewVerdictV1, payload);
-    const answer = await marks.review(req, 'librarian', reason);
+    const answer = await marks.review(targeted(req), 'librarian', reason);
     log('info', 'review.verdict', { ...req, reason });
     return answer;
   });

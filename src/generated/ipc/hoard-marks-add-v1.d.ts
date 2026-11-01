@@ -3,9 +3,13 @@
 /**
  * A mark the writer makes from the window, version 1: a comment with its words, a highlight, or a suggestion (insertion, deletion or substitution) with the words it proposes. Only an insertion has an empty quote. The main half adds the time, the author and the commit, and the mark's model refuses proposed words where they do not belong or are missing.
  */
-export interface HoardMarksAddV1 {
-  bookId: string;
-  chId: string;
+export type HoardMarksAddV1 = {
+  /**
+   * A page's id, <tree>/<path>, in place of bookId and chId.
+   */
+  page?: string;
+  bookId?: string;
+  chId?: string;
   kind: "comment" | "highlight" | "insertion" | "deletion" | "substitution";
   anchor: {
     exact: string;
@@ -16,4 +20,15 @@ export interface HoardMarksAddV1 {
   };
   body?: string;
   proposed?: string;
-}
+} & (
+  | {
+      page: unknown;
+      bookId?: never;
+      chId?: never;
+    }
+  | {
+      bookId: unknown;
+      chId: unknown;
+      page?: never;
+    }
+);
