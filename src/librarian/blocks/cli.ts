@@ -25,7 +25,7 @@ import { findEntries, groupEntries, outline, topicRows } from './group.ts';
 import { commandJudge, judgePage, type JudgeFn } from './judge.ts';
 import { ruleLabel } from './rules.ts';
 import { type Already, dedupeRows, mergeRows, parseAlready, readSheet, type Row, rowsFor, writeSheet } from './sheet.ts';
-import { splitBlocks } from './split.ts';
+import { type Block, splitBlocks } from './split.ts';
 
 const log = getLogger('librarian.blocks.cli');
 
@@ -97,6 +97,13 @@ function pagesOf(values: Map<string, string>, positional: string[], at: (p: stri
   return pages;
 }
 
+/** The page's file, or null when its path leads out of the vault. */
+function pageFile(vault: string, page: string): string | null {
+  const file = path.resolve(vault, page);
+  const rel = path.relative(vault, file);
+  return rel === '' || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel) ? null : file;
+}
+
 /** Runs `one` over the pages, `jobs` at a time. */
 async function eachPage(pages: readonly string[], jobs: number, one: (page: string) => Promise<void>) {
   const queue = [...pages];
@@ -127,13 +134,20 @@ async function classify(values: Map<string, string>, positional: string[], io: I
   const fresh = new Set<string>();
   const one = async (page: string) => {
     const started = performance.now();
-    const file = path.join(vault, page);
-    if (!existsSync(file)) {
-      log.error(`${page}: no such page in the vault`);
+    const file = pageFile(vault, page);
+    if (!file || !existsSync(file)) {
+      log.error(`${page}: ${file ? 'no such page in the vault' : 'outside the vault'}`);
       failed++;
       return;
     }
-    const blocks = splitBlocks(readFileSync(file, 'utf8'));
+    let blocks: Block[];
+    try {
+      blocks = splitBlocks(readFileSync(file, 'utf8'));
+    } catch (err) {
+      log.error(`${page}: ${(err as Error).message}`);
+      failed++;
+      return;
+    }
     const prior = byPage.get(page) ?? [];
     const known = new Set(prior.map((r) => r.block));
     const todo = blocks.filter((b) => !known.has(b.id));
@@ -177,25 +191,28 @@ async function group(values: Map<string, string>, positional: string[], io: Io):
   const one = async (page: string) => {
     const started = performance.now();
     const mine = rows.filter((r) => r.page === page);
-    const file = path.join(vault, page);
-    if (!mine.length || !existsSync(file)) {
-      log.error(`${page}: ${mine.length ? 'no such page in the vault' : 'not in the sheet; classify it first'}`);
+    const file = pageFile(vault, page);
+    if (!file || !mine.length || !existsSync(file)) {
+      log.error(`${page}: ${!file ? 'outside the vault' : mine.length ? 'no such page in the vault' : 'not in the sheet; classify it first'}`);
       failed++;
-      return;
-    }
-    const blocks = splitBlocks(readFileSync(file, 'utf8'));
-    const known = new Set(mine.map((r) => r.block));
-    const present = new Set(blocks.map((b) => b.id));
-    if (blocks.some((b) => !known.has(b.id)) || mine.some((r) => !present.has(r.block))) {
-      log.error(`${page}: changed since it was classified; classify it again first`);
-      failed++;
-      return;
-    }
-    if (!redo && mine.every((r) => r.entry)) {
-      log.info(`${page}: already grouped; --redo groups it again`);
       return;
     }
     try {
+      const blocks = splitBlocks(readFileSync(file, 'utf8'));
+      // A block is its text under its headings: one moved under another heading was
+      // classified where it no longer sits.
+      const key = (block: string, heading: string) => `${block}\0${heading}`;
+      const known = new Set(mine.map((r) => key(r.block, r.heading)));
+      const present = new Set(blocks.map((b) => key(b.id, b.heading.join(' > '))));
+      if ([...present].some((k) => !known.has(k)) || [...known].some((k) => !present.has(k))) {
+        log.error(`${page}: changed since it was classified; classify it again first`);
+        failed++;
+        return;
+      }
+      if (!redo && mine.every((r) => r.entry)) {
+        log.info(`${page}: already grouped; --redo groups it again`);
+        return;
+      }
       const entries = await findEntries(page, blocks, judge, {});
       const topics = await groupEntries(page, blocks, entries, judge, { votes });
       // Grouped on copies, kept only once the outline is written: the sheet marks a page
