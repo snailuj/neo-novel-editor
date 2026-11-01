@@ -19,7 +19,7 @@ import type { GitLayer } from '../git/layer.ts';
 import { writeWhole } from '../files.ts';
 import { checkPath, idOf, PageRefused, parseId, titleOf, TREES, type PageRef, type Tree } from './identity.ts';
 import { editsFor, rewriteHtml, type Retarget, type WindowEdit } from './rewrite.ts';
-import { titleIndex } from './titles.ts';
+import { Titles } from './titles.ts';
 
 type Level = 'error' | 'warn' | 'info' | 'debug';
 
@@ -89,6 +89,9 @@ const UNLINKABLE = /[[\]|#^\p{Cc}]/u;
 export class PageStore {
   protected readonly o: PageStoreOptions;
   #tail: Promise<unknown> = Promise.resolve();
+  // Built on first use and kept by create and rename; list() builds it again, since pages
+  // also arrive through sync. Null until then, or after a rename failed part way.
+  #titles: Titles<PageEntry> | null = null;
 
   constructor(options: PageStoreOptions) {
     this.o = options;
@@ -148,18 +151,23 @@ export class PageStore {
     return pages.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
 
+  async #index(): Promise<Titles<PageEntry>> {
+    this.#titles ??= new Titles(await this.#scan());
+    return this.#titles;
+  }
+
   async list(): Promise<PageEntry[]> {
     const start = performance.now();
     const pages = await this.#scan();
-    const { duplicates } = titleIndex(pages);
-    for (const group of duplicates) this.o.log('warn', 'pages: these pages share one title, so a link reaches only the first', group.map((p) => p.id));
+    this.#titles = new Titles(pages);
+    for (const group of this.#titles.duplicates) this.o.log('warn', 'pages: these pages share one title, so a link reaches only the first', group.map((p) => p.id));
     this.o.log('info', 'pages.list', { pages: pages.length, ms: Math.round(performance.now() - start) });
     return pages;
   }
 
   /** The page a link target names, wiki first; undefined if none. */
   async resolve(target: string): Promise<PageEntry | undefined> {
-    return titleIndex(await this.#scan()).resolve(target);
+    return (await this.#index()).resolve(target);
   }
 
   read(id: string): Promise<PageFile | null> {
@@ -207,15 +215,18 @@ export class PageStore {
     return this.#serial(() => this.op('create', async () => {
       const ref = parseId(`${tree}/${checkPath(pagePath)}`);
       const title = this.checkTitle(ref.path);
-      const clash = titleIndex(await this.#scan()).taken(ref.tree, title);
+      const index = await this.#index();
+      const clash = index.taken(ref.tree, title);
       if (clash || existsSync(this.file(ref))) {
         throw new PageRefused('taken', `${JSON.stringify(title)} is already a page in ${ref.tree}${clash ? ` (${clash.id})` : ''}`);
       }
       writeWhole(this.file(ref), html);
       this.o.layer?.wrote(ref.tree);
       const s = await stat(this.file(ref));
-      this.o.log('info', 'pages.create', { id: idOf(ref), bytes: s.size });
-      return { id: idOf(ref), tree: ref.tree, path: ref.path, title, size: s.size, mtime: s.mtimeMs };
+      const made: PageEntry = { id: idOf(ref), tree: ref.tree, path: ref.path, title, size: s.size, mtime: s.mtimeMs };
+      index.add(made);
+      this.o.log('info', 'pages.create', { id: made.id, bytes: s.size });
+      return made;
     }));
   }
 
@@ -240,7 +251,7 @@ export class PageStore {
    * stops part way is finished by calling it again, or by recover() when NEO starts.
    */
   rename(id: string, newPath: string, openBookId: string | null): Promise<Renamed> {
-    return this.#serial(() => this.op('rename', async () => {
+    return this.#serial(() => this.op('rename', async () => this.#forgetOnFailure(async () => {
       const start = performance.now();
       const from = parseId(id);
       const to = parseId(`${from.tree}/${checkPath(newPath)}`);
@@ -254,7 +265,17 @@ export class PageStore {
         return { id, from: id, rewrittenFiles: 0, rewrittenLinks: 0, skipped: 0, deferred: [] };
       }
       return this.#finish(await this.#plan(from, to), openBookId, start);
-    }));
+    })));
+  }
+
+  // A rename that fails part way leaves the trees in a state the index cannot follow.
+  async #forgetOnFailure<T>(run: () => Promise<T>): Promise<T> {
+    try {
+      return await run();
+    } catch (err) {
+      if (!(err instanceof PageRefused)) this.#titles = null;
+      throw err;
+    }
   }
 
   /** Finishes a rename NEO stopped in the middle of; null when none is waiting. */
@@ -263,7 +284,7 @@ export class PageStore {
       const pending = await this.#journal();
       if (!pending) return null;
       this.o.log('warn', 'pages.rename: finishing a rename that was left part way', { from: pending.from, to: pending.to });
-      return this.#finish(pending, openBookId, performance.now());
+      return this.#forgetOnFailure(() => this.#finish(pending, openBookId, performance.now()));
     });
   }
 
@@ -287,9 +308,13 @@ export class PageStore {
   // Checks the request and finds the files that hold a link to rewrite. Writes nothing.
   async #plan(from: PageRef, to: PageRef): Promise<HoardRenameV1> {
     const [id, newId] = [idOf(from), idOf(to)];
-    const pages = await this.#scan();
-    const index = titleIndex(pages);
-    if (!pages.some((p) => p.id === id)) throw new PageRefused('missing', `${id} is not a page`);
+    let index = await this.#index();
+    // a page that arrived through sync since the last list
+    if (!index.has(id) && existsSync(this.file(from))) {
+      this.#titles = null;
+      index = await this.#index();
+    }
+    if (!index.has(id)) throw new PageRefused('missing', `${id} is not a page`);
     const oldTitle = titleOf(from.path);
     const newTitle = this.checkTitle(to.path);
     const clash = index.taken(to.tree, newTitle, id);
@@ -298,7 +323,7 @@ export class PageStore {
     if (newTitle === oldTitle) return plan;
 
     if (to.tree === 'wiki' && key(newTitle) !== key(oldTitle)) {
-      const hidden = pages.find((p) => p.tree === 'sources' && key(p.title) === key(newTitle));
+      const hidden = index.taken('sources', newTitle);
       if (hidden) this.o.log('warn', 'pages.rename.shadows', { id: newId, shadows: hidden.id });
     }
     // Links reach the page only if it is the one their title resolves to.
@@ -370,11 +395,26 @@ export class PageStore {
     const inOwnRepo = (rel: string) => own.some((b) => rel.startsWith(`${b}/`));
     const run = () => this.#execute(plan, openBookId);
     const result = this.o.layer ? (await this.o.layer.around([...named].filter((rel) => !inOwnRepo(rel)), run, 'author')).result : await run();
+    this.#track(plan.from, plan.to);
     const ms = Math.round(performance.now() - start);
     this.o.log('info', 'pages.rename', {
       from: plan.from, to: plan.to, files: result.rewrittenFiles, links: result.rewrittenLinks, deferred: result.deferred.length, skipped: result.skipped, ms,
     });
     return result;
+  }
+
+  // Moves a renamed page in the index, if one is built.
+  #track(from: string, to: string): void {
+    if (!this.#titles) return;
+    const ref = parseId(to);
+    this.#titles.remove(from);
+    try {
+      const s = statSync(this.file(ref));
+      this.#titles.add({ id: to, tree: ref.tree, path: ref.path, title: titleOf(ref.path), size: s.size, mtime: s.mtimeMs });
+    } catch (err) {
+      this.o.log('warn', `pages: ${to} does not stat after its rename, so the titles are walked again`, String(err));
+      this.#titles = null;
+    }
   }
 
   async #execute(plan: HoardRenameV1, openBookId: string | null): Promise<Renamed> {

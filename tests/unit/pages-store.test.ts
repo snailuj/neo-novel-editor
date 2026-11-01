@@ -6,6 +6,7 @@ import { mkdirSync, statSync, symlinkSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { PageRefused } from '../../src/hoard/pages/identity.ts';
+import { PageStore } from '../../src/hoard/pages/store.ts';
 import { pagesLibrary } from './pages-support.ts';
 
 test('list returns both trees\' .html files with their facts, and no body', async (t) => {
@@ -131,4 +132,34 @@ test('list and the others log what they did, and list logs its time', async (t) 
   const data = line.data as { pages: number; ms: number };
   assert.equal(data.pages, 1);
   assert.equal(typeof data.ms, 'number');
+});
+
+// Rule: the titles are walked from disk once, then kept by create and rename, and walked
+// again only by list(), so a thousand creates cost one walk and not a thousand.
+test('create, resolve and rename walk the trees once between lists, and list picks up files that arrived', async (t) => {
+  let walks = 0;
+  class Counting extends PageStore {
+    override async *entries() {
+      walks++;
+      yield* super.entries();
+    }
+  }
+  const { library, put, has } = pagesLibrary(t);
+  const store = new Counting({ library: () => library, log: () => {} });
+  put('wiki/Tide.html', '<p>x</p>');
+  for (let i = 0; i < 30; i++) await store.create('wiki', `Folder/Page ${i}.html`, '<p>x</p>');
+  assert.equal((await store.resolve('page 7'))?.id, 'wiki/Folder/Page 7.html', 'a created page resolves');
+  await assert.rejects(store.create('wiki', 'Else/TIDE.html', 'x'), (e: PageRefused) => e.code === 'taken');
+  await store.rename('wiki/Folder/Page 3.html', 'Moved.html', null);
+  assert.equal((await store.resolve('Moved'))?.id, 'wiki/Moved.html', 'a renamed page resolves at its new title');
+  assert.equal(await store.resolve('Page 3'), undefined, 'and not at its old one');
+  await store.create('wiki', 'Page 3.html', '<p>the old title is free</p>');
+  // create and resolve walk once; a rename walks again only for the files that hold links
+  assert.equal(walks, 2, `walked ${walks} times`);
+
+  put('wiki/Synced/Arrived.html', '<p>from another device</p>');
+  await assert.rejects(store.create('wiki', 'Synced/Arrived.html', 'x'), (e: PageRefused) => e.code === 'taken', 'the file on disk is still checked');
+  await store.list();
+  await assert.rejects(store.create('wiki', 'Other/arrived.html', 'x'), (e: PageRefused) => e.code === 'taken', 'list took in the arrived title');
+  assert.equal(has('wiki/Other/arrived.html'), false);
 });
