@@ -40,9 +40,9 @@ const short = (text: string) => createHash('sha256').update(text).digest('hex').
 
 export const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
-/** A job's id: the same source text at the same hop, from the same parent, is one job. */
-export function jobId(source: { bookId: string; chId: string }, sourceHash: string, hop: number, parent?: string): string {
-  return `j-${short(['job', source.bookId, source.chId, sourceHash, String(hop), parent ?? ''].join('\0'))}`;
+/** A job's id: the same page's text at the same hop, from the same parent, is one job. */
+export function jobId(source: { page: string }, sourceHash: string, hop: number, parent?: string): string {
+  return `j-${short(['job', source.page, sourceHash, String(hop), parent ?? ''].join('\0'))}`;
 }
 
 /** A proposal's id: one answer file read twice yields the same ids. */
@@ -59,14 +59,14 @@ const linked = (line: string) => [...new Set([...line.matchAll(/\[\[([^\]|#]*)/g
 type Card = Pick<RippleProposal, 'kind' | 'source'> & Partial<RippleProposal>;
 
 /**
- * What a card changes, wording and job aside: its kind, source and target page, and the
+ * What a card changes, wording and job aside: its kind, source page and target page, and the
  * words a claim replaces, the pages a topic line links (or, with none, its words) or a
  * mint's title. A judge asked twice words one change differently, so a proposal's id,
  * which holds the quote and the job, does not find the earlier card (re-run test, 24 Oct).
  */
 export function cardKey(p: Card): string {
   const what = p.kind === 'claim' ? norm(p.anchor ?? '') : p.kind === 'topic' ? linked(p.line ?? '') || norm(p.line ?? '') : '';
-  return ['card', p.kind, p.source.bookId, p.source.chId, norm(p.target ?? ''), what].join('\0');
+  return ['card', p.kind, p.source.page, norm(p.target ?? ''), what].join('\0');
 }
 
 /** The cards a new proposal must not repeat, by key: those waiting on the writer and those they rejected. */

@@ -5,26 +5,30 @@
 // Packets and answers are scratch and stay out of the history (.neo/ripple/.gitignore);
 // the brief, the rulings and every change ripple makes are kept.
 //
+// Ripple reads the page store (pages/store.ts) and so both trees, wiki/ and sources/.
 // Nothing a judge proposes changes the library until the author applies it, one proposal
-// at a time, and nothing is written into the wiki while the wiki is the open book, since
-// the window writes the open book's files itself. A change the librarian writes runs as a
-// librarian edit (GitLayer.around), so blame credits it, and opens the next hop's job for
-// the page it changed; a suggestion or comment waits on the author instead. Calls run one
-// at a time, so two runs never write one packet twice.
+// at a time. A change to a librarian-owned wiki page, and a new wiki page, run as a
+// librarian edit (GitLayer.around) over the page's own file, so blame credits it, and
+// open the next hop's job for the page they changed. Every change to an author-owned
+// page, in either tree, is a suggestion or comment mark that waits on the author: ripple
+// never writes such a page's bytes. Calls run one at a time, so two runs never write one
+// packet twice.
+import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import type { HoardChangeV1 } from '../../generated/hoard-change-v1.js';
-import { validateHoardChangeV1, validateHoardPageV1 } from '../../generated/validators.cjs';
+import { validateHoardPageV1 } from '../../generated/validators.cjs';
+import type { HoardPageV1 } from '../../generated/hoard-page-v1.js';
+import { oneName, writeWhole } from '../files.ts';
 import type { BlameLine } from '../git/blame.ts';
 import type { Paired } from '../git/layer.ts';
-import type { AddRequest } from '../marks/store.ts';
-import type { Mark, MarkWho } from '../../generated/hoard-marks-v1.js';
-import { oneName, writeWhole } from '../files.ts';
-import type { WikiPages } from '../wiki/store.ts';
+import { PageRefused, titleOf } from '../pages/identity.ts';
+import type { PageStore } from '../pages/store.ts';
+import { inline } from '../wiki/inline.ts';
 import { plan, type Plan } from './apply.ts';
 import { AnswerError, readAnswer, type Proposed } from './contract.ts';
+import { corpusPath, pagesCorpus, pageText, readLibrary, readSidecar, sidecarRel, type PageLibrary, type RipplePage } from './library.ts';
 import { buildPacket } from './packet.ts';
-import { chapterRel, corpusPath, pageText, readWiki, wikiCorpus, type Wiki, type WikiPage } from './pages.ts';
+import type { OwnerOf, RippleMarks } from './ports.ts';
 import { newJob, reconcile, superseded } from './reconcile.ts';
 import { cardKey, heldCards, LAST_HOP, proposalId, repeatOf, Rulings, sha256, type RippleJob, type RippleProposal, type RippleState } from './rulings.ts';
 import type { Corpus, Embed } from './shortlist.ts';
@@ -33,22 +37,17 @@ type Log = (level: 'error' | 'warn' | 'info' | 'debug', message: string, data?: 
 
 export interface RippleOptions {
   library: () => string;
-  wiki: {
-    pages(): WikiPages | null;
-    wikiId(): string | null;
-    mint(page: { title: string; paragraphs: readonly string[]; frontmatter: Record<string, unknown>; origin: string }, openBookId: string | null): { bookId: string; chId: string; files: string[] };
-  };
-  marks: {
-    add(req: AddRequest, who: MarkWho): Promise<{ id: string; marks: Mark[] }>;
-    chapter(bookId: string, chId: string): Promise<Mark[]>;
-  };
+  pages: Pick<PageStore, 'list' | 'read' | 'write' | 'create'>;
+  marks: RippleMarks;
+  ownerOf: OwnerOf;
   layer: {
     head(): Promise<string | null>;
     show(commit: string, rel: string): Promise<string | null>;
     changed(from: string, to: string, under: string): Promise<{ rel: string; byAuthor: boolean }[]>;
-    blame(ids: { bookId: string; chId: string }): Promise<BlameLine[]>;
     around<T>(paths: readonly string[], apply: () => Promise<T>): Promise<Paired<T>>;
   };
+  /** Who wrote each paragraph of a page; without it a librarian-owned page counts as the librarian's throughout. */
+  blame?: (page: string) => Promise<BlameLine[]>;
   /** Told after a write outside a librarian edit, so the history takes it. */
   wrote?: (name: string) => void;
   /** The meaning model, once it is set up; without it packets leave its ten out. */
@@ -58,7 +57,7 @@ export interface RippleOptions {
 }
 
 export interface RunSummary {
-  /** false before the first import: there is no wiki to ripple through. */
+  /** false while the library has no page in either tree: there is nothing to ripple through. */
   wiki: boolean;
   /** The first run: the cursor is set and no job is made. */
   baseline: boolean;
@@ -75,7 +74,6 @@ export interface RunSummary {
 }
 
 export interface Overview {
-  wiki: boolean;
   packets: string;
   inbox: string;
   brief: string;
@@ -91,8 +89,8 @@ export interface Decided {
   proposal: RippleProposal;
   /** What applying did, in a sentence for the author. */
   said: string;
-  /** The page it changed or marked, so the window can show it. */
-  page: { bookId: string; chId: string } | null;
+  /** The id of the page it changed or marked, so the window can show it. */
+  page: string | null;
 }
 
 export const DEFAULT_BRIEF = `# Ripple brief
@@ -115,7 +113,7 @@ You are the librarian's judge for a writer's world-building wiki. A packet names
 
 ## How the writer sees your work
 
-Each proposal waits for the writer, who applies it, rejects it or sets it aside. Words the writer wrote are never written over: a claim on them becomes a suggestion they can take or leave. Write your reasons for the writer: one or two plain sentences.
+Each proposal waits for the writer, who applies it, rejects it or sets it aside. Words the writer wrote are never written over: a claim on them becomes a suggestion they can take or leave. That holds for every page in the sources too. Write your reasons for the writer: one or two plain sentences.
 `;
 
 const GITIGNORE = 'packets/\ninbox/\n';
@@ -180,21 +178,24 @@ export class Ripple {
     return { text: bytes.toString('utf8'), sha256: sha256(bytes.toString('utf8')) };
   }
 
-  #changes(): (HoardChangeV1 | null)[] {
+  // The change log's lines as parsed; reconcile picks out the page events and ignores the rest.
+  #changes(): unknown[] {
     const text = this.#read('.neo/changes.jsonl') ?? '';
     return text.split('\n').filter((l) => l.trim()).map((line) => {
       try {
-        const value = JSON.parse(line) as unknown;
-        return validateHoardChangeV1(value) ? value : null;
+        return JSON.parse(line) as unknown;
       } catch {
         return null;
       }
     });
   }
 
-  #wiki(): Wiki | null {
-    const pages = this.#o.wiki.pages();
-    return pages ? readWiki(this.#lib, pages, this.#o.log) : null;
+  #library(): Promise<PageLibrary> {
+    return readLibrary({ root: this.#lib, store: this.#o.pages, ownerOf: this.#o.ownerOf, log: this.#o.log });
+  }
+
+  async #html(page: string): Promise<string | null> {
+    return (await this.#o.pages.read(page))?.html ?? null;
   }
 
   async #append(records: Parameters<Rulings['append']>[0]): Promise<RippleState> {
@@ -210,23 +211,24 @@ export class Ripple {
 
   async #run(): Promise<RunSummary> {
     const summary: RunSummary = { wiki: false, baseline: false, made: 0, packeted: 0, read: 0, proposals: 0, repeats: 0, problems: [], packets: this.#dir('packets') };
-    const wiki = this.#wiki();
-    if (!wiki) return summary;
+    const library = await this.#library();
+    if (!library.pages.length) return summary;
     summary.wiki = true;
     this.#setUp();
     let state = this.#rulings.read();
     const rec = await reconcile({
-      state, wiki, head: await this.#o.layer.head(), changes: this.#changes(),
+      state, pages: library.pages, head: await this.#o.layer.head(), changes: this.#changes(),
       changed: (from, to, under) => this.#o.layer.changed(from, to, under),
       show: (commit, rel) => this.#o.layer.show(commit, rel),
-      read: (rel) => this.#read(rel),
+      read: (id) => this.#html(id),
       at: this.#now(),
       log: this.#o.log,
     });
     if (rec.records.length) state = await this.#append(rec.records);
     summary.baseline = rec.baseline;
     summary.made = rec.made.length;
-    ({ state, n: summary.packeted } = await this.#packets(state, wiki));
+    for (const job of rec.made) this.#o.log('info', 'ripple.job', { id: job.id, page: job.source.page, origin: job.origin, hop: job.hop });
+    ({ state, n: summary.packeted } = await this.#packets(state, library));
     const answers = await this.#answers(state);
     summary.read = answers.read;
     summary.proposals = answers.proposals;
@@ -237,21 +239,21 @@ export class Ripple {
   }
 
   // A packet for each open job; a job whose page is gone is set aside.
-  async #packets(state: RippleState, wiki: Wiki): Promise<{ state: RippleState; n: number }> {
+  async #packets(state: RippleState, library: PageLibrary): Promise<{ state: RippleState; n: number }> {
     const open = [...state.jobs.values()].filter((j) => j.state === 'open');
     if (!open.length) return { state, n: 0 };
-    const { corpus, byPath } = wikiCorpus(this.#lib, wiki);
+    const { corpus, byPath } = pagesCorpus(library, this.#o.log);
     const embed = this.#o.embed?.();
     const records: RippleJob[] = [];
     let n = 0;
     for (const job of open) {
       const { problem: _problem, ...rest } = job;
-      const html = this.#read(chapterRel(job.source.bookId, job.source.chId));
+      const html = await this.#html(job.source.page);
       if (html === null) {
         records.push({ ...rest, at: this.#now(), state: 'skipped', problem: 'The page is no longer in the library.' });
         continue;
       }
-      const packet = await packetOf({ library: this.#lib, job, html, wiki, corpus, byPath, embed });
+      const packet = await packetOf({ library: this.#lib, job, html, corpus, byPath, embed });
       writeWhole(this.#packetFile(job.id), packet.text);
       records.push({ ...rest, at: this.#now(), state: 'packeted' });
       n++;
@@ -305,34 +307,34 @@ export class Ripple {
     return out;
   }
 
-  /** A job for a chapter of the open book, Ripple This Chapter; then its packet. */
-  ask(source: { bookId: string; chId: string; title: string }): Promise<{ job: string; made: boolean; packet: string | null; wiki: boolean }> {
+  /** A job for a page of either tree, Ripple This Page; then its packet. */
+  ask(source: { page: string }): Promise<{ job: string; made: boolean; packet: string | null }> {
     return this.#queued(async () => {
-      const wiki = this.#wiki();
-      if (!wiki) return { job: '', made: false, packet: null, wiki: false };
+      const library = await this.#library();
       this.#setUp();
-      const html = this.#read(chapterRel(source.bookId, source.chId));
-      if (html === null) throw new Error('The chapter is not saved yet. Try again in a moment.');
+      const html = await this.#html(source.page);
+      if (html === null) throw new Error('The page is not in the library.');
       let state = this.#rulings.read();
       const at = this.#now();
-      const job = newJob(state, [], { source, html, commit: await this.#o.layer.head(), origin: 'asked', hop: 0, at });
+      const job = newJob(state, [], { source: { page: source.page, title: titleOf(source.page) }, html, commit: await this.#o.layer.head(), origin: 'asked', hop: 0, at });
       if (!job) {
-        const known = [...state.jobs.values()].reverse().find((j) => j.source.bookId === source.bookId && j.source.chId === source.chId && j.hop === 0);
+        const known = [...state.jobs.values()].reverse().find((j) => j.source.page === source.page && j.hop === 0);
         const id = known?.id ?? '';
-        return { job: id, made: false, packet: id && existsSync(this.#packetFile(id)) ? this.#packetFile(id) : null, wiki: true };
+        return { job: id, made: false, packet: id && existsSync(this.#packetFile(id)) ? this.#packetFile(id) : null };
       }
       state = await this.#append([...superseded(state, [job], at), job]);
-      await this.#packets(state, wiki);
-      return { job: job.id, made: true, packet: this.#packetFile(job.id), wiki: true };
+      this.#o.log('info', 'ripple.job', { id: job.id, page: source.page, origin: job.origin, hop: job.hop });
+      await this.#packets(state, library);
+      return { job: job.id, made: true, packet: this.#packetFile(job.id) };
     });
   }
 
-  /** The author's ruling on a proposal. Applying refuses while the wiki is the open book. */
-  decide(openBookId: string | null, id: string, decision: 'apply' | 'reject' | 'defer'): Promise<Decided> {
-    return this.#queued(() => this.#decide(openBookId, id, decision));
+  /** The author's ruling on a proposal. */
+  decide(id: string, decision: 'apply' | 'reject' | 'defer'): Promise<Decided> {
+    return this.#queued(() => this.#decide(id, decision));
   }
 
-  async #decide(openBookId: string | null, id: string, decision: 'apply' | 'reject' | 'defer'): Promise<Decided> {
+  async #decide(id: string, decision: 'apply' | 'reject' | 'defer'): Promise<Decided> {
     const state = this.#rulings.read();
     const p = state.proposals.get(id);
     if (!p) throw new Error('Ripple has no such proposal.');
@@ -347,78 +349,80 @@ export class Ripple {
     if (decision === 'defer') return ruled({ status: 'deferred', delta: 'The author set it aside for now.' }, 'Set aside for later.');
     if (p.kind === 'nothing') return ruled({ status: 'rejected' }, 'There was nothing to apply.');
 
-    const wikiId = this.#o.wiki.wikiId();
-    if (!wikiId) throw new Error('There is no wiki yet: import pages first.');
-    if (wikiId === openBookId) throw new Error('The wiki is open, so ripple writes nothing into it. Go back to the shelf or to another book, then apply.');
-    const wiki = this.#wiki()!;
+    const library = await this.#library();
     const job = state.jobs.get(p.job);
-    const rel = chapterRel(p.source.bookId, p.source.chId);
+    const rel = p.source.page;
     const then = job?.commit ? await this.#o.layer.show(job.commit, rel) : null;
-    const source = [then, this.#read(rel)].filter((t): t is string => t !== null).map(pageText).join('\n\n');
+    const now = await this.#html(rel);
+    const source = [then, now].filter((t): t is string => t !== null).map(pageText).join('\n\n');
     const made = await plan({
-      proposal: p, wiki, source,
-      html: (page) => this.#read(page.rel),
-      blame: (page) => this.#o.layer.blame({ bookId: wiki.bookId, chId: page.chId }),
-      marks: (page) => this.#o.marks.chapter(wiki.bookId, page.chId),
-      origin: (page) => this.#origin(wiki, page),
+      proposal: p, library, source,
+      html: (page) => this.#html(page.id),
+      blame: async (page) => (await this.#o.blame?.(page.id)) ?? [],
+      marks: (page) => this.#o.marks.list(page.id),
+      origin: (page) => readSidecar(this.#lib, page.id, this.#o.log)?.source.path ?? null,
     });
-    return this.#carryOut(made, p, wiki, openBookId, ruled);
+    return this.#carryOut(made, p, ruled);
   }
 
   async #carryOut(
-    made: Plan, p: RippleProposal, wiki: Wiki, openBookId: string | null,
+    made: Plan, p: RippleProposal,
     ruled: (fields: Partial<RippleProposal>, said: string, page?: Decided['page']) => Promise<Decided>,
   ): Promise<Decided> {
     const at = this.#now();
-    const at$ = (page: WikiPage) => ({ bookId: wiki.bookId, chId: page.chId });
     if (made.type === 'defer') return ruled({ status: 'deferred', delta: made.delta }, made.delta);
-    if (made.type === 'done') return ruled({ status: 'applied', outcome: made.outcome, delta: made.delta }, made.delta, made.page ? at$(made.page) : null);
+    if (made.type === 'done') return ruled({ status: 'applied', outcome: made.outcome, delta: made.delta }, made.delta, made.page?.id ?? null);
     if (made.type === 'mark') {
-      await this.#o.marks.add({ bookId: wiki.bookId, chId: made.page.chId, ...made.mark }, 'librarian');
+      await this.#o.marks.add({ page: made.page.id, ...made.mark }, 'librarian');
+      this.#o.log('info', 'ripple.mark', { page: made.page.id, kind: made.mark.kind, proposal: p.id });
       const said = made.outcome === 'suggested'
         ? `The change waits on ${made.page.title} as a suggestion for you to accept or reject.`
         : `A comment on ${made.page.title} holds the line for you to add or not.`;
-      return ruled({ status: 'applied', outcome: made.outcome, ...(made.delta ? { delta: made.delta } : {}) }, made.delta ? `${said} ${made.delta}` : said, at$(made.page));
+      return ruled({ status: 'applied', outcome: made.outcome, ...(made.delta ? { delta: made.delta } : {}) }, made.delta ? `${said} ${made.delta}` : said, made.page.id);
     }
     // A change the librarian makes: the edit, the ruling and the next hop's job land in
     // one librarian commit.
-    const next = (state: RippleState, page: { bookId: string; chId: string; title: string }, html: string, commit: string | null) =>
+    const next = (state: RippleState, page: { page: string; title: string }, html: string, commit: string | null) =>
       (p.hop + 1 > LAST_HOP ? null : newJob(state, [], { source: page, html, commit, origin: 'ripple', hop: p.hop + 1, parent: p.id, at }));
     if (made.type === 'write') {
       const page = made.page;
       const proposal: RippleProposal = { ...p, at, status: 'applied', outcome: 'written', ...(made.delta ? { delta: made.delta } : {}) };
-      await this.#o.layer.around([page.rel, this.#rulingsRel], async () => {
-        writeWhole(path.join(this.#lib, page.rel), made.html);
+      await this.#o.layer.around([page.id, this.#rulingsRel], async () => {
+        const written = await this.#o.pages.write(page.id, made.before, made.html);
+        if (!written.ok) throw new Error(`${page.title} changed while ripple was working on it (${written.reason}). Apply again to read it afresh.`);
         const state = this.#rulings.read();
-        const job = next(state, { bookId: wiki.bookId, chId: page.chId, title: page.title }, made.html, await this.#o.layer.head());
+        const job = next(state, { page: page.id, title: page.title }, made.html, await this.#o.layer.head());
         await this.#rulings.append([proposal, ...(job ? [job] : [])]);
+        if (job) this.#o.log('info', 'ripple.job', { id: job.id, page: page.id, origin: job.origin, hop: job.hop });
       });
-      return { proposal, said: `${page.title} is changed. Undo it from the page's history, or by hand.`, page: at$(page) };
+      this.#o.log('info', 'ripple.write', { page: page.id, proposal: p.id });
+      return { proposal, said: `${page.title} is changed. Undo it from the page's history, or by hand.`, page: page.id };
     }
     const proposal: RippleProposal = { ...p, at, status: 'applied', outcome: 'minted' };
-    const minted = await this.#o.layer.around([wiki.bookId, `.neo/${wiki.bookId}/pages`, this.#rulingsRel], async () => {
-      const result = this.#o.wiki.mint({
-        title: made.title, paragraphs: made.paragraphs, origin: made.origin,
-        frontmatter: { type: 'lore', tags: ['needs-gathering'], ripple: { from: p.source.title, proposal: p.id } },
-      }, openBookId);
-      const html = this.#read(chapterRel(result.bookId, result.chId)) ?? '';
-      const job = next(this.#rulings.read(), { bookId: result.bookId, chId: result.chId, title: made.title }, html, await this.#o.layer.head());
-      await this.#rulings.append([proposal, ...(job ? [job] : [])]);
-      return result;
-    });
-    return { proposal, said: `${made.title} is a new page in the wiki.`, page: { bookId: minted.result.bookId, chId: minted.result.chId } };
-  }
-
-  // Where a page came from, as its sidecar says: a page ripple minted names its proposal.
-  #origin(wiki: Wiki, page: WikiPage): string | null {
-    const text = this.#read(`.neo/${wiki.bookId}/pages/${page.chId}.json`);
-    if (text === null) return null;
+    const id = `wiki/${made.title}.html`;
+    let created = false;
     try {
-      const data = JSON.parse(text) as unknown;
-      return validateHoardPageV1(data) ? data.source.path : null;
-    } catch {
-      return null;
+      await this.#o.layer.around([id, sidecarRel(id), this.#rulingsRel], async () => {
+        const html = made.paragraphs.map((t) => `<p data-block="${randomBytes(3).toString('hex')}">${inline(t).html || '<br>'}</p>`).join('');
+        await this.#o.pages.create('wiki', `${made.title}.html`, html);
+        created = true;
+        // a page with no sidecar is the author's, so the sidecar follows the page and a stop between leaves it safe
+        const sidecar: HoardPageV1 = {
+          version: 1, source: { path: made.origin, name: made.title, sha256: sha256(html) },
+          frontmatter: { type: 'lore', tags: ['needs-gathering'], ripple: { from: p.source.title, proposal: p.id } }, imported: at,
+        };
+        if (!validateHoardPageV1(sidecar)) throw new TypeError(`ripple: refusing to write a page sidecar: ${JSON.stringify(validateHoardPageV1.errors)}`);
+        writeWhole(path.join(this.#lib, ...sidecarRel(id).split('/')), `${JSON.stringify(sidecar, null, 2)}\n`);
+        const job = next(this.#rulings.read(), { page: id, title: made.title }, html, await this.#o.layer.head());
+        await this.#rulings.append([proposal, ...(job ? [job] : [])]);
+        if (job) this.#o.log('info', 'ripple.job', { id: job.id, page: id, origin: job.origin, hop: job.hop });
+      });
+    } catch (err) {
+      if (!created && err instanceof PageRefused) return ruled({ status: 'deferred', delta: err.message }, err.message);
+      throw err;
     }
+    this.#o.log('info', 'ripple.mint', { page: id, proposal: p.id });
+    return { proposal, said: `${made.title} is a new page in the wiki.`, page: id };
   }
 
   /** What waits: jobs for the judge, proposals for the author. Reads; never writes. */
@@ -426,7 +430,6 @@ export class Ripple {
     const state = this.#rulings.read();
     const proposals = [...state.proposals.values()];
     return {
-      wiki: this.#o.wiki.wikiId() !== null,
       packets: this.#dir('packets'),
       inbox: this.#dir('inbox'),
       brief: this.#dir('brief.md'),
@@ -453,12 +456,10 @@ export const rippleFiles = (library: string, job: string) => ({
 });
 
 /** A job's packet, for its source's HTML as it is now. */
-export function packetOf(o: { library: string; job: RippleJob; html: string; wiki: Wiki; corpus: Corpus; byPath: Map<string, WikiPage>; embed?: Embed }) {
-  const name = o.job.source.title || o.job.source.chId;
+export function packetOf(o: { library: string; job: RippleJob; html: string; corpus: Corpus; byPath: Map<string, RipplePage>; embed?: Embed }) {
   const files = rippleFiles(o.library, o.job.id);
   return buildPacket({
-    job: o.job, sourceText: pageText(o.html),
-    sourcePath: o.job.source.bookId === o.wiki.bookId ? corpusPath(name) : `manuscript/${corpusPath(name)}`,
+    job: o.job, sourceText: pageText(o.html), sourcePath: corpusPath(o.job.source.page),
     corpus: o.corpus, byPath: o.byPath,
     briefFile: files.brief, inboxFile: files.answer, library: o.library, embed: o.embed,
   });

@@ -24,7 +24,7 @@ export interface RippleJob {
    */
   state: "open" | "packeted" | "judged" | "skipped";
   /**
-   * What made the job: an import, a change in git, the author's Ripple This Chapter, or an earlier ripple.
+   * What made the job: an import, a change in git, the author's Ripple This Page, or an earlier ripple.
    */
   origin: "imported" | "changed" | "asked" | "ripple";
   source: RipplePage;
@@ -44,11 +44,10 @@ export interface RippleJob {
   problem?: string;
 }
 /**
- * A page of the library: a chapter of a book, with the title it had then.
+ * A page of the library, by its id (<tree>/<path>, e.g. wiki/People/Name.html), with the title it had then.
  */
 export interface RipplePage {
-  bookId: string;
-  chId: string;
+  page: string;
   title: string;
 }
 export interface RippleProposal {

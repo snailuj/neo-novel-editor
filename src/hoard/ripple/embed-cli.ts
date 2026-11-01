@@ -5,7 +5,7 @@
 // after Run Ripple and before the judge reads the packets. Only packets with no answer
 // yet are written again, and only when the model changes them; jobs, rulings and pages
 // are never touched. Vectors are cached outside the library (by default
-// ~/.cache/neo-ripple), so the first run embeds the whole wiki and later runs only what
+// ~/.cache/neo-ripple), so the first run embeds the whole library and later runs only what
 // changed. Needs transformers.js: npm i --no-save @huggingface/transformers.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -13,11 +13,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { writeWhole } from '../files.ts';
-import { MarkStore } from '../marks/store.ts';
-import { WikiStore } from '../wiki/store.ts';
+import { PageStore } from '../pages/store.ts';
 import { EmbedderMissing, GEMMA, loadEmbedder } from './embedder.ts';
 import { packetOf, rippleFiles } from './engine.ts';
-import { chapterRel, readWiki, wikiCorpus } from './pages.ts';
+import { pagesCorpus, readLibrary } from './library.ts';
+import { shimOwnerOf } from './stage3-shim.ts';
 import { Rulings } from './rulings.ts';
 import type { Embed } from './shortlist.ts';
 
@@ -31,19 +31,18 @@ export interface TopUp {
 /** Writes each waiting packet again with the model's pages; returns how many changed. */
 export async function topUp(library: string, embed: Embed, log: (message: string) => void = () => {}): Promise<TopUp> {
   const quiet = () => {};
-  const marks = new MarkStore({ library: () => library, log: quiet });
-  const pages = new WikiStore({ library: () => library, marks, log: quiet }).pages();
-  if (!pages) throw new Error(`${library} has no wiki yet`);
-  const wiki = readWiki(library, pages, quiet);
+  const store = new PageStore({ library: () => library, log: quiet });
+  const pages = await readLibrary({ root: library, store, ownerOf: shimOwnerOf(quiet), log: quiet });
+  if (!pages.pages.length) throw new Error(`${library} has no pages yet`);
   const state = new Rulings(() => library).read();
   const waiting = [...state.jobs.values()].filter((j) => j.state === 'packeted' && !existsSync(rippleFiles(library, j.id).answer));
   const out: TopUp = { waiting: waiting.length, written: 0 };
   if (!waiting.length) return out;
-  const { corpus, byPath } = wikiCorpus(library, wiki);
+  const { corpus, byPath } = pagesCorpus(pages, quiet);
   for (const job of waiting) {
-    const file = path.join(library, chapterRel(job.source.bookId, job.source.chId));
-    if (!existsSync(file)) continue;
-    const packet = await packetOf({ library, job, html: readFileSync(file, 'utf8'), wiki, corpus, byPath, embed });
+    const html = (await store.read(job.source.page))?.html;
+    if (html === undefined) continue;
+    const packet = await packetOf({ library, job, html, corpus, byPath, embed });
     const target = rippleFiles(library, job.id).packet;
     if (existsSync(target) && readFileSync(target, 'utf8') === packet.text) continue;
     writeWhole(target, packet.text);

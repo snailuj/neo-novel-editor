@@ -1,32 +1,33 @@
 // Reconcile: which changes ripple has not yet taken a job for. It reads two things since
-// its cursor: the change log's new 'page-imported' lines for the wiki, and the wiki's
-// chapter files that the author's commits changed in git. Each becomes a hop-0 job for
-// the page as it stands, unless its words are the same as a job's already in the log
-// (formatting aside), so running it twice makes nothing new. A newer job for a page sets
-// the page's older waiting ones aside. The librarian's own commits are not changes here:
-// a ripple change opens its next hop itself (engine.ts).
+// its cursor: the change log's new page-imported and page-updated lines, and the pages
+// under wiki/ and sources/ that the author's commits changed in git. Each becomes a hop-0
+// job for the page as it stands, unless its words are the same as a job's already in the
+// log (formatting aside), so running it twice makes nothing new. A newer job for a page
+// sets the page's older waiting ones aside. The librarian's own commits are not changes
+// here: a ripple change opens its next hop itself (engine.ts).
 //
-// The first run only sets the cursor, so a library that has a wiki already does not wake
+// The change log is read leniently, line by line as parsed: an attachment, a book import
+// (which names a chapter, not a page) and a line that is not a page event make no job.
+// The first run only sets the cursor, so a library that has pages already does not wake
 // to a job for every page. Pure, but for what it is handed.
-import type { HoardChangeV1 } from '../../generated/hoard-change-v1.js';
 import { paragraphTexts } from '../html.ts';
 import { plainText } from './contract.ts';
-import type { Wiki } from './pages.ts';
 import { jobId, LAST_HOP, sha256, type RippleCursor, type RippleJob, type RippleState } from './rulings.ts';
 
 export interface ReconcileInput {
   state: RippleState;
-  wiki: Wiki | null;
+  /** The pages of both trees as they are now. */
+  pages: readonly { id: string; title: string }[];
   /** The library's last commit; null with no history. */
   head: string | null;
-  /** Every line of .neo/changes.jsonl, in order; null for one that does not read. */
-  changes: readonly (HoardChangeV1 | null)[];
+  /** Every line of .neo/changes.jsonl, in order, as parsed; null for one that does not read. */
+  changes: readonly unknown[];
   /** The files under a folder that commits from..to changed, as GitLayer.changed has it. */
   changed(from: string, to: string, under: string): Promise<{ rel: string; byAuthor: boolean }[]>;
-  /** A file at a commit, or null. */
+  /** A file at a commit (a page id is its file), or null. */
   show(commit: string, rel: string): Promise<string | null>;
-  /** A file as it is now, relative to the library, or null. */
-  read(rel: string): string | null;
+  /** A page's html as it is now, by its id, or null. */
+  read(id: string): Promise<string | null>;
   at: string;
   log(level: 'warn' | 'info', message: string, data?: unknown): void;
 }
@@ -52,7 +53,7 @@ export function superseded(state: RippleState, made: readonly RippleJob[], at: s
   for (const job of made) {
     for (const old of state.jobs.values()) {
       if (old.id === job.id || old.hop !== job.hop || old.parent !== job.parent) continue;
-      if (old.source.bookId !== job.source.bookId || old.source.chId !== job.source.chId) continue;
+      if (old.source.page !== job.source.page) continue;
       if (old.state !== 'open' && old.state !== 'packeted') continue;
       if (out.some((o) => o.id === old.id)) continue;
       out.push({ ...old, at, state: 'skipped', problem: 'A newer change to the page took its place.' });
@@ -77,43 +78,52 @@ export function newJob(
   };
 }
 
+const PAGE_EVENTS = new Set(['page-imported', 'page-updated']);
+const TREES = ['wiki/', 'sources/'];
+
+/** The page a change-log line says came in or was updated; null for any other line. */
+export function pageEvent(line: unknown): string | null {
+  if (typeof line !== 'object' || line === null) return null;
+  const { kind, type, page } = line as Record<string, unknown>;
+  const what = typeof kind === 'string' ? kind : type;
+  return typeof what === 'string' && PAGE_EVENTS.has(what) && typeof page === 'string' ? page : null;
+}
+
 export async function reconcile(input: ReconcileInput): Promise<Reconciled> {
-  const { state, wiki, head, changes, at } = input;
+  const { state, pages, head, changes, at } = input;
   const cursor = (commit: string | null): RippleCursor => ({ version: 1, type: 'cursor', id: 'cursor', at, commit, changes: changes.length });
   if (!state.cursor) return { records: [cursor(head)], made: [], baseline: true };
   const made: RippleJob[] = [];
-  const take = (chId: string, html: string, origin: 'imported' | 'changed') => {
-    const page = wiki?.pages.find((p) => p.chId === chId);
+  const take = (id: string, html: string, origin: 'imported' | 'changed') => {
+    const page = pages.find((p) => p.id === id);
     if (!page || !wordsOf(html)) return;
-    const job = newJob(state, made, { source: { bookId: wiki!.bookId, chId, title: page.title }, html, commit: head, origin, hop: 0, at });
+    const job = newJob(state, made, { source: { page: id, title: page.title }, html, commit: head, origin, hop: 0, at });
     if (!job) return;
     // the page's later state in this same run is the one to judge
-    const earlier = made.findIndex((j) => j.source.chId === chId);
+    const earlier = made.findIndex((j) => j.source.page === id);
     if (earlier !== -1) made.splice(earlier, 1);
     made.push(job);
   };
 
-  if (wiki) {
-    for (const change of changes.slice(state.cursor.changes)) {
-      if (!change || change.kind !== 'page-imported' || change.bookId !== wiki.bookId) continue;
-      const html = input.read(change.dest);
-      if (html !== null) take(change.chId, html, 'imported');
-    }
+  for (const line of changes.slice(state.cursor.changes)) {
+    const id = pageEvent(line);
+    if (id === null) continue;
+    const html = await input.read(id);
+    if (html !== null) take(id, html, 'imported');
   }
 
   let moved = state.cursor.commit;
-  if (wiki && head && state.cursor.commit && head !== state.cursor.commit) {
+  if (head && state.cursor.commit && head !== state.cursor.commit) {
     try {
-      const files = await input.changed(state.cursor.commit, head, `${wiki.bookId}/chapters/`);
-      for (const { rel, byAuthor } of files) {
-        if (!byAuthor) continue;
-        const m = /\/chapters\/([^/]+)\.html$/.exec(rel);
-        if (!m) continue;
-        const after = await input.show(head, rel);
-        if (after === null) continue;
-        const before = await input.show(state.cursor.commit, rel);
-        if (before !== null && wordsOf(before) === wordsOf(after)) continue;
-        take(m[1]!, after, 'changed');
+      for (const under of TREES) {
+        for (const { rel, byAuthor } of await input.changed(state.cursor.commit, head, under)) {
+          if (!byAuthor || !pages.some((p) => p.id === rel)) continue;
+          const after = await input.show(head, rel);
+          if (after === null) continue;
+          const before = await input.show(state.cursor.commit, rel);
+          if (before !== null && wordsOf(before) === wordsOf(after)) continue;
+          take(rel, after, 'changed');
+        }
       }
     } catch (err) {
       // the cursor's commit is gone (history rewritten): start again from here

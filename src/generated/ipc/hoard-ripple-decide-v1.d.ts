@@ -4,7 +4,6 @@
  * The author's ruling on one ripple proposal, version 1.
  */
 export interface HoardRippleDecideV1 {
-  openBookId: string | null;
   id: string;
   decision: "apply" | "reject" | "defer";
 }
