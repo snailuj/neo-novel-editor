@@ -5,8 +5,9 @@
 // - a page's frontmatter and source go to its page sidecar, its CriticMarkup marks to
 //   the marks sidecar, found on the words they were about;
 // - each page adds a manifest line and a change event, and every file is checked;
-// - a page already in the wiki is skipped, one whose source changed is never written
-//   over, and a name already taken is not imported twice;
+// - a page already in the wiki is skipped, one whose source changed is updated only
+//   while NEO has not changed it (wiki-store-sources.test.ts), and a name already taken
+//   is not imported twice;
 // - nothing is written when nothing is new, or when the manifest does not read.
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -107,7 +108,7 @@ test('a later import adds its pages after the ones there and keeps the rest of b
   assert.ok(existsSync(`${file}.bak`), 'the version before is kept as NEO keeps it');
 });
 
-test('a page already in the wiki is skipped, a changed source is not written over, a name is taken once', async (t) => {
+test('a page already in the wiki is skipped, a changed source updates an untouched page, a name is taken once', async (t) => {
   const { library, wiki, page } = setup(t);
   const fox = page('lore/Fox.md', 'Red.\n');
   const owl = page('lore/Owl.md', 'Grey.\n');
@@ -118,14 +119,14 @@ test('a page already in the wiki is skipped, a changed source is not written ove
   const hareAgain = page('inbox/hare.md', 'Brown again.\n');
   const sorted = wiki.sort([fox, owl, otherFox, hare, hareAgain]);
   const verdicts = Object.fromEntries(sorted.verdicts.map((v) => [v.path, v.kind]));
-  assert.deepEqual(verdicts, { [fox]: 'same', [owl]: 'changed', [otherFox]: 'clash', [hare]: 'new', [hareAgain]: 'clash' });
+  assert.deepEqual(verdicts, { [fox]: 'same', [owl]: 'update', [otherFox]: 'clash', [hare]: 'new', [hareAgain]: 'clash' });
   const before = readFileSync(path.join(library, '.neo', 'manifest.jsonl'), 'utf8');
   await wiki.apply(sorted, null);
   const book = bookOf(library, wiki.wikiId()!);
   assert.deepEqual(book.chapterOrder.map((id: string) => book.chapterTitles[id]), ['Fox', 'Owl', 'Hare']);
   const owlId = book.chapterOrder[1];
-  assert.equal(noIds(readFileSync(path.join(library, wiki.wikiId()!, 'chapters', `${owlId}.html`), 'utf8')), '<p>Grey.</p>');
-  assert.equal(parseManifest(readFileSync(path.join(library, '.neo', 'manifest.jsonl'), 'utf8')).length, parseManifest(before).length + 1);
+  assert.equal(noIds(readFileSync(path.join(library, wiki.wikiId()!, 'chapters', `${owlId}.html`), 'utf8')), '<p>Grey and white.</p>');
+  assert.equal(parseManifest(readFileSync(path.join(library, '.neo', 'manifest.jsonl'), 'utf8')).length, parseManifest(before).length + 2);
 });
 
 test('a page that does not read is named with why, and the others still come in', async (t) => {
