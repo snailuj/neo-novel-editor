@@ -15,7 +15,7 @@
 // - the meaning model's top-up writes a waiting packet again with its pages, once, and
 //   leaves a packet the judge has answered alone.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { GitLayer, resolveSettings } from '../../src/hoard/git/layer.ts';
@@ -392,4 +392,26 @@ test('a ripple write to a page is a librarian commit of that page\'s own file, a
   const jobs = readFileSync(path.join(lib.library, '.neo', 'ripple', 'rulings.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((r) => r.type === 'job');
   const latest = new Map(jobs.map((j) => [j.id, j]));
   assert.deepEqual([...latest.values()].map((j) => [j.source.page, j.hop, j.origin]), [['wiki/Storm.html', 0, 'asked'], ['wiki/Harbour.html', 1, 'ripple']]);
+});
+
+// Rule: a mark Ripple cannot add because its page is gone is logged and leaves the card waiting.
+test('a mark for a page that vanished meanwhile is logged, and the card stays waiting', async (t) => {
+  const { ripple, page, imported, p, marks, library, logged } = setup(t);
+  page('wiki/Harbour.html', p('The harbour wall is made of timber.'));
+  await ripple.run();
+  page('wiki/Storm.html', p(STORM), 'librarian');
+  imported('wiki/Storm.html');
+  await ripple.run();
+  const [job] = ripple.overview().jobs;
+  writeFileSync(job!.answer, answer([
+    { kind: 'topic', target: 'wiki/Harbour.html', line: 'See [[Storm]].', reason: 'r', quote: 'broke the Harbour wall' },
+  ]));
+  await ripple.run();
+  const [card] = ripple.overview().proposals;
+  const add = marks.add.bind(marks);
+  marks.add = async (...args) => { rmSync(path.join(library, 'wiki/Harbour.html')); return add(...args); };
+  await assert.rejects(ripple.decide(card!.id, 'apply'), /Harbour is no longer a page, so the mark was not added/);
+  assert.equal(ripple.overview().proposals[0]!.status, 'proposed', 'the card stays waiting');
+  assert.equal(logged('ripple.mark').length, 0);
+  assert.deepEqual(logged('ripple.mark.refused').map((l) => (l.data as { page: string }).page), ['wiki/Harbour.html']);
 });

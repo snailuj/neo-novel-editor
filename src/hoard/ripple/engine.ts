@@ -383,7 +383,14 @@ export class Ripple {
     if (made.type === 'defer') return ruled({ status: 'deferred', delta: made.delta }, made.delta);
     if (made.type === 'done') return ruled({ status: 'applied', outcome: made.outcome, delta: made.delta }, made.delta, made.page?.id ?? null);
     if (made.type === 'mark') {
-      await this.#o.marks.add({ page: made.page.id, ...made.mark }, 'librarian');
+      try {
+        await this.#o.marks.add({ page: made.page.id, ...made.mark }, 'librarian');
+      } catch (err) {
+        if (!(err instanceof PageRefused)) throw err;
+        // the page went (renamed or removed) after the plan read it: the card keeps waiting
+        this.#o.log('warn', 'ripple.mark.refused', { page: made.page.id, proposal: p.id, reason: err.message });
+        throw new Error(`${made.page.title} is no longer a page, so the mark was not added. Run ripple again to read the library afresh.`);
+      }
       this.#o.log('info', 'ripple.mark', { page: made.page.id, kind: made.mark.kind, proposal: p.id });
       const said = made.outcome === 'suggested'
         ? `The change waits on ${made.page.title} as a suggestion for you to accept or reject.`
