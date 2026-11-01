@@ -12,6 +12,9 @@ import { launchProfile } from '../support/electron-profile.mjs';
 // same page named again in that chapter gets no second comment; a typed [[link]] is not a
 // forgotten reference; Stop Flagging This Page resolves the comment and quiets the page
 // in every chapter; and Flag This Page Again undoes both.
+// The pages are files under wiki/ and sources/ (stage 3 of pages as files). The Wiki book
+// is imported beside them only because the pane still opens a page through it until
+// stage 5; the librarian skips that book and reads the files.
 
 async function profileWithVault() {
   const profile = await mkdtemp(path.join(tmpdir(), 'neo-test-'));
@@ -26,6 +29,19 @@ async function profileWithVault() {
   await writeFile(kraken, '---\naliases: [the Deep One]\n---\nIt lives below the harbour.\n');
   const harbour = path.join(profile, 'vault', 'Harbour.md');
   await writeFile(harbour, 'The old wall faces east.\n');
+  // the pages as files: one in each tree, the first with an alias in its sidecar
+  const sidecar = (name, frontmatter) => JSON.stringify({
+    version: 1,
+    source: { path: `/synthetic/${name}.md`, name, sha256: '0'.repeat(64) },
+    frontmatter,
+    imported: '2026-10-15T22:00:00.000Z',
+  });
+  await mkdir(path.join(library, 'wiki'), { recursive: true });
+  await mkdir(path.join(library, 'sources'), { recursive: true });
+  await mkdir(path.join(library, '.neo', 'pages', 'wiki'), { recursive: true });
+  await writeFile(path.join(library, 'wiki', 'Kraken.html'), '<p>It lives below the harbour.</p>');
+  await writeFile(path.join(library, '.neo', 'pages', 'wiki', 'Kraken.html.json'), sidecar('Kraken', { aliases: ['the Deep One'] }));
+  await writeFile(path.join(library, 'sources', 'Harbour.html'), '<p>The old wall faces east.</p>');
   return { profile, library, files: [kraken, harbour] };
 }
 
@@ -138,6 +154,7 @@ test('a page named in new writing is flagged at the next save, once, hidden on r
     await menu(app, 'Stop Flagging This Page');
     await expect.poll(() => librarians('c1').then((l) => l.map(([, state]) => state))).toEqual(['resolved']);
     const quiet = JSON.parse(await readFile(path.join(library, '.neo', 'companion.json'), 'utf8'));
+    expect(Object.keys(quiet.quiet)).toEqual(['wiki/Kraken.html']);
     expect(Object.values(quiet.quiet).map((q) => q.title)).toEqual(['Kraken']);
     await write(1, ' The kraken, again.');
     await page.locator('.chapter-body p').nth(0).click();

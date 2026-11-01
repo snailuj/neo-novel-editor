@@ -222,10 +222,10 @@ export function activate(host: NeoMainHost): void {
   startLibrarianPairs(host, layer);
   const marks = startMarks(host, layer);
   const wiki = startWiki(host, layer, marks);
-  startCompanion(host, layer, marks, wiki);
   startReview(host, marks, { layer, wiki });
   startRipple(host, layer, marks, wiki);
   startSearch(host);
   const opened = layer.open().catch((err: unknown) => host.log('error', 'git.open failed', String(err)));
-  startPages(host, layer, opened);
+  const { store: pages } = startPages(host, layer, opened);
+  startCompanion(host, layer, marks, wiki, pages);
 }
