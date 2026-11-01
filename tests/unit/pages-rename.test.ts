@@ -4,7 +4,7 @@
 // title the tree holds; and if it stops part way, running it again finishes it without
 // rewriting anything twice. Page names here are neutral words.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -410,4 +410,16 @@ test('a note naming paths out of the library is ignored at recovery, and nothing
   }
   assert.deepEqual(readdirSync(outside), ['Secret.html']);
   assert.equal(readFileSync(path.join(outside, 'Secret.html'), 'utf8'), '<p>[[Harbour]]</p>');
+});
+
+// Rule: a rename of a page whose file is gone is refused before its note is written.
+test('a rename of a page deleted since the titles were walked is refused as missing, leaves no note, and the next rename works', async (t) => {
+  const { store, library, has } = fixture(t);
+  await store.list();
+  rmSync(path.join(library, FROM));
+  await assert.rejects(store.rename(FROM, 'Places/Port.html', null), (e: PageRefused) => e.code === 'missing');
+  assert.equal(has('.neo/pages/.rename.json'), false, 'no note of a rename is left');
+  assert.equal(has('wiki/Places/Port.html'), false);
+  assert.equal((await store.rename('wiki/Lantern.html', 'Lamp.html', null)).id, 'wiki/Lamp.html');
+  assert.equal(await store.recover(null), null);
 });
