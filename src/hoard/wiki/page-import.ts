@@ -29,7 +29,7 @@ import { appendRecord, parseManifest, serialiseRecord } from '../../librarian/ma
 import { writeWhole } from '../files.ts';
 import { anchorAt, anchorPoint } from '../marks/anchor.ts';
 import { newMark } from '../marks/model.ts';
-import { checkPath, idOf, parseId, titleOf, type Tree } from '../pages/identity.ts';
+import { checkPath, idOf, parseId, titleOf, TREES, type Tree } from '../pages/identity.ts';
 import { ownerOf } from '../review/owner.ts';
 import { copyAttachment } from './attachments.ts';
 import { pageHtml, type ConvertedPage } from './convert.ts';
@@ -131,37 +131,40 @@ export class PageImport {
   }
 
   // What the tree holds: the newest page for each source, every title and source name
-  // (by link key), what hoard's roots are, and each page's sidecar.
+  // (by link key), and each page's sidecar; and hoard's roots, from the sources of the
+  // pages of both trees.
   #known(): { bySource: Map<string, KnownPage<string> & { imported: string }>; names: Set<string>; hoards: Set<string>; sidecars: Map<string, HoardPageV1> } {
-    const tree = this.#o.tree;
     const bySource = new Map<string, KnownPage<string> & { imported: string }>();
     const names = new Set<string>();
     const hoards = new Set<string>();
     const sidecars = new Map<string, HoardPageV1>();
-    for (const rel of this.#walk(this.#abs(tree))) if (rel.endsWith('.html')) names.add(key(titleOf(rel)));
+    for (const rel of this.#walk(this.#abs(this.#o.tree))) if (rel.endsWith('.html')) names.add(key(titleOf(rel)));
     const rootOf = new Map<string, string | null>();
-    for (const rel of this.#walk(this.#abs(`.neo/pages/${tree}`))) {
-      if (!rel.endsWith('.html.json')) continue;
-      const id = `${tree}/${rel.slice(0, -'.json'.length)}`;
-      if (!existsSync(this.#abs(id))) continue; // a sidecar a crash left before its page
-      const file = this.#abs(this.#sidecarOf(id));
-      try {
-        const page = JSON.parse(readFileSync(file, 'utf8')) as unknown;
-        if (!validateHoardPageV1(page)) {
-          this.#o.log('warn', `pages.import: the page sidecar ${file} is not one`, validateHoardPageV1.errors);
-          continue;
+    for (const tree of TREES) {
+      for (const rel of this.#walk(this.#abs(`.neo/pages/${tree}`))) {
+        if (!rel.endsWith('.html.json')) continue;
+        const id = `${tree}/${rel.slice(0, -'.json'.length)}`;
+        if (!existsSync(this.#abs(id))) continue; // a sidecar a crash left before its page
+        const file = this.#abs(this.#sidecarOf(id));
+        try {
+          const page = JSON.parse(readFileSync(file, 'utf8')) as unknown;
+          if (!validateHoardPageV1(page)) {
+            this.#o.log('warn', `pages.import: the page sidecar ${file} is not one`, validateHoardPageV1.errors);
+            continue;
+          }
+          const dir = path.dirname(page.source.path);
+          if (!rootOf.has(dir)) rootOf.set(dir, hoardRoot(page.source.path));
+          const root = rootOf.get(dir);
+          if (root) hoards.add(root);
+          if (tree !== this.#o.tree) continue;
+          sidecars.set(id, page);
+          const k = pickKey({ path: page.source.path, sections: page.source.sections ?? [] });
+          const was = bySource.get(k);
+          if (!was || was.imported <= page.imported) bySource.set(k, { at: id, title: titleOf(id), sha256: page.source.sha256, imported: page.imported });
+          names.add(key(page.source.name));
+        } catch (err) {
+          this.#o.log('warn', `pages.import: the page sidecar ${file} does not read`, String(err));
         }
-        sidecars.set(id, page);
-        const k = pickKey({ path: page.source.path, sections: page.source.sections ?? [] });
-        const was = bySource.get(k);
-        if (!was || was.imported <= page.imported) bySource.set(k, { at: id, title: titleOf(id), sha256: page.source.sha256, imported: page.imported });
-        names.add(key(page.source.name));
-        const dir = path.dirname(page.source.path);
-        if (!rootOf.has(dir)) rootOf.set(dir, hoardRoot(page.source.path));
-        const root = rootOf.get(dir);
-        if (root) hoards.add(root);
-      } catch (err) {
-        this.#o.log('warn', `pages.import: the page sidecar ${file} does not read`, String(err));
       }
     }
     return { bySource, names, hoards, sidecars };
@@ -185,6 +188,11 @@ export class PageImport {
   /** What importing these files or list entries would do. Reads; never writes. */
   sort(picks: readonly (string | Pick)[]): PageSorted {
     const { bySource, names, hoards, sidecars } = this.#known();
+    // a list that takes hoard's pages along with an old vault's says where hoard is
+    for (const pick of picks) {
+      const root = hoardRoot(typeof pick === 'string' ? pick : pick.path);
+      if (root) hoards.add(root);
+    }
     const verdicts = sortPicks(picks, {
       bySource,
       names,

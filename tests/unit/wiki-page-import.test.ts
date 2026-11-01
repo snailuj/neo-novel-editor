@@ -9,6 +9,8 @@
 // - a title is one to a tree: a second page of a title is a clash in its tree only, and
 //   a name no link could reach is refused;
 // - splits, line ranges and attachments carry over from the Wiki book's import;
+// - a page hoard already holds stays out once hoard is known, from a page of either tree
+//   or from hoard's own pages in the same pick;
 // - a page's marks go to the page marks store, or, with none, are counted as left out;
 // - with history kept, the author's blocks are committed before the librarian's.
 import assert from 'node:assert/strict';
@@ -184,6 +186,20 @@ test('sections and line ranges become one page, recorded as a split, and attachm
   assert.deepEqual(s.changes().map((c) => [c.kind, c.page, c.dest]), [
     ['attachment-imported', 'wiki/Glass Ship.html', 'wiki/attachments/Glass.png'], ['page-imported', 'wiki/Glass Ship.html', 'wiki/Glass Ship.html'],
   ]);
+});
+
+test('a page hoard holds stays out once hoard is known, from either tree or from the same pick', async (t) => {
+  const s = setup(t);
+  const record = (src: string, bytes: string) => JSON.stringify({ src, dest: 'lore/x.md', method: 'verbatim', src_sha256: sha(bytes) });
+  s.put('hoard/_meta/MANIFEST.jsonl', `${record('20_Atoms/Harbour.md', 'harbour')}\n`);
+  const hoardPage = s.put('hoard/lore/Harbour.md', 'harbour');
+  const harbour = s.put('vault/20_Atoms/Harbour.md', 'harbour');
+  const sources = s.into('sources');
+  const wiki = s.into('wiki');
+  assert.deepEqual(s.kinds(sources.sort([harbour])), [['new', 'Harbour']], 'with no hoard page anywhere, hoard is not known');
+  assert.deepEqual(s.kinds(sources.sort([hoardPage, harbour])), [['new', 'Harbour'], ['through-hoard', 'Harbour']]);
+  await wiki.apply(wiki.sort([hoardPage]));
+  assert.deepEqual(s.kinds(sources.sort([harbour])), [['through-hoard', 'Harbour']]);
 });
 
 test('without a page marks store, a page\'s marks are counted as left out', async (t) => {
