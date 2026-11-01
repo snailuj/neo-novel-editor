@@ -1,7 +1,8 @@
-// Rule: a change that only rewrites link targets makes no job. A page rename rewrites
-// [[links]] in other pages in the author's commit; those pages' words are the same, so
-// ripple takes no job for them. The renamed page itself is a new id and is judged again.
-// A change of the words around a link, or of a link's shown text, is still a change.
+// Rule: only a rename's own link rewrites are ignored. A page rename rewrites [[links]] in
+// other pages in the author's commit; ripple maps the old title to the new through the
+// rename in the commit range, so those pages' words are the same and make no job. The
+// renamed page itself is a new id and is judged again. An author retargeting a link to
+// another page, or changing the words around a link or its shown text, is a change.
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -45,9 +46,39 @@ test('a rename that only rewrites link targets makes no job for the pages it tou
   assert.equal(done.made, 1);
 });
 
-test('a real change to the words around or inside a link is still a change', () => {
+test('an author retargeting a link to another page is a change, rename or none', async (t) => {
+  const { write, layer, ripple } = await gitRipple(t);
+  write('wiki/Alice.html', '<p data-block="a1">Alice.</p>');
+  write('wiki/Bob.html', '<p data-block="a2">Bob.</p>');
+  write('wiki/Quay.html', '<p data-block="b1">The quay is run by [[Alice]].</p>');
+  await layer.commitNow('import-author');
+  await ripple.run();
+  write('wiki/Quay.html', '<p data-block="b1">The quay is run by [[Bob]].</p>');
+  await layer.commitNow('import-author');
+  await ripple.run();
+  assert.deepEqual(ripple.overview().jobs.map((j) => j.title), ['Quay']);
+});
+
+test('a rename elsewhere in the range does not hide an author retargeting a link', async (t) => {
+  const { write, layer, store, ripple } = await gitRipple(t);
+  write('wiki/Alice.html', '<p data-block="a1">Alice.</p>');
+  write('wiki/Bob.html', '<p data-block="a2">Bob.</p>');
+  write('wiki/Quay.html', '<p data-block="b1">The quay is run by [[Alice]], near the [[Bob]].</p>');
+  await layer.commitNow('import-author');
+  await ripple.run();
+  await store.rename('wiki/Bob.html', 'Robert.html', null);
+  write('wiki/Quay.html', '<p data-block="b1">The quay is run by [[Robert]], near the [[Robert]].</p>');
+  await layer.commitNow('import-author');
+  await ripple.run();
+  assert.deepEqual(ripple.overview().jobs.map((j) => j.title), ['Quay', 'Robert'].sort(), 'Alice to Robert is a change; Bob to Robert is the rename');
+});
+
+test('links compare by target and shown text; a rename maps old titles to new', () => {
   const before = 'See [[Harbour]] now and [[Harbour|the port]].';
-  assert.equal(wordsOf(`<p>${before}</p>`), wordsOf('<p>See [[Port]] now and [[Port|the port]].</p>'), 'targets rewritten');
+  const renamed = new Map([['harbour', 'port']]);
+  assert.equal(wordsOf(`<p>${before}</p>`, renamed), wordsOf('<p>See [[Port]] now and [[Port|the port]].</p>'), 'targets rewritten by the rename');
+  assert.notEqual(wordsOf(`<p>${before}</p>`), wordsOf('<p>See [[Port]] now and [[Port|the port]].</p>'), 'no rename, no excuse');
+  assert.equal(wordsOf('<p>[[Harbour#^a1]] and [[harbour]]</p>', renamed), wordsOf('<p>[[Port#^a1]] and [[Port]]</p>'), 'anchors and case');
   assert.notEqual(wordsOf(`<p>${before}</p>`), wordsOf('<p>See [[Harbour]] later and [[Harbour|the port]].</p>'), 'words around');
   assert.notEqual(wordsOf(`<p>${before}</p>`), wordsOf('<p>See [[Harbour]] now and [[Harbour|the quay]].</p>'), 'shown text');
 });

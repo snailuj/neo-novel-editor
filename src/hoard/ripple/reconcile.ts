@@ -10,6 +10,8 @@
 // (which names a chapter, not a page) and a line that is not a page event make no job.
 // The first run only sets the cursor, so a library that has pages already does not wake
 // to a job for every page. Pure, but for what it is handed.
+import { key } from '../../librarian/links.ts';
+import { titleOf } from '../pages/identity.ts';
 import { paragraphTexts } from '../html.ts';
 import { plainText } from './contract.ts';
 import { jobId, LAST_HOP, sha256, type RippleCursor, type RippleJob, type RippleState } from './rulings.ts';
@@ -39,13 +41,19 @@ export interface Reconciled {
   baseline: boolean;
 }
 
-// A link's target and anchor are a name, not words: a rename rewrites them in other
-// pages. A link keeps its shown text (`[[Old|shown]]`), which is words the author chose.
-const LINK = /\[\[[^\]|#]*(?:#[^\]|]*)?(?:\|([^\]]*))?\]\]/g;
+// A link compares by its target (case and folder aside), its anchor and its shown text.
+// A rename rewrites targets in other pages, so a map from old titles to new, in link-key
+// form, lets the earlier text be read as the rename leaves it: only a rename's own
+// rewrites are ignored, never an author's retargeting.
+const LINK = /\[\[([^\]|#]*)(#[^\]|]*)?(?:\|([^\]]*))?\]\]/g;
 
-/** A page's words as a job compares them: each paragraph's plain text with links reduced to their shown text, empty ones gone. */
-export function wordsOf(html: string): string {
-  return paragraphTexts(html).map((p) => plainText(p.replace(LINK, (_m, shown?: string) => (shown ? `\u27e6${shown}\u27e7` : '\u27e6link\u27e7')))).filter(Boolean).join('\n');
+/** A page's words as a job compares them: each paragraph's plain text with links as target, anchor and shown text, empty ones gone. */
+export function wordsOf(html: string, retitled: ReadonlyMap<string, string> = new Map()): string {
+  const link = (_m: string, target: string, anchor = '', shown?: string) => {
+    const k = key(target);
+    return `\u27e6${retitled.get(k) ?? k}${anchor}${shown ? `|${shown}` : ''}\u27e7`;
+  };
+  return paragraphTexts(html).map((p) => plainText(p.replace(LINK, link))).filter(Boolean).join('\n');
 }
 
 /** The hash a job keeps of its source's words. */
@@ -80,6 +88,44 @@ export function newJob(
     source: fields.source, source_hash: hash, commit: fields.commit, hop: fields.hop,
     ...(fields.parent ? { parent: fields.parent } : {}),
   };
+}
+
+// The page store keeps the renames it finished, newest last, in this file of the history.
+const RENAMES = '.neo/pages/renames.json';
+
+async function recordedRenames(input: ReconcileInput, commit: string): Promise<{ from: string; to: string }[]> {
+  const text = await input.show(commit, RENAMES);
+  if (text === null) return [];
+  try {
+    const data: unknown = JSON.parse(text);
+    if (Array.isArray(data)) return data.filter((r): r is { from: string; to: string } => typeof r?.from === 'string' && typeof r?.to === 'string');
+  } catch {
+    // an unreadable record names no rename; the pages that link to a renamed page then read as changed
+  }
+  input.log('warn', 'ripple: the page store\'s record of renames does not read, so a rename\'s link rewrites may each make a job', { commit });
+  return [];
+}
+
+/**
+ * The renames made between two commits, from the page store's record of them, as a map
+ * from old link key to new. A rename the record has dropped (it keeps the last fifty) is
+ * not seen, so its link rewrites read as changes: too many jobs, never too few.
+ */
+async function renamesIn(input: ReconcileInput, from: string, head: string): Promise<Map<string, string>> {
+  const had = new Set((await recordedRenames(input, from)).map((r) => `${r.from}\0${r.to}`));
+  const map = new Map<string, string>();
+  for (const r of await recordedRenames(input, head)) {
+    if (had.has(`${r.from}\0${r.to}`)) continue;
+    const [old, now] = [key(titleOf(r.from)), key(titleOf(r.to))];
+    if (old !== now) map.set(old, now);
+  }
+  // A then B then C: A reads as C
+  for (const [old, now] of map) {
+    let end = now;
+    for (let hops = 0; map.has(end) && hops < map.size; hops++) end = map.get(end)!;
+    map.set(old, end);
+  }
+  return map;
 }
 
 const PAGE_EVENTS = new Set(['page-imported', 'page-updated']);
@@ -118,16 +164,18 @@ export async function reconcile(input: ReconcileInput): Promise<Reconciled> {
 
   let moved = state.cursor.commit;
   if (head && state.cursor.commit && head !== state.cursor.commit) {
+    const from = state.cursor.commit;
     try {
-      for (const under of TREES) {
-        for (const { rel, byAuthor } of await input.changed(state.cursor.commit, head, under)) {
-          if (!byAuthor || !pages.some((p) => p.id === rel)) continue;
-          const after = await input.show(head, rel);
-          if (after === null) continue;
-          const before = await input.show(state.cursor.commit, rel);
-          if (before !== null && wordsOf(before) === wordsOf(after)) continue;
-          take(rel, after, 'changed');
-        }
+      const files: { rel: string; byAuthor: boolean }[] = [];
+      for (const under of TREES) files.push(...await input.changed(from, head, under));
+      const retitled = await renamesIn(input, from, head);
+      for (const { rel, byAuthor } of files) {
+        if (!byAuthor || !pages.some((p) => p.id === rel)) continue;
+        const after = await input.show(head, rel);
+        if (after === null) continue;
+        const before = await input.show(from, rel);
+        if (before !== null && wordsOf(before, retitled) === wordsOf(after)) continue;
+        take(rel, after, 'changed');
       }
     } catch (err) {
       // the cursor's commit is gone (history rewritten): start again from here
