@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Tree } from '../../src/hoard/pages/identity.ts';
-import { buildTree, visibleRows } from '../../src/hoard/wiki/tree.ts';
+import { buildTree, explain, foldersIn, judge, visibleRows } from '../../src/hoard/wiki/tree.ts';
 
 const page = (id: string) => {
   const tree = id.slice(0, id.indexOf('/')) as Tree;
@@ -57,4 +57,82 @@ test('only open folders draw their rows', () => {
   const p0 = opened.find((r) => r.key === 'sources/F3/P0.html')!;
   assert.deepEqual([p0.kind, p0.depth, p0.parent], ['page', 2, 'sources/F3']);
   assert.equal(visibleRows(roots, new Set()).length, 2, 'closed roots draw only themselves');
+});
+
+const LISTED = ['wiki/People/Ada Vell.html', 'wiki/Harbour.html', 'sources/Harbour.html', 'sources/Notes/Tides.html'].map(page);
+
+// Rule: a rename keeps the page in its folder and asks for the new title's path; a title the
+// store would refuse, or one another page of the same tree holds (case aside), is refused
+// here with its reason in plain words, and an unchanged title asks for nothing.
+test('a rename asks for its path in the same folder, or says why not', () => {
+  const rename = (id: string, value: string) => judge({ op: 'rename', id, value }, LISTED);
+  assert.deepEqual(rename('wiki/People/Ada Vell.html', 'Ada Brook'), { kind: 'send', tree: 'wiki', path: 'People/Ada Brook.html' });
+  assert.deepEqual(rename('wiki/People/Ada Vell.html', 'Ada Vell'), { kind: 'same' });
+  assert.deepEqual(rename('wiki/People/Ada Vell.html', 'ada vell'), { kind: 'send', tree: 'wiki', path: 'People/ada vell.html' }, 'a change of case is its own page still');
+  assert.deepEqual(rename('sources/Notes/Tides.html', 'harbour'), { kind: 'refused', code: 'taken', message: 'There is already a page called “Harbour” in sources. Pick another title.' });
+  assert.equal(rename('wiki/People/Ada Vell.html', 'Tides').kind, 'send', 'titles are unique within one tree only');
+  const refused = (value: string) => {
+    const v = rename('wiki/Harbour.html', value);
+    assert.equal(v.kind, 'refused', value);
+    return v.kind === 'refused' ? [v.code, v.message] : [];
+  };
+  assert.deepEqual(refused(''), ['title', 'A page needs a title. Type one, or press Esc to cancel.']);
+  assert.deepEqual(refused(' Harbour'), ['title', 'A title can\'t start or end with a space. Take the space out.']);
+  assert.deepEqual(refused('Harbour [old]'), ['title', 'A title can\'t hold [ ] | # or ^, because a [[link]] ends there. Take that character out.']);
+  assert.deepEqual(refused('Old/Harbour'), ['title', 'A title can\'t hold a slash. To put the page in another folder, choose Move.']);
+  assert.deepEqual(refused('.Harbour'), ['unsafe', 'A title can\'t start with a dot or hold a backslash. Change the title.']);
+  assert.deepEqual(refused('Har\\bour'), ['unsafe', 'A title can\'t start with a dot or hold a backslash. Change the title.']);
+  assert.deepEqual(rename('wiki/Gone.html', 'Here'), {
+    kind: 'refused', code: 'missing', message: '“Gone” is no longer there. It may have been moved or removed outside NEO. Choose Refresh to see the pages as they are now.',
+  });
+});
+
+// Rule: a move keeps the page's title and tree and asks for the path in the folder typed
+// (slashes and spaces at its ends set aside, empty for the top of the tree); a folder the
+// store would refuse is refused here, and the folder the page is in asks for nothing.
+test('a move asks for the path in the folder typed, inside the same tree', () => {
+  const move = (id: string, value: string) => judge({ op: 'move', id, value }, LISTED);
+  assert.deepEqual(move('wiki/Harbour.html', 'Places/Coast'), { kind: 'send', tree: 'wiki', path: 'Places/Coast/Harbour.html' });
+  assert.deepEqual(move('wiki/People/Ada Vell.html', ' /Places/ '), { kind: 'send', tree: 'wiki', path: 'Places/Ada Vell.html' });
+  assert.deepEqual(move('wiki/People/Ada Vell.html', ''), { kind: 'send', tree: 'wiki', path: 'Ada Vell.html' });
+  assert.deepEqual(move('wiki/People/Ada Vell.html', 'People/'), { kind: 'same' });
+  assert.deepEqual(move('sources/Notes/Tides.html', 'wiki'), { kind: 'send', tree: 'sources', path: 'wiki/Tides.html' }, 'a folder typed is inside the page\'s own tree');
+  for (const bad of ['../Out', 'A//B', '.hidden', 'A\\B']) {
+    assert.deepEqual(move('wiki/Harbour.html', bad), {
+      kind: 'refused', code: 'unsafe', message: 'A folder name can\'t be empty, be . or .., start with a dot, or hold a backslash. Change the folder.',
+    }, bad);
+  }
+  const twin = [...LISTED, page('wiki/Old/harbour.html')];
+  assert.deepEqual(judge({ op: 'move', id: 'wiki/Harbour.html', value: 'Places' }, twin), {
+    kind: 'refused', code: 'taken', message: 'There is already a page called “harbour” in wiki/Old. Pick another title.',
+  });
+});
+
+// Rule: a new page goes in the folder chosen, under the title typed, on the same rules.
+test('a new page asks for its path in the folder chosen, or says why not', () => {
+  const make = (tree: Tree, folder: string, value: string) => judge({ op: 'new', tree, folder, value }, LISTED);
+  assert.deepEqual(make('wiki', 'People', 'Bo Reed'), { kind: 'send', tree: 'wiki', path: 'People/Bo Reed.html' });
+  assert.deepEqual(make('sources', '', 'Bo Reed'), { kind: 'send', tree: 'sources', path: 'Bo Reed.html' });
+  assert.deepEqual(make('wiki', 'People', 'ada vell'), { kind: 'refused', code: 'taken', message: 'There is already a page called “Ada Vell” in wiki/People. Pick another title.' });
+  assert.equal(make('wiki', '', '').kind, 'refused');
+});
+
+// Rule: when the store refuses what the window let through (the library changed since the
+// list was read), the reason comes from the library as it is now, else the store's words.
+test('a refusal from the store is explained from the list read again', () => {
+  const ask = { op: 'rename', id: 'wiki/Harbour.html', value: 'Quay' } as const;
+  assert.equal(explain(ask, LISTED.filter((p) => p.id !== 'wiki/Harbour.html'), new Error('x')).code, 'missing');
+  assert.deepEqual(explain(ask, [...LISTED, page('wiki/Docks/Quay.html')], new Error('x')), {
+    code: 'taken', message: 'There is already a page called “Quay” in wiki/Docks. Pick another title.',
+  });
+  assert.deepEqual(explain(ask, LISTED, new Error('plugin hoard: pages.rename failed: the disk is full')), {
+    code: null, message: 'The page could not be renamed: the disk is full. Try again, or choose Refresh.',
+  });
+});
+
+// Rule: a move can pick any folder of the page's own tree, the top of it first.
+test('the folders a move can pick are those of one tree', () => {
+  const roots = buildTree([...LISTED, page('wiki/People/Kin/Bo.html')]);
+  assert.deepEqual(foldersIn(roots, 'wiki'), ['', 'People', 'People/Kin']);
+  assert.deepEqual(foldersIn(roots, 'sources'), ['', 'Notes']);
 });

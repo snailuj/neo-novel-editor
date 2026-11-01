@@ -2,7 +2,8 @@
 // this works out. The pages come from one pages.list; each tree (wiki/, sources/) shows its
 // folders first, by name, then its pages, by title. Only the rows of open folders are
 // worked out, so a library of thousands of pages in closed folders draws a few rows.
-import { TREES, type Tree } from '../pages/identity.ts';
+import { checkPath, checkTitle, PageRefused, titleOf, TREES, type Tree } from '../pages/identity.ts';
+import { titleIndex } from '../pages/titles.ts';
 
 /** What the tree needs of a pages.list entry. */
 export interface Listed {
@@ -82,4 +83,110 @@ export function visibleRows(roots: readonly Folder[], open: ReadonlySet<string>)
   };
   for (const root of roots) walk(root, 0, null);
   return rows;
+}
+
+/** Every folder of one tree, as paths inside it, the top of the tree ('') first. */
+export function foldersIn(roots: readonly Folder[], tree: Tree): string[] {
+  const out: string[] = [];
+  const walk = (f: Folder) => {
+    out.push(f.path);
+    for (const sub of f.folders) walk(sub);
+  };
+  const root = roots.find((r) => r.tree === tree);
+  if (root) walk(root);
+  return out;
+}
+
+// ---- asking the store --------------------------------------------------------------------
+// The store's refusal codes do not cross the window's invoke, so what it would refuse is
+// worked out here first, from the list, on the store's own rules (pages/identity.ts).
+
+export type Refusal = PageRefused['code'];
+
+export type Ask =
+  | { op: 'rename'; id: string; value: string }
+  | { op: 'move'; id: string; value: string }
+  | { op: 'new'; tree: Tree; folder: string; value: string };
+
+export type Verdict =
+  | { kind: 'send'; tree: Tree; path: string }
+  | { kind: 'same' }
+  | { kind: 'refused'; code: Refusal; message: string };
+
+const DONE: Record<Ask['op'], string> = { rename: 'renamed', move: 'moved', new: 'made' };
+const join = (folder: string, name: string) => (folder ? `${folder}/${name}` : name);
+/** A folder as the writer reads it: `wiki` or `wiki/People`. */
+export const place = (tree: Tree, folder: string) => (folder ? `${tree}/${folder}` : tree);
+
+const refused = (code: Refusal, message: string): Verdict => ({ kind: 'refused', code, message });
+
+// The title rule is the store's (checkTitle); the words say which part of it was broken.
+function titleRefusal(value: string): Verdict | null {
+  if (value.includes('/')) return refused('title', 'A title can\'t hold a slash. To put the page in another folder, choose Move.');
+  try {
+    checkTitle(`${value}.html`);
+    return null;
+  } catch (err) {
+    if (!(err instanceof PageRefused)) throw err;
+  }
+  if (value.trim() === '') return refused('title', 'A page needs a title. Type one, or press Esc to cancel.');
+  if (value !== value.trim()) return refused('title', 'A title can\'t start or end with a space. Take the space out.');
+  if (/[[\]|#^]/.test(value)) return refused('title', 'A title can\'t hold [ ] | # or ^, because a [[link]] ends there. Take that character out.');
+  return refused('title', 'A title can\'t hold a tab, a line break or another hidden character. Take it out.');
+}
+
+const safe = (path: string) => {
+  try {
+    checkPath(path);
+    return true;
+  } catch (err) {
+    if (err instanceof PageRefused) return false;
+    throw err;
+  }
+};
+
+/** What a rename, a move or a new page would ask the store for, judged against the list. */
+export function judge(ask: Ask, entries: readonly Listed[]): Verdict {
+  const index = titleIndex(entries);
+  const taken = (tree: Tree, title: string, except?: string): Verdict | null => {
+    const clash = index.taken(tree, title, except);
+    return clash ? refused('taken', `There is already a page called “${clash.title}” in ${place(clash.tree, folderOf(clash.path))}. Pick another title.`) : null;
+  };
+  if (ask.op === 'new') {
+    const path = join(ask.folder, `${ask.value}.html`);
+    return titleRefusal(ask.value)
+      ?? (safe(path) ? null : refused('unsafe', 'A title can\'t start with a dot or hold a backslash. Change the title.'))
+      ?? taken(ask.tree, ask.value)
+      ?? { kind: 'send', tree: ask.tree, path };
+  }
+  const entry = entries.find((e) => e.id === ask.id);
+  if (!entry) {
+    const gone = titleOf(ask.id);
+    return refused('missing', `“${gone}” is no longer there. It may have been moved or removed outside NEO. Choose Refresh to see the pages as they are now.`);
+  }
+  if (ask.op === 'rename') {
+    const path = join(folderOf(entry.path), `${ask.value}.html`);
+    if (path === entry.path) return { kind: 'same' };
+    return titleRefusal(ask.value)
+      ?? (safe(path) ? null : refused('unsafe', 'A title can\'t start with a dot or hold a backslash. Change the title.'))
+      ?? taken(entry.tree, ask.value, entry.id)
+      ?? { kind: 'send', tree: entry.tree, path };
+  }
+  const folder = ask.value.trim().replace(/^\/+|\/+$/g, '');
+  const path = join(folder, entry.path.slice(entry.path.lastIndexOf('/') + 1));
+  if (path === entry.path) return { kind: 'same' };
+  return (safe(path) ? null : refused('unsafe', 'A folder name can\'t be empty, be . or .., start with a dot, or hold a backslash. Change the folder.'))
+    ?? taken(entry.tree, entry.title, entry.id)
+    ?? { kind: 'send', tree: entry.tree, path };
+}
+
+/**
+ * Why the store refused what judge let through, from the list read again after it did:
+ * the library changed in between (another device, a file manager), or the store's own words.
+ */
+export function explain(ask: Ask, fresh: readonly Listed[], err: unknown): { code: Refusal | null; message: string } {
+  const v = judge(ask, fresh);
+  if (v.kind === 'refused') return { code: v.code, message: v.message };
+  const why = (err instanceof Error ? err.message : String(err)).replace(/^plugin \S+: \S+ failed: /, '');
+  return { code: null, message: `The page could not be ${DONE[ask.op]}: ${why}. Try again, or choose Refresh.` };
 }
