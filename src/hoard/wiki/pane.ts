@@ -199,7 +199,10 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
   // page made, moved or removed outside the tree since the page was drawn is reached or said gone.
   const follow = async (target: string) => {
     const fromStored = !!stored;
+    // a page asked for since (Back, another link) stands over this one
+    const mine = asked;
     if (fromStored) await readList();
+    if (mine !== asked) return;
     const id = (fromStored ? storedResolver() : o.resolve()).get(target);
     if (id) await open(id);
     else status.textContent = `No page is called “${target}” now. It may have been renamed or removed outside NEO.`;

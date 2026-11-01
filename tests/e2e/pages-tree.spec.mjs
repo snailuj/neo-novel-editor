@@ -411,3 +411,48 @@ test('a stored page\'s links follow the library as it is when drawn and when fol
     await fixture.close();
   }
 });
+
+// Holds the window's pages.list calls in the main process until released, by wrapping the
+// plugin invoke handler (Electron keeps handlers in ipcMain's own map).
+async function holdLists(app) {
+  await app.evaluate(({ ipcMain }) => {
+    const handlers = ipcMain._invokeHandlers;
+    const real = handlers.get('plugin:invoke');
+    globalThis.__held = new Promise((resolve) => { globalThis.__release = resolve; });
+    handlers.set('plugin:invoke', async (e, id, channel, payload) => {
+      if (channel === 'pages.list' && globalThis.__held) await globalThis.__held;
+      return real(e, id, channel, payload);
+    });
+  });
+}
+
+// Rule: a link followed from a stored page leads nowhere if the writer moved on (Back,
+// another link) while the list was read: the newer navigation stands and the trail gains
+// no stop.
+test('a link followed while the writer moves on does not take the pane back', async () => {
+  const { profile } = await libraryProfile();
+  const fixture = await launchProfile(profile);
+  try {
+    const { app, page } = fixture;
+    await page.waitForFunction(() => !!window.hoard);
+    await seedBook(page, '<p>A line of the book.</p>');
+    const pane = page.locator('.hoard-wiki-pane');
+    await page.evaluate(() => window.hoard.wiki.pane.open('wiki/Harbour.html'));
+    await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
+    await paneSettled(page);
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tides');
+
+    await holdLists(app);
+    await pane.getByRole('button', { name: '[[Ada Vell]]' }).click();
+    await pane.getByRole('button', { name: '‹ Back' }).click();
+    await app.evaluate(() => { globalThis.__release(); globalThis.__held = null; });
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Harbour');
+    await page.waitForTimeout(300);
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Harbour');
+    expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('wiki/Harbour.html');
+    await pane.getByRole('button', { name: 'Forward ›' }).click();
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tides');
+  } finally {
+    await fixture.close();
+  }
+});
