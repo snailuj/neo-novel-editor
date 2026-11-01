@@ -370,4 +370,11 @@ test('a ripple write to a page is a librarian commit of that page\'s own file, a
   const { stdout } = await lib.git.run(lib.library, ['show', '--name-only', '--format=', 'HEAD']);
   assert.deepEqual(stdout.split('\n').filter(Boolean).sort(), ['.neo/ripple/rulings.jsonl', 'wiki/Harbour.html']);
   assert.equal(readFileSync(path.join(lib.library, 'wiki', 'Harbour.html'), 'utf8'), '<p data-block="a1">The harbour wall is rebuilt in stone.</p>');
+  // the librarian's commit of the page is no change of the author's: the run after it makes
+  // no hop-0 job, only the packet for the hop-1 job the apply opened
+  const after = await ripple.run();
+  assert.deepEqual([after.made, after.packeted], [0, 1]);
+  const jobs = readFileSync(path.join(lib.library, '.neo', 'ripple', 'rulings.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((r) => r.type === 'job');
+  const latest = new Map(jobs.map((j) => [j.id, j]));
+  assert.deepEqual([...latest.values()].map((j) => [j.source.page, j.hop, j.origin]), [['wiki/Storm.html', 0, 'asked'], ['wiki/Harbour.html', 1, 'ripple']]);
 });
