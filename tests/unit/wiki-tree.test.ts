@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Tree } from '../../src/hoard/pages/identity.ts';
-import { buildTree, CLOSED, explain, foldersIn, judge, step, visibleRows, type Editor, type EditorEvent } from '../../src/hoard/wiki/tree.ts';
+import { buildTree, CLOSED, explain, foldersIn, judge, newPageHtml, step, visibleRows, type Editor, type EditorEvent } from '../../src/hoard/wiki/tree.ts';
 
 const page = (id: string) => {
   const tree = id.slice(0, id.indexOf('/')) as Tree;
@@ -192,4 +192,13 @@ test('a field is judged on submit and on blur, and an unchanged one closes', () 
   assert.deepEqual(run([renameHarbour, { type: 'submit' }]), { editor: CLOSED, effects: ['focus-field', 'focus-origin'] });
   assert.deepEqual(run([renameHarbour, { type: 'input', value: 'Quay' }, { type: 'cancel' }]), { editor: CLOSED, effects: ['focus-field', 'none', 'focus-origin'] });
   assert.deepEqual(run([{ type: 'submit' }, { type: 'cancel' }, { type: 'input', value: 'x' }]), { editor: CLOSED, effects: ['none', 'none', 'none'] });
+});
+
+// Rule: a new page is what wiki import makes of an empty file: one empty paragraph carrying
+// a fresh six-digit block id, so a [[Page#^id]] citation can point at it from the start.
+test('a new page is one empty paragraph with its own block id', () => {
+  assert.equal(newPageHtml(() => 'abc123'), '<p data-block="abc123"><br></p>');
+  const [a, b] = [newPageHtml(), newPageHtml()];
+  assert.match(a, /^<p data-block="[0-9a-f]{6}"><br><\/p>$/);
+  assert.notEqual(a, b, 'each new page has a block id of its own');
 });

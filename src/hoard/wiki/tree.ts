@@ -53,6 +53,7 @@
 //   pane (Folder-Actions leaves out page delete): its file is removed from the folder.
 import { checkPath, checkTitle, PageRefused, titleOf, TREES, type Tree } from '../pages/identity.ts';
 import { titleIndex } from '../pages/titles.ts';
+import { convertPage } from './convert.ts';
 
 /** What the tree needs of a pages.list entry. */
 export interface Listed {
@@ -145,6 +146,12 @@ export function foldersIn(roots: readonly Folder[], tree: Tree): string[] {
   if (root) walk(root);
   return out;
 }
+
+// a block id as wiki import makes one (wiki/store.ts): six hex digits
+const blockId = () => [...crypto.getRandomValues(new Uint8Array(3))].map((b) => b.toString(16).padStart(2, '0')).join('');
+
+/** A new page's HTML: wiki import's page for an empty file, one empty paragraph with a block id. */
+export const newPageHtml = (newId: () => string = blockId) => convertPage('', newId).html;
 
 // ---- asking the store --------------------------------------------------------------------
 // The store's refusal codes do not cross the window's invoke, so what it would refuse is
