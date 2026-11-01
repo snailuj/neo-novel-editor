@@ -82,7 +82,7 @@ test('a rename asks for its path in the same folder, or says why not', () => {
   assert.deepEqual(refused('.Harbour'), ['unsafe', 'A title can\'t start with a dot or hold a backslash. Change the title.']);
   assert.deepEqual(refused('Har\\bour'), ['unsafe', 'A title can\'t start with a dot or hold a backslash. Change the title.']);
   assert.deepEqual(rename('wiki/Gone.html', 'Here'), {
-    kind: 'refused', code: 'missing', message: '“Gone” is no longer there. It may have been moved or removed outside NEO. Choose Refresh to see the pages as they are now.',
+    kind: 'refused', code: 'missing', message: '“Gone” is no longer there, so nothing was changed. It may have been moved or removed outside NEO.',
   });
 });
 
@@ -142,6 +142,10 @@ test('a refusal from the store is explained from the list read again', () => {
   assert.deepEqual(explain(ask, LISTED, new Error('plugin hoard: pages.rename failed: the disk is full')), {
     code: null, message: 'The page could not be renamed: the disk is full. Try again, or choose Refresh.',
   });
+  // a file the list does not show as a page (another name the disk folds to the same file)
+  assert.deepEqual(explain(ask, LISTED, new Error('plugin hoard: pages.rename failed: wiki/Quay.html is already a file on disk')), {
+    code: 'taken', message: 'A file called “Quay.html” is already in wiki. Pick another title.',
+  });
 });
 
 // Rule: a move can pick any folder of the page's own tree, the top of it first.
@@ -186,6 +190,16 @@ test('the answer closes the field, or opens it again with the value kept', () =>
   assert.deepEqual(run([{ type: 'done' }, { type: 'refused', message: 'x' }]), { editor: CLOSED, effects: ['none', 'none'] });
   const open = run([renameHarbour]).editor;
   assert.deepEqual(run([{ type: 'done' }], open), { editor: open, effects: ['none'] });
+});
+
+// Rule: when the page a field works on is gone from the list read again, the field goes
+// (there is nothing left to rename), whether it was waiting on the store or not, and the
+// focus goes to the folder that held the page.
+test('a field whose page is gone closes and hands the focus to its folder', () => {
+  const sent = run([renameHarbour, { type: 'input', value: 'Quay' }, { type: 'submit' }]).editor;
+  assert.deepEqual(run([{ type: 'vanished' }], sent), { editor: CLOSED, effects: ['focus-parent'] });
+  assert.deepEqual(run([{ type: 'vanished' }], run([renameHarbour]).editor), { editor: CLOSED, effects: ['focus-parent'] });
+  assert.deepEqual(run([{ type: 'vanished' }]), { editor: CLOSED, effects: ['none'] });
 });
 
 // Rule: a field is judged on submit and on leaving it once changed, never while a fresh

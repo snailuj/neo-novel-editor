@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { existsSync, readFileSync } from 'node:fs';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { launchProfile, seedBook } from '../support/electron-profile.mjs';
@@ -307,6 +307,60 @@ test('new page, rename and move from the tree, with refusals next to the field',
     expect(fileOf(library, 'wiki/Places/Coast/Pier.html')).toMatch(/^<p data-block="[0-9a-f]{6}"><br><\/p>$/);
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Pier');
     expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('wiki/Places/Coast/Pier.html');
+  } finally {
+    await fixture.close();
+  }
+});
+
+// Rule: when the library changed on disk after the tree read it, the store's refusal is
+// said in plain words from the list read again: a file now holding the title is "taken",
+// next to the field with the value kept; a page removed is "missing", and its row and its
+// field go, with the focus on the folder that held it.
+test('a rename the library changed under is refused in words, from the list read again', async () => {
+  const { profile, library } = await libraryProfile();
+  const fixture = await launchProfile(profile);
+  try {
+    const { page } = fixture;
+    await page.waitForFunction(() => !!window.hoard);
+    await seedBook(page, '<p>A line of the book.</p>');
+    const pane = page.locator('.hoard-wiki-pane');
+    const tree = pane.locator('.hoard-tree');
+    const row = (name, n = 0) => tree.locator('.hoard-tree-name', { hasText: new RegExp(`^${name}`) }).nth(n);
+    await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
+    await paneSettled(page);
+    await tree.getByRole('button', { name: 'Pages' }).click();
+    await row('People').click();
+    await expect(row('Ada Vell')).toBeVisible();
+
+    // taken: a file came in under the new title after the list was read
+    await writeFile(path.join(library, 'wiki', 'Quay.html'), '<p data-block="q1">A quay.</p>');
+    await row('Harbour').hover();
+    await tree.getByRole('button', { name: 'Rename Harbour' }).first().click();
+    const field = tree.getByLabel('New title for “Harbour”');
+    await field.fill('Quay');
+    await field.press('Enter');
+    await expect(field).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.locator('#hoard-tree-error')).toHaveText('There is already a page called “Quay” in wiki. Pick another title.');
+    await expect(field).toHaveValue('Quay');
+    await expect(field).toBeFocused();
+    expect(existsSync(path.join(library, 'wiki', 'Harbour.html'))).toBe(true);
+    await expect(row('Quay')).toBeVisible();
+    await field.press('Escape');
+
+    // missing: the page was removed after the list was read
+    await rm(path.join(library, 'wiki', 'People', 'Ada Vell.html'));
+    await row('Ada Vell').hover();
+    await tree.getByRole('button', { name: 'Rename Ada Vell' }).click();
+    const gone = tree.getByLabel('New title for “Ada Vell”');
+    await gone.fill('Ada Brook');
+    await gone.press('Enter');
+    await expect(tree.locator('.hoard-tree-alert')).toHaveText('“Ada Vell” is no longer there, so nothing was changed. It may have been moved or removed outside NEO.');
+    await expect(gone).toHaveCount(0);
+    await expect(row('Ada Vell')).toHaveCount(0);
+    // People held only that page, so its folder went too and the focus is on wiki
+    await expect(row('People')).toHaveCount(0);
+    await expect(row('wiki')).toBeFocused();
+    expect(existsSync(path.join(library, 'wiki', 'People', 'Ada Brook.html'))).toBe(false);
   } finally {
     await fixture.close();
   }

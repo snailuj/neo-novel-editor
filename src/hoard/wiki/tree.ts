@@ -47,6 +47,9 @@
 //                                                                                     page's row if focus was in the pane
 //   reply refused      -                no-op                                          invalid with the reason, value
 //                                                                                     kept; focus the field if in the pane
+//   page gone (the     -                closed; the alert says it is gone and nothing  as open / invalid
+//     list read again                   changed; focus its folder row if in the pane
+//     lacks it)
 //   A slow reply stays pending: the writer can keep writing, read pages and fold the tree;
 //   nothing times out, because the store finishes a rename it started even after a restart.
 //   Origin is the row (or the New page button) that opened the field. Inverses: a rename or
@@ -226,7 +229,7 @@ export function judge(ask: Ask, entries: readonly Listed[]): Verdict {
   const entry = entries.find((e) => e.id === ask.id);
   if (!entry) {
     const gone = titleOf(ask.id);
-    return refused('missing', `“${gone}” is no longer there. It may have been moved or removed outside NEO. Choose Refresh to see the pages as they are now.`);
+    return refused('missing', `“${gone}” is no longer there, so nothing was changed. It may have been moved or removed outside NEO.`);
   }
   if (ask.op === 'rename') {
     const path = join(folderOf(entry.path), `${ask.value}.html`);
@@ -253,6 +256,12 @@ export function explain(ask: Ask, fresh: readonly Listed[], err: unknown): { cod
   const v = judge(ask, fresh);
   if (v.kind === 'refused') return { code: v.code, message: v.message };
   const why = (err instanceof Error ? err.message : String(err)).replace(/^plugin \S+: \S+ failed: /, '');
+  // the store's words for a file on disk that the list shows as no page of that title
+  const onDisk = /^(wiki|sources)\/(.+) is already a file on disk$/.exec(why);
+  if (onDisk) {
+    const file = onDisk[2]!;
+    return { code: 'taken', message: `A file called “${file.slice(file.lastIndexOf('/') + 1)}” is already in ${place(onDisk[1] as Tree, folderOf(file))}. Pick another title.` };
+  }
   return { code: null, message: `The page could not be ${DONE[ask.op]}: ${why}. Try again, or choose Refresh.` };
 }
 
@@ -269,10 +278,14 @@ export type EditorEvent =
   | { type: 'submit' }
   | { type: 'cancel' }
   | { type: 'done' }
-  | { type: 'refused'; message: string };
+  | { type: 'refused'; message: string }
+  | { type: 'vanished' };
 
-/** focus-field and busy put the focus in the open field; focus-origin on what opened it. */
-export type Effect = 'none' | 'focus-field' | 'busy' | 'focus-origin' | 'send' | 'settled';
+/**
+ * focus-field and busy put the focus in the open field; focus-origin on what opened it;
+ * focus-parent on the folder row that held a page gone from the list.
+ */
+export type Effect = 'none' | 'focus-field' | 'busy' | 'focus-origin' | 'focus-parent' | 'send' | 'settled';
 
 export const CLOSED: Editor = Object.freeze({ state: 'closed' });
 
@@ -287,6 +300,7 @@ export function step(editor: Editor, e: EditorEvent, entries: readonly Listed[])
   if (editor.state === 'closed') {
     return e.type === 'start' ? { editor: { state: 'open', ask: e.ask, initial: e.ask.value, error: null }, effect: 'focus-field' } : stay;
   }
+  if (e.type === 'vanished') return { editor: CLOSED, effect: 'focus-parent' };
   if (e.type === 'start') {
     const same = e.ask.op === editor.ask.op && target(e.ask) === target(editor.ask);
     return { editor, effect: same ? 'focus-field' : 'busy' };

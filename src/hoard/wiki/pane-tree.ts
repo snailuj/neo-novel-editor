@@ -13,7 +13,7 @@ import { claim } from '../keys.ts';
 import { renamePage, type PagesWindow } from '../pages/window.ts';
 import { titleOf, type Tree } from '../pages/identity.ts';
 import {
-  buildTree, CLOSED, explain, folderOf, foldersIn, newPageHtml, place, step, visibleRows,
+  buildTree, CLOSED, explain, folderOf, foldersIn, judge, newPageHtml, place, step, visibleRows,
   type Ask, type Editor, type EditorEvent, type Folder, type Listed, type Row,
 } from './tree.ts';
 
@@ -120,6 +120,14 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
   const focusInPane = () => host.paneRoot.contains(document.activeElement)
     || (lastGestureInPane && (!document.activeElement || document.activeElement === document.body));
   const rowButton = (key: string) => list.querySelector<HTMLButtonElement>(`.hoard-tree-name[data-key="${CSS.escape(key)}"]`);
+  // the row of a key, or of the nearest folder above it that is drawn
+  const nearestRow = (key: string | null): HTMLButtonElement | null => {
+    for (let k = key; k; k = k.includes('/') ? k.slice(0, k.lastIndexOf('/')) : null) {
+      const b = rowButton(k);
+      if (b) return b;
+    }
+    return null;
+  };
   const askKey = (ask: Ask) => (ask.op === 'new' ? (ask.folder ? `${ask.tree}/${ask.folder}` : ask.tree) : ask.id);
   // the folders a row's key sits in, opened, so the row is drawn: wiki/A/B.html opens wiki and wiki/A
   const reveal = (key: string) => {
@@ -215,7 +223,7 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
     drawEditor();
     if (!hadFocus) return;
     if (inForm && form.isConnected) input.focus();
-    else if (focusedKey && !element.contains(document.activeElement)) rowButton(focusedKey)?.focus();
+    else if (focusedKey && !element.contains(document.activeElement)) nearestRow(focusedKey)?.focus();
   };
 
   const setActive = (key: string) => {
@@ -244,10 +252,13 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
       host.listed(entries);
       alert.textContent = '';
       status.textContent = '';
-      const ask = editor.state === 'open' ? editor.ask : null;
+      // a field on a page the list no longer has goes, and the alert says why
+      const ask = editor.state === 'closed' ? null : editor.ask;
       if (ask && ask.op !== 'new' && !entries.some((e) => e.id === ask.id)) {
-        alert.textContent = `“${titleOf(ask.id)}” is no longer there, so it was not changed. Choose a page from the list.`;
-        editor = CLOSED;
+        const v = judge(ask, entries);
+        if (v.kind === 'refused') alert.textContent = v.message;
+        console.warn('hoard: pages tree: refused', { op: ask.op, code: 'missing', id: ask.id });
+        dispatch({ type: 'vanished' });
       }
       draw();
     } catch (err) {
@@ -332,7 +343,10 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
     editor = next.editor;
     const opened = e.type === 'start' && was.state === 'closed';
     // the focus leaves the field before the field goes, so it never falls to the page's body
-    if (focus && next.effect === 'focus-origin' && was.state !== 'closed') origin(was.ask)?.focus();
+    if (focus && was.state !== 'closed') {
+      if (next.effect === 'focus-origin') origin(was.ask)?.focus();
+      if (next.effect === 'focus-parent') nearestRow(askKey(was.ask))?.focus();
+    }
     if (opened || next.effect === 'busy') {
       const key = askKey((editor as Exclude<Editor, { state: 'closed' }>).ask);
       reveal(key);
