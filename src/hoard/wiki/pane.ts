@@ -71,6 +71,9 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
   // the last pages.list, which a stored page's links resolve against
   let listed: Listed[] | null = null;
   let asked = 0;
+  // pages the writer has gone to (opened, Back, Forward, a link followed): a link waits on
+  // nothing once the writer goes on from it
+  let moves = 0;
   const shownListeners: ((page: PageRead | null) => void)[] = [];
   const leaving: (() => Promise<void>)[] = [];
   const beforeLeaving = async () => { for (const fn of leaving) await fn(); };
@@ -199,10 +202,10 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
   // page made, moved or removed outside the tree since the page was drawn is reached or said gone.
   const follow = async (target: string) => {
     const fromStored = !!stored;
-    // a page asked for since (Back, another link) stands over this one
-    const mine = asked;
+    // a page gone to since (Back, another link) stands over this one
+    const mine = ++moves;
     if (fromStored) await readList();
-    if (mine !== asked) return;
+    if (mine !== moves) return;
     const id = (fromStored ? storedResolver() : o.resolve()).get(target);
     if (id) await open(id);
     else status.textContent = `No page is called “${target}” now. It may have been renamed or removed outside NEO.`;
@@ -276,12 +279,18 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
   /** A page shown (a Wiki book chapter or a stored page), and with at the words there marked and scrolled to. */
   const open = (id: string, at?: { pIdx: number; off: number; len: number }) => {
     showAt = at ?? null;
+    moves++;
     history.visit(id);
     pane.show();
     return showCurrent();
   };
-  const back = () => (history.back() ? showCurrent() : Promise.resolve());
-  const forward = () => (history.forward() ? showCurrent() : Promise.resolve());
+  const went = (to: string | null) => {
+    if (!to) return Promise.resolve();
+    moves++;
+    return showCurrent();
+  };
+  const back = () => went(history.back());
+  const forward = () => went(history.forward());
 
   backButton.addEventListener('click', () => { back(); });
   forwardButton.addEventListener('click', () => { forward(); });

@@ -412,17 +412,44 @@ test('a stored page\'s links follow the library as it is when drawn and when fol
   }
 });
 
-// Holds the window's pages.list calls in the main process until released, by wrapping the
-// plugin invoke handler (Electron keeps handlers in ipcMain's own map).
-async function holdLists(app) {
-  await app.evaluate(({ ipcMain }) => {
+// Holds the replies to the window's calls on the named channels in the main process, each
+// until let through in turn, by wrapping the plugin invoke handler (Electron keeps handlers
+// in ipcMain's own map). The answer is worked out when asked for, so a reply held is as old
+// as its call.
+async function hold(app, channels) {
+  await app.evaluate(({ ipcMain }, channels) => {
     const handlers = ipcMain._invokeHandlers;
-    const real = handlers.get('plugin:invoke');
-    globalThis.__held = new Promise((resolve) => { globalThis.__release = resolve; });
+    const real = (globalThis.__real ??= handlers.get('plugin:invoke'));
+    globalThis.__holding = channels;
+    globalThis.__waiting = [];
+    globalThis.__answered = 0;
     handlers.set('plugin:invoke', async (e, id, channel, payload) => {
-      if (channel === 'pages.list' && globalThis.__held) await globalThis.__held;
-      return real(e, id, channel, payload);
+      const out = real(e, id, channel, payload);
+      if (!globalThis.__holding.includes(channel)) return out;
+      const gate = new Promise((resolve) => { globalThis.__waiting.push({ channel, resolve }); });
+      await Promise.allSettled([out, gate]);
+      globalThis.__answered++;
+      return out;
     });
+  }, channels);
+}
+
+// The oldest (or newest) reply held on a channel let through, once its call is in.
+async function letThrough(app, channel, newest = false) {
+  await expect.poll(() => app.evaluate((_, channel) => globalThis.__waiting.some((w) => w.channel === channel), channel)).toBe(true);
+  const before = await app.evaluate((_, [channel, newest]) => {
+    const at = globalThis.__waiting.map((w) => w.channel)[newest ? 'lastIndexOf' : 'indexOf'](channel);
+    globalThis.__waiting.splice(at, 1)[0].resolve();
+    return globalThis.__answered;
+  }, [channel, newest]);
+  await expect.poll(() => app.evaluate(() => globalThis.__answered)).toBeGreaterThan(before);
+}
+
+// Every reply held let through, and none held from now on.
+async function letAllThrough(app) {
+  await app.evaluate(() => {
+    globalThis.__holding = [];
+    for (const w of globalThis.__waiting.splice(0)) w.resolve();
   });
 }
 
@@ -442,16 +469,47 @@ test('a link followed while the writer moves on does not take the pane back', as
     await paneSettled(page);
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tides');
 
-    await holdLists(app);
+    await hold(app, ['pages.list']);
     await pane.getByRole('button', { name: '[[Ada Vell]]' }).click();
     await pane.getByRole('button', { name: '‹ Back' }).click();
-    await app.evaluate(() => { globalThis.__release(); globalThis.__held = null; });
+    await letAllThrough(app);
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Harbour');
     await page.waitForTimeout(300);
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Harbour');
     expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('wiki/Harbour.html');
     await pane.getByRole('button', { name: 'Forward ›' }).click();
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tides');
+  } finally {
+    await fixture.close();
+  }
+});
+
+// Rule: of two links followed while the list is read for them, the one clicked last is the
+// page shown, whichever reply comes first, and the trail gains only its stop.
+test('the link clicked last is the page shown', async () => {
+  const { profile, library } = await libraryProfile();
+  await writeFile(path.join(library, 'wiki', 'Hub.html'), '<p data-block="u1">See [[Harbour]] and [[Tides]].</p>');
+  const fixture = await launchProfile(profile);
+  try {
+    const { app, page } = fixture;
+    await page.waitForFunction(() => !!window.hoard);
+    await seedBook(page, '<p>A line of the book.</p>');
+    const pane = page.locator('.hoard-wiki-pane');
+    await page.evaluate(() => window.hoard.wiki.pane.open('wiki/Hub.html'));
+    await paneSettled(page);
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Hub');
+
+    await hold(app, ['pages.list']);
+    await pane.getByRole('button', { name: '[[Harbour]]' }).click();
+    await pane.getByRole('button', { name: '[[Tides]]' }).click();
+    await letThrough(app, 'pages.list');
+    await letThrough(app, 'pages.list');
+    await letAllThrough(app);
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tides');
+    await page.waitForTimeout(300);
+    expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('sources/Notes/Tides.html');
+    await pane.getByRole('button', { name: '‹ Back' }).click();
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Hub');
   } finally {
     await fixture.close();
   }
