@@ -108,7 +108,7 @@ function startMarks(host: NeoMainHost, layer: GitLayer): MarkStore {
     wrote: (name) => layer.wrote(name),
     log: host.log.bind(host),
   });
-  host.handle('marks.list', (payload) => store.list(checked('marks.list', validateHoardMarksListV1, payload).bookId));
+  host.handle('marks.list', (payload) => store.listBook(checked('marks.list', validateHoardMarksListV1, payload).bookId));
   host.handle('marks.add', (payload) => store.add(checked('marks.add', validateHoardMarksAddV1, payload), 'author'));
   host.handle('marks.reply', (payload) => store.reply(checked('marks.reply', validateHoardMarksReplyV1, payload), 'author'));
   host.handle('marks.state', (payload) => store.setState(checked('marks.state', validateHoardMarksStateV1, payload), 'author'));
