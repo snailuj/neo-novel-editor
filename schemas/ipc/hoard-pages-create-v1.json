@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "A request for a new page, version 1: its tree, its path inside the tree (forward slashes, ending in .html; the file name is the title) and its HTML. Refused for a title the tree already holds.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tree", "path", "html"],
+  "properties": {
+    "tree": { "enum": ["wiki", "sources"] },
+    "path": { "type": "string", "minLength": 1 },
+    "html": { "type": "string" }
+  }
+}

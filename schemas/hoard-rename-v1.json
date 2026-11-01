@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "A page rename in progress, version 1, kept at .neo/pages/.rename.json in the library from the moment the rename is planned until it has been committed. If NEO stops part way, the file says what is left: running the same rename again, or starting NEO, finishes it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "from", "to", "files", "at"],
+  "properties": {
+    "version": { "const": 1 },
+    "from": { "description": "The page's id before.", "type": "string", "minLength": 1 },
+    "to": { "description": "The page's id after.", "type": "string", "minLength": 1 },
+    "files": { "description": "Every file that holds a link to rewrite, relative to the library, the renamed page itself at its new path.", "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "at": { "description": "An ISO 8601 time in UTC.", "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" }
+  }
+}

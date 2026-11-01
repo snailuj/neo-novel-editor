@@ -8,12 +8,17 @@
 // caller read (the rule wiki/write.ts keeps), so a change that arrived from another device
 // is never written over. Every refusal is logged; every request names its page by an id
 // that identity.ts has checked, so no path leaves its tree.
-import { existsSync } from 'node:fs';
-import { opendir, readFile, stat } from 'node:fs/promises';
+import { existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { opendir, readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { validateHoardRenameV1 } from '../../generated/validators.cjs';
+import type { HoardRenameV1 } from '../../generated/hoard-rename-v1.js';
+import { key } from '../../librarian/links.ts';
+import { booksWithOwnRepo } from '../git/commit.ts';
 import type { GitLayer } from '../git/layer.ts';
 import { writeWhole } from '../files.ts';
 import { checkPath, idOf, PageRefused, parseId, titleOf, TREES, type PageRef, type Tree } from './identity.ts';
+import { editsFor, rewriteHtml, type Retarget, type WindowEdit } from './rewrite.ts';
 import { titleIndex } from './titles.ts';
 
 type Level = 'error' | 'warn' | 'info' | 'debug';
@@ -23,6 +28,8 @@ export interface PageStoreOptions {
   /** Takes writes into the library's history; absent, pages are written without it. */
   layer?: Pick<GitLayer, 'around' | 'wrote'>;
   log: (level: Level, message: string, data?: unknown) => void;
+  /** Told before each step of a rename, so a test can stop it part way; the step may throw. */
+  onStep?: (step: 'journal' | 'move' | 'sidecar' | 'rewrite', file: string) => void;
 }
 
 export interface PageEntry {
@@ -41,11 +48,40 @@ export interface PageFile extends Omit<PageEntry, 'size' | 'mtime'> {
 
 export type Written = { ok: true } | { ok: false; reason: 'missing' | 'stale' };
 
+/** Link edits for one chapter of the open book, for the window to make through the host's `replace`. */
+export interface ChapterEdits {
+  bookId: string;
+  chId: string;
+  edits: WindowEdit[];
+}
+
+export interface Renamed {
+  /** The page's id now. */
+  id: string;
+  from: string;
+  /** Files this call wrote with a link changed, the open book's chapters not among them. */
+  rewrittenFiles: number;
+  rewrittenLinks: number;
+  /** Links to the page that markup splits, which could not be rewritten and were left. */
+  skipped: number;
+  deferred: ChapterEdits[];
+}
+
+// The note of a rename in progress; see schemas/hoard-rename-v1.json.
+const JOURNAL = '.neo/pages/.rename.json';
+const CHAPTER = /^(book-[^/]+)\/chapters\/([^/]+)\.html$/;
+const sidecarOf = (id: string) => `.neo/pages/${id}.json`;
+const sameFile = (a: string, b: string) => {
+  const [x, y] = [statSync(a), statSync(b)];
+  return x.ino === y.ino && x.dev === y.dev;
+};
+
 // A title becomes the target of a [[link]], which the grammar ends at ] | # or ^.
 const UNLINKABLE = /[[\]|#^\p{Cc}]/u;
 
 export class PageStore {
   protected readonly o: PageStoreOptions;
+  #tail: Promise<unknown> = Promise.resolve();
 
   constructor(options: PageStoreOptions) {
     this.o = options;
@@ -174,5 +210,203 @@ export class PageStore {
       this.o.log('info', 'pages.create', { id: idOf(ref), bytes: s.size });
       return { id: idOf(ref), tree: ref.tree, path: ref.path, title, size: s.size, mtime: s.mtimeMs };
     });
+  }
+
+  // Renames run one at a time: each reads the library the last one left.
+  #serial<T>(run: () => Promise<T>): Promise<T> {
+    const next = this.#tail.then(run);
+    this.#tail = next.catch(() => {});
+    return next;
+  }
+
+  /**
+   * Renames or moves a page inside its tree, and rewrites every link that resolves to it
+   * ([[Old]], [[Old|alias]], [[Old#^id]], [[Old#Heading]], and the embed ![[Old]]) to the
+   * new title, in pages of both trees and in the chapters of every NEO book. Which links
+   * resolve to it is decided as titles.ts decides, so a wiki page shadowing a source of
+   * the same title takes its links and the source's rename touches none.
+   *
+   * The chapters of `openBookId` are not written, since the window saves its own copy of
+   * them; their edits come back in `deferred`. Everything else is one commit credited to
+   * the author. The plan is written to .neo/pages/.rename.json first, so a rename that
+   * stops part way is finished by calling it again, or by recover() when NEO starts.
+   */
+  rename(id: string, newPath: string, openBookId: string | null): Promise<Renamed> {
+    return this.#serial(() => this.op('rename', async () => {
+      const start = performance.now();
+      const from = parseId(id);
+      const to = parseId(`${from.tree}/${checkPath(newPath)}`);
+      const pending = await this.#journal();
+      if (pending) {
+        const finished = await this.#finish(pending, openBookId, start);
+        if (pending.from === id && pending.to === idOf(to)) return finished;
+      }
+      if (id === idOf(to)) {
+        if (!existsSync(this.file(from))) throw new PageRefused('missing', `${id} is not a page`);
+        return { id, from: id, rewrittenFiles: 0, rewrittenLinks: 0, skipped: 0, deferred: [] };
+      }
+      return this.#finish(await this.#plan(from, to), openBookId, start);
+    }));
+  }
+
+  /** Finishes a rename NEO stopped in the middle of; null when none is waiting. */
+  recover(openBookId: string | null): Promise<Renamed | null> {
+    return this.#serial(async () => {
+      const pending = await this.#journal();
+      if (!pending) return null;
+      this.o.log('warn', 'pages.rename: finishing a rename that was left part way', { from: pending.from, to: pending.to });
+      return this.#finish(pending, openBookId, performance.now());
+    });
+  }
+
+  async #journal(): Promise<HoardRenameV1 | null> {
+    const file = path.join(this.o.library(), JOURNAL);
+    const text = await readFile(file, 'utf8').catch((err: NodeJS.ErrnoException) => {
+      if (err.code !== 'ENOENT') this.o.log('error', `pages: ${file} does not read, so no rename is finished`, String(err));
+      return null;
+    });
+    if (text === null) return null;
+    try {
+      const data: unknown = JSON.parse(text);
+      if (validateHoardRenameV1(data)) return data;
+      this.o.log('error', `pages: ${file} is not a rename note, so no rename is finished`, validateHoardRenameV1.errors);
+    } catch (err) {
+      this.o.log('error', `pages: ${file} does not parse, so no rename is finished`, String(err));
+    }
+    return null;
+  }
+
+  // Checks the request and finds the files that hold a link to rewrite. Writes nothing.
+  async #plan(from: PageRef, to: PageRef): Promise<HoardRenameV1> {
+    const [id, newId] = [idOf(from), idOf(to)];
+    const pages = await this.#scan();
+    const index = titleIndex(pages);
+    if (!pages.some((p) => p.id === id)) throw new PageRefused('missing', `${id} is not a page`);
+    const oldTitle = titleOf(from.path);
+    const newTitle = this.checkTitle(to.path);
+    const clash = index.taken(to.tree, newTitle, id);
+    if (clash) throw new PageRefused('taken', `${JSON.stringify(newTitle)} is already a page in ${to.tree} (${clash.id})`);
+    const plan: HoardRenameV1 = { version: 1, from: id, to: newId, files: [], at: new Date().toISOString() };
+    if (newTitle === oldTitle) return plan;
+
+    if (to.tree === 'wiki' && key(newTitle) !== key(oldTitle)) {
+      const hidden = pages.find((p) => p.tree === 'sources' && key(p.title) === key(newTitle));
+      if (hidden) this.o.log('warn', 'pages.rename.shadows', { id: newId, shadows: hidden.id });
+    }
+    // Links reach the page only if it is the one their title resolves to.
+    if (index.resolve(oldTitle)?.id !== id) {
+      this.o.log('info', 'pages.rename: another page holds this title, so no link is rewritten', { id, holder: index.resolve(oldTitle)?.id });
+      return plan;
+    }
+    const retarget = this.#retarget(oldTitle, newTitle);
+    const files: string[] = [];
+    for await (const rel of this.#linkFiles()) {
+      const html = await readFile(path.join(this.o.library(), rel), 'utf8').catch(() => null);
+      if (html === null || !html.includes('[[')) continue;
+      const out = rewriteHtml(html, retarget);
+      if (out.rewritten) files.push(rel === id ? newId : rel);
+      if (out.skipped) this.o.log('warn', `pages.rename: ${out.skipped} link(s) in ${rel} are split by markup, so they are left`, { id });
+    }
+    plan.files = files.sort();
+    return plan;
+  }
+
+  #retarget(oldTitle: string, newTitle: string): Retarget {
+    const wanted = key(oldTitle);
+    return (target) => (key(target) === wanted ? newTitle : null);
+  }
+
+  /** Every page file and every chapter file that can hold a link, as paths relative to the library. */
+  async *#linkFiles(): AsyncGenerator<string> {
+    for await (const page of this.entries()) yield page.id;
+    const library = this.o.library();
+    const books = await readdir(library, { withFileTypes: true }).catch(() => []);
+    for (const book of books.filter((d) => d.isDirectory() && d.name.startsWith('book-')).map((d) => d.name).sort()) {
+      let chapters;
+      try {
+        chapters = await opendir(path.join(library, book, 'chapters'));
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') this.o.log('warn', `pages: ${book}/chapters does not list, so its links are not looked at`, String(err));
+        continue;
+      }
+      for await (const d of chapters) if (d.isFile() && d.name.endsWith('.html')) yield `${book}/chapters/${d.name}`;
+    }
+  }
+
+  #moveFile(from: string, to: string): boolean {
+    const [src, dst] = [existsSync(from), existsSync(to)];
+    if (!src && dst) return false; // an earlier run moved it
+    if (!src) throw new Error(`pages: ${from} is not there to move`);
+    if (dst && !sameFile(from, to)) throw new Error(`pages: ${to} is already there, so ${from} is not moved onto it`);
+    mkdirSync(path.dirname(to), { recursive: true });
+    renameSync(from, to);
+    return true;
+  }
+
+  // Carries out a plan, however much of it an earlier run did, and commits it as the author's.
+  async #finish(plan: HoardRenameV1, openBookId: string | null, start: number): Promise<Renamed> {
+    const library = this.o.library();
+    const own = booksWithOwnRepo(library);
+    const there = (rel: string) => existsSync(path.join(library, ...rel.split('/')));
+    // The paths the commit names. git refuses a path it has never heard of that is not on
+    // disk, so a source already moved by an earlier run, or a sidecar that never was, is left out.
+    const named = new Set<string>([plan.to]);
+    if (plan.from !== plan.to) {
+      if (there(plan.from)) named.add(plan.from);
+      if (there(sidecarOf(plan.from))) named.add(sidecarOf(plan.from));
+      if (there(sidecarOf(plan.from)) || there(sidecarOf(plan.to))) named.add(sidecarOf(plan.to));
+    }
+    for (const rel of plan.files) if (rel === plan.to || there(rel)) named.add(rel);
+    // a note left by a stopped run is committed with the writer's pending work first; its removal belongs to this commit
+    if (there(JOURNAL)) named.add(JOURNAL);
+    const inOwnRepo = (rel: string) => own.some((b) => rel.startsWith(`${b}/`));
+    const run = () => this.#execute(plan, openBookId);
+    const result = this.o.layer ? (await this.o.layer.around([...named].filter((rel) => !inOwnRepo(rel)), run, 'author')).result : await run();
+    const ms = Math.round(performance.now() - start);
+    this.o.log('info', 'pages.rename', {
+      from: plan.from, to: plan.to, files: result.rewrittenFiles, links: result.rewrittenLinks, deferred: result.deferred.length, skipped: result.skipped, ms,
+    });
+    return result;
+  }
+
+  async #execute(plan: HoardRenameV1, openBookId: string | null): Promise<Renamed> {
+    const library = this.o.library();
+    const abs = (rel: string) => path.join(library, ...rel.split('/'));
+    const step = this.o.onStep;
+    const result: Renamed = { id: plan.to, from: plan.from, rewrittenFiles: 0, rewrittenLinks: 0, skipped: 0, deferred: [] };
+    step?.('journal', JOURNAL);
+    writeWhole(abs(JOURNAL), `${JSON.stringify(plan, null, 2)}\n`);
+    step?.('move', plan.from);
+    if (plan.from !== plan.to && this.#moveFile(abs(plan.from), abs(plan.to))) this.o.log('debug', 'pages.rename: moved', { from: plan.from, to: plan.to });
+    const [sideFrom, sideTo] = [abs(sidecarOf(plan.from)), abs(sidecarOf(plan.to))];
+    // a page made here, not imported, has no sidecar; one already moved by an earlier run is not there to move
+    if (plan.from !== plan.to && existsSync(sideFrom)) {
+      step?.('sidecar', sideFrom);
+      this.#moveFile(sideFrom, sideTo);
+    }
+    const retarget = this.#retarget(titleOf(parseId(plan.from).path), titleOf(parseId(plan.to).path));
+    for (const rel of plan.files) {
+      const html = await readFile(abs(rel), 'utf8').catch(() => null);
+      if (html === null) {
+        this.o.log('warn', `pages.rename: ${rel} is gone, so its links are not rewritten`);
+        continue;
+      }
+      const chapter = CHAPTER.exec(rel);
+      if (chapter && chapter[1] === openBookId) {
+        const edits = editsFor(html, retarget);
+        if (edits.length) result.deferred.push({ bookId: chapter[1], chId: chapter[2]!, edits });
+        continue;
+      }
+      const out = rewriteHtml(html, retarget);
+      result.skipped += out.skipped;
+      if (out.html === html) continue;
+      step?.('rewrite', rel);
+      writeWhole(abs(rel), out.html);
+      result.rewrittenFiles++;
+      result.rewrittenLinks += out.rewritten;
+    }
+    rmSync(abs(JOURNAL), { force: true });
+    for (const tree of new Set([parseId(plan.from).tree, parseId(plan.to).tree])) this.o.layer?.wrote(tree);
+    return result;
   }
 }

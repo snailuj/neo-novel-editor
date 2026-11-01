@@ -10,11 +10,8 @@ export interface LogLine { level: string; message: string; data?: unknown }
 export function pagesLibrary(t: { after(fn: () => void): void }, extra: Partial<PageStoreOptions> = {}) {
   const library = tempDir(t, 'hoard-pages-');
   const lines: LogLine[] = [];
-  const store = new PageStore({
-    library: () => library,
-    log: (level, message, data) => lines.push({ level, message, data }),
-    ...extra,
-  });
+  const log = (level: string, message: string, data?: unknown) => { lines.push({ level, message, data }); };
+  const store = new PageStore({ library: () => library, log, ...extra });
   const put = (rel: string, text: string) => {
     const file = path.join(library, rel);
     mkdirSync(path.dirname(file), { recursive: true });
@@ -23,5 +20,5 @@ export function pagesLibrary(t: { after(fn: () => void): void }, extra: Partial<
   const get = (rel: string) => readFileSync(path.join(library, rel), 'utf8');
   const has = (rel: string) => existsSync(path.join(library, rel));
   const logged = (message: string) => lines.filter((l) => l.message === message);
-  return { library, store, lines, put, get, has, logged };
+  return { library, store, log, lines, put, get, has, logged };
 }
