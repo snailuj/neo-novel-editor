@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { launchProfile, seedBook } from '../support/electron-profile.mjs';
@@ -368,6 +368,45 @@ test('a rename the library changed under is refused in words, from the list read
     await expect(row('People')).toHaveCount(0);
     await expect(row('wiki')).toBeFocused();
     expect(existsSync(path.join(library, 'wiki', 'People', 'Ada Brook.html'))).toBe(false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+// Rule: a stored page's links reach pages as the library is now: the list is read again
+// for each stored page drawn, and a link finds its page when it is followed, so a page
+// made, moved or removed outside the tree since is reached, or said to be gone.
+test('a stored page\'s links follow the library as it is when drawn and when followed', async () => {
+  const { profile, library } = await libraryProfile();
+  const fixture = await launchProfile(profile);
+  try {
+    const { page } = fixture;
+    await page.waitForFunction(() => !!window.hoard);
+    await seedBook(page, '<p>A line of the book.</p>');
+    const pane = page.locator('.hoard-wiki-pane');
+    await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
+    await paneSettled(page);
+    await expect(pane.locator('.hoard-wiki-missing')).toHaveText('[[Lost]]');
+
+    // a page made outside the tree is reached once the page is drawn again
+    await writeFile(path.join(library, 'wiki', 'Lost.html'), '<p data-block="l1">Found again.</p>');
+    await page.evaluate(() => window.hoard.wiki.pane.reload());
+    await expect(pane.getByRole('button', { name: '[[Lost]]' })).toBeVisible();
+
+    // a page moved outside the tree after the page was drawn is found when its link is followed
+    await mkdir(path.join(library, 'wiki', 'Archive'), { recursive: true });
+    await rename(path.join(library, 'wiki', 'People', 'Ada Vell.html'), path.join(library, 'wiki', 'Archive', 'Ada Vell.html'));
+    await pane.getByRole('button', { name: '[[Ada Vell]]' }).click();
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Ada Vell');
+    expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('wiki/Archive/Ada Vell.html');
+
+    // one removed since is said to be gone, and the pane stays where it was
+    await pane.getByRole('button', { name: '‹ Back' }).click();
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tides');
+    await rm(path.join(library, 'wiki', 'Archive', 'Ada Vell.html'));
+    await pane.getByRole('button', { name: '[[Ada Vell]]' }).click();
+    await expect(pane.locator('.hoard-wiki-status')).toHaveText('No page is called “Ada Vell” now. It may have been renamed or removed outside NEO.');
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tides');
   } finally {
     await fixture.close();
   }

@@ -121,12 +121,15 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
     for (const link of linksIn([text])) {
       out.push(document.createTextNode(text.slice(at, link.off)));
       const words = text.slice(link.off, link.off + link.len);
-      const chId = pages.get(link.target);
-      if (chId) {
+      if (pages.get(link.target)) {
         const go = button('hoard-wiki-link', words);
         // one piece while the page is edited: its words are changed in the wiki book
         go.contentEditable = 'false';
-        go.addEventListener('click', () => { open(chId); });
+        go.addEventListener('click', () => {
+          follow(link.target).catch((err: unknown) => {
+            status.textContent = `The link could not be followed: ${err instanceof Error ? err.message : String(err)}. Try again.`;
+          });
+        });
         out.push(go);
       } else {
         const gone = el('span', 'hoard-wiki-missing', words);
@@ -192,6 +195,16 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
     return { get: (target) => index.resolve(target)?.id ?? book.get(target) };
   };
 
+  // A link found when it is followed, from a stored page against the list read again, so a
+  // page made, moved or removed outside the tree since the page was drawn is reached or said gone.
+  const follow = async (target: string) => {
+    const fromStored = !!stored;
+    if (fromStored) await readList();
+    const id = (fromStored ? storedResolver() : o.resolve()).get(target);
+    if (id) await open(id);
+    else status.textContent = `No page is called “${target}” now. It may have been renamed or removed outside NEO.`;
+  };
+
   const render = (page: { title: string; html: string }, pages: Resolver) => {
     title.textContent = page.title;
     CSS.highlights?.delete(FOUND);
@@ -223,7 +236,8 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
     let page: PageRead | StoredRead | null;
     try {
       if (isStored(id)) {
-        if (!listed) await readList();
+        // read for each stored page drawn, so its links reach the library as it is now
+        await readList();
         page = (await neo.invoke('pages.read', { id })) as StoredRead | null;
       } else {
         page = (await neo.invoke('wiki.page', { chId: id })) as PageRead | null;
