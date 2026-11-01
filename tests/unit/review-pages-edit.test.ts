@@ -8,6 +8,8 @@
 //   and is not in history;
 // - Restored-Paths-Are-Released: once a refused librarian edit is put back, the page is no
 //   longer held out of the writer's commits, so the author's next edit to it is checkpointed;
+// - Failed-Restore-Stays-Held: a refused librarian edit whose restore fails stays held and is
+//   reported as an error;
 // - Author-Edits-Both-Trees: an author edit lands in either tree;
 // - Edit-Needs-Current-Page: an edit lands only while the file holds what the caller read;
 // - Owners-List-Only-Librarian: review.owners names the librarian's pages among those asked.
@@ -113,6 +115,29 @@ test('Restored-Paths-Are-Released: after a refused librarian edit is put back, t
   await layer.commitNow('import-author');
   assert.equal(await layer.show('HEAD', OURS), AFTER, 'the writer\'s checkpoint took the author\'s edit');
   assert.equal((await history()).length, was.length + 1);
+});
+
+test('Failed-Restore-Stays-Held: a refused librarian edit whose restore fails stays held and is reported as an error', async (t) => {
+  const { o, layer, library: lib, page } = await library(t);
+  const gate = new Gate({ library: () => lib, log: () => {} });
+  layer.useGate(gate);
+  const logged: { level: string; message: string; data: unknown }[] = [];
+  // The file is changed by someone else between the swap and the gate's refusal (still a text the gate refuses).
+  const store = {
+    write: async (id: string, was: string, now: string) => {
+      const written = await o.store.write(id, was, now);
+      if (written.ok && now === AFTER_BAD) writeFileSync(path.join(lib, id), CHANGED);
+      return written;
+    },
+  };
+  const CHANGED = '<p data-block="b 2">Changed meanwhile.</p>';
+  const AFTER_BAD = '<p data-block="b 1">The quay is very old.</p>';
+  const log = (level: string, message: string, data?: unknown) => { logged.push({ level, message, data }); };
+  await assert.rejects(editPage({ ...o, store, log } as typeof o, { page: OURS, before: BEFORE, after: AFTER_BAD, as: 'librarian' }));
+  assert.deepEqual(gate.held(), [OURS], 'the page is still held');
+  assert.equal(page(OURS), CHANGED, 'the writer\'s newer text is left alone');
+  assert.ok(logged.some((l) => l.level === 'error' && (l.data as { page?: string; reason?: string }).page === OURS && (l.data as { reason?: string }).reason === 'stale'), JSON.stringify(logged));
+  assert.ok(!logged.some((l) => /as it was/.test(l.message)), 'no line says the page is as it was');
 });
 
 test('Author-Edits-Both-Trees: an author edit to a sources page lands', async (t) => {

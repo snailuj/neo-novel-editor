@@ -57,5 +57,13 @@ export async function writePage(o: PageWriterOptions, ask: PageWrite): Promise<P
     return { ok: true };
   }
 
-  return asLibrarian(o, 'wiki.edit', { chId }, [rel], swap, () => writeWhole(file, ask.before));
+  const restore = async (): Promise<void> => {
+    const now = await readFile(file, 'utf8').catch(() => null);
+    if (now === ask.after) return writeWhole(file, ask.before);
+    // The page is no longer what the swap wrote, so the refused text may still be on disk: it stays held.
+    const reason = now === null ? 'missing' : 'stale';
+    o.log('error', 'wiki.edit: the refused librarian change could not be put back, so the page stays held', { chId, reason });
+    throw new Error(`wiki.edit: could not put ${rel} back after the library check refused the change (${reason})`);
+  };
+  return asLibrarian(o, 'wiki.edit', { chId }, [rel], swap, restore);
 }
