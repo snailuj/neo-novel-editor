@@ -39,9 +39,13 @@ export interface Reconciled {
   baseline: boolean;
 }
 
-/** A page's words as a job compares them: each paragraph's plain text, empty ones gone. */
+// A link's target and anchor are a name, not words: a rename rewrites them in other
+// pages. A link keeps its shown text (`[[Old|shown]]`), which is words the author chose.
+const LINK = /\[\[[^\]|#]*(?:#[^\]|]*)?(?:\|([^\]]*))?\]\]/g;
+
+/** A page's words as a job compares them: each paragraph's plain text with links reduced to their shown text, empty ones gone. */
 export function wordsOf(html: string): string {
-  return paragraphTexts(html).map(plainText).filter(Boolean).join('\n');
+  return paragraphTexts(html).map((p) => plainText(p.replace(LINK, (_m, shown?: string) => (shown ? `\u27e6${shown}\u27e7` : '\u27e6link\u27e7')))).filter(Boolean).join('\n');
 }
 
 /** The hash a job keeps of its source's words. */
