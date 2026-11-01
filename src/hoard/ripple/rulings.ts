@@ -58,32 +58,36 @@ const linked = (line: string) => [...new Set([...line.matchAll(/\[\[([^\]|#]*)/g
 
 type Card = Pick<RippleProposal, 'kind' | 'source'> & Partial<RippleProposal>;
 
+/** The id of the page a target names (by title, alias or id), or null when it names none. */
+export type PageOf = (target: string) => string | null;
+
 /**
  * What a card changes, wording and job aside: its kind, source page and target page, and the
- * words a claim replaces, the pages a topic line links (or, with none, its words) or a
+ * words a claim replaces (a target a page answers to is that page's id, so a title and an
+ * id are one), the pages a topic line links (or, with none, its words) or a
  * mint's title. A judge asked twice words one change differently, so a proposal's id,
  * which holds the quote and the job, does not find the earlier card (re-run test, 24 Oct).
  */
-export function cardKey(p: Card): string {
+export function cardKey(p: Card, resolve?: PageOf): string {
   const what = p.kind === 'claim' ? norm(p.anchor ?? '') : p.kind === 'topic' ? linked(p.line ?? '') || norm(p.line ?? '') : '';
-  return ['card', p.kind, p.source.page, norm(p.target ?? ''), what].join('\0');
+  return ['card', p.kind, p.source.page, (p.kind === 'mint' ? null : resolve?.(p.target ?? '')) ?? norm(p.target ?? ''), what].join('\0');
 }
 
 /** The cards a new proposal must not repeat, by key: those waiting on the writer and those they rejected. */
-export function heldCards(state: RippleState): Map<string, RippleProposal> {
+export function heldCards(state: RippleState, resolve?: PageOf): Map<string, RippleProposal> {
   const held = new Map<string, RippleProposal>();
   for (const q of state.proposals.values()) {
     // an applied card is on its page now, where the judge reads it; a nothing is no card
     if (q.kind === 'nothing' || q.status === 'applied') continue;
-    held.set(cardKey(q), q);
+    held.set(cardKey(q, resolve), q);
   }
   return held;
 }
 
 /** The earlier card a proposal repeats, or null. */
-export function repeatOf(state: RippleState, p: RippleProposal, held = heldCards(state)): RippleProposal | null {
+export function repeatOf(state: RippleState, p: RippleProposal, held?: Map<string, RippleProposal>, resolve?: PageOf): RippleProposal | null {
   if (p.kind === 'nothing') return null;
-  const q = held.get(cardKey(p));
+  const q = (held ?? heldCards(state, resolve)).get(cardKey(p, resolve));
   return q && q.id !== p.id ? q : null;
 }
 

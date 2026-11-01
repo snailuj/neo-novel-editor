@@ -284,6 +284,24 @@ test('a re-run makes no new card for a change the writer has waiting or rejected
   assert.equal(waiting[0]!.id, claim!.id, 'the waiting card is the first one, not a second copy');
 });
 
+test('a page named by title in one answer and by id in the next is one card', async (t) => {
+  const { ripple, page, put, p } = setup(t);
+  page('wiki/Harbour.html', p('The harbour wall is made of timber.'), 'librarian');
+  await ripple.run();
+  const judge = async (words: string, target: string, text: string) => {
+    put('sources/Dawn.html', `<p>${words}</p>`);
+    const asked = await ripple.ask({ page: 'sources/Dawn.html' });
+    writeFileSync(ripple.overview().jobs.find((j) => j.id === asked.job)!.answer, answer([
+      { kind: 'claim', target, anchor: 'made of timber', text, reason: 'r', quote: 'it was rebuilt in stone' },
+    ]));
+    return ripple.run();
+  };
+  const first = await judge('The wall fell; it was rebuilt in stone.', 'Harbour', 'rebuilt in stone');
+  assert.deepEqual([first.proposals, first.repeats], [1, 0]);
+  const second = await judge('The wall fell; it was rebuilt in stone, they say.', 'wiki/Harbour.html', 'of stone, after the storm');
+  assert.deepEqual([second.proposals, second.repeats], [0, 1], 'the id names the page the title named');
+});
+
 test('the same claim on two pages of one title, one in each tree, is two cards', async (t) => {
   const { ripple, page, put, p } = setup(t);
   page('wiki/Harbour.html', p('The harbour wall is made of timber.'), 'librarian');

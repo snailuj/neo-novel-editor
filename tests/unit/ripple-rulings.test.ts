@@ -119,3 +119,14 @@ test('a proposal repeats a card waiting or rejected, never one applied or a noth
   assert.equal(repeatOf(ruled('rejected'), later({ line: 'Also [[Lighthouse]].' })), null, 'another change is not a repeat');
   assert.equal(repeatOf(ruled('rejected'), proposal()), null, 'a proposal does not repeat itself');
 });
+
+test('a card\'s key names the page its target resolves to, so a title and an id are one card', () => {
+  const resolve = (t: string) => (/^(wiki\/)?harbour(\.html)?$/i.test(t) ? 'wiki/Harbour.html' : null);
+  const byTitle = proposal({ kind: 'claim', target: 'Harbour', anchor: 'made of timber', text: 'x', line: undefined });
+  const byId = proposal({ kind: 'claim', target: 'wiki/Harbour.html', anchor: 'made of timber', text: 'x', line: undefined });
+  assert.notEqual(cardKey(byTitle), cardKey(byId), 'without a resolver they are only strings');
+  assert.equal(cardKey(byTitle, resolve), cardKey(byId, resolve));
+  assert.notEqual(cardKey(byTitle, resolve), cardKey({ ...byTitle, target: 'Lighthouse' }, resolve), 'another page is another card');
+  const state = fold(lines(proposal({ ...byTitle, status: 'rejected' })));
+  assert.equal(repeatOf(state, { ...byId, id: 'r-later0000000' }, undefined, resolve)?.id, byTitle.id);
+});

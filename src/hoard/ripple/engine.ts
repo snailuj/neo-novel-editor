@@ -26,7 +26,7 @@ import type { PageStore } from '../pages/store.ts';
 import { inline } from '../wiki/inline.ts';
 import { plan, type Plan } from './apply.ts';
 import { AnswerError, readAnswer, type Proposed } from './contract.ts';
-import { corpusPath, pagesCorpus, pageText, readLibrary, readSidecar, sidecarRel, type PageLibrary, type RipplePage } from './library.ts';
+import { corpusPath, findPage, pagesCorpus, pageText, readLibrary, readSidecar, sidecarRel, type PageLibrary, type RipplePage } from './library.ts';
 import { buildPacket } from './packet.ts';
 import type { OwnerOf, RippleMarks } from './ports.ts';
 import { newJob, reconcile, superseded } from './reconcile.ts';
@@ -264,7 +264,10 @@ export class Ripple {
   // Each answer waiting in the inbox for a packeted job.
   async #answers(state: RippleState): Promise<{ read: number; proposals: number; repeats: number; problems: string[] }> {
     const out = { read: 0, proposals: 0, repeats: 0, problems: [] as string[] };
-    const held = heldCards(state);
+    // a target is judged by the page it names, so a title and an id are one card
+    const library = [...state.jobs.values()].some((j) => j.state === 'packeted' && existsSync(this.#inboxFile(j.id))) ? await this.#library() : { pages: [] };
+    const resolve = (target: string) => findPage(library, target)?.id ?? null;
+    const held = heldCards(state, resolve);
     const records: (RippleJob | RippleProposal)[] = [];
     let brief: { text: string; sha256: string } | null = null;
     for (const job of state.jobs.values()) {
@@ -289,14 +292,14 @@ export class Ripple {
       const at = this.#now();
       const made = proposed.map((p) => proposalOf(job, p, at)).filter((p) => !state.proposals.has(p.id));
       const fresh = made.filter((p, i) => made.findIndex((q) => q.id === p.id) === i).filter((p) => {
-        const was = repeatOf(state, p, held);
+        const was = repeatOf(state, p, held, resolve);
         if (was) {
           out.repeats++;
           this.#o.log('info', `ripple: ${job.source.title}: left out a ${p.kind} on ${p.target}, which repeats card ${was.id} (${was.status})`);
           return false;
         }
         // a change said twice, in one answer or two, is one card
-        if (p.kind !== 'nothing') held.set(cardKey(p), p);
+        if (p.kind !== 'nothing') held.set(cardKey(p, resolve), p);
         return true;
       });
       records.push(...fresh, { ...rest, at, state: 'judged' });
