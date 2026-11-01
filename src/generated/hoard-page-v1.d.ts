@@ -21,11 +21,17 @@ export interface PageSource {
    */
   path: string;
   /**
-   * The file's name without .md: the page's title when it came in.
+   * The page's title when it came in: the file's name without .md, or the name an import list gave it.
    */
   name: string;
   /**
-   * SHA-256 of the file's bytes, in hex.
+   * For a page cut from part of the file (a split), the headings whose sections it holds, or the line ranges (L12-L40) it holds, in order.
+   *
+   * @minItems 1
+   */
+  sections?: [string, ...string[]];
+  /**
+   * SHA-256 of the whole file's bytes, in hex, a split's too.
    */
   sha256: string;
 }
