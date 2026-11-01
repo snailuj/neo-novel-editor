@@ -86,6 +86,8 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
   nav.append(backButton, forwardButton, editButton);
   const title = el('h3', 'hoard-wiki-title');
   title.tabIndex = -1;
+  // where a stored page lives, as a trail of its folders
+  const where = el('p', 'hoard-wiki-where');
   const status = el('p', 'hoard-status hoard-wiki-status');
   status.setAttribute('role', 'status');
   const body = el('div', 'hoard-wiki-page');
@@ -101,7 +103,7 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
     listed: (entries) => { listed = entries; },
     paneRoot: root,
   });
-  root.append(tree.element, nav, title, status, body, empty);
+  root.append(tree.element, nav, title, where, status, body, empty);
 
   const refreshNav = () => {
     backButton.disabled = !history.canBack;
@@ -235,6 +237,7 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
     const chapter = page && !isStored(id) ? page as PageRead : null;
     shown = chapter;
     stored = page && isStored(id) ? { id, title: page.title, html: page.html } : null;
+    where.textContent = stored ? id.split('/').slice(0, -1).join(' / ') : '';
     if (!page) {
       title.textContent = '';
       body.replaceChildren();

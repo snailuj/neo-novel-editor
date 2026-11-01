@@ -82,7 +82,7 @@ test('a rename asks for its path in the same folder, or says why not', () => {
   assert.deepEqual(refused('.Harbour'), ['unsafe', 'A title can\'t start with a dot or hold a backslash. Change the title.']);
   assert.deepEqual(refused('Har\\bour'), ['unsafe', 'A title can\'t start with a dot or hold a backslash. Change the title.']);
   assert.deepEqual(rename('wiki/Gone.html', 'Here'), {
-    kind: 'refused', code: 'missing', message: '“Gone” is no longer there, so nothing was changed. It may have been moved or removed outside NEO.',
+    kind: 'refused', code: 'missing', message: '“Gone” is no longer there, so nothing was changed. It may have been moved or removed outside NEO. Look for it in the list, which now shows the pages as they are.',
   });
 });
 

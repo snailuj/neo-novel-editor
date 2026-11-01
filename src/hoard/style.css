@@ -110,6 +110,8 @@ body[data-hoard-wiki] .chapter-body p { text-indent: 0; text-align: start; hyphe
 .hoard-marks .hoard-wiki-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .hoard-wiki-missing { color: var(--muted); text-decoration: underline dotted; }
 .hoard-wiki-empty { font-size: 12px; color: var(--muted); }
+.hoard-wiki-where { margin-block: -6px 8px; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.hoard-wiki-where:empty { display: none; }
 
 /* The Pages tree at the top of the wiki pane (wiki/pane-tree.ts): rows are buttons in
    nested lists, indented by depth, each at least 44px tall; a row's Rename and Move show
@@ -131,7 +133,7 @@ body[data-hoard-wiki] .chapter-body p { text-indent: 0; text-align: start; hyphe
 .hoard-tree .hoard-tree-name { flex: 1; min-inline-size: 0; overflow-wrap: anywhere; font-size: 12px; }
 .hoard-tree-folder > .hoard-tree-row > .hoard-tree-name::before { content: '▸ '; color: var(--muted); }
 .hoard-tree-folder > .hoard-tree-row > .hoard-tree-name[aria-expanded='true']::before { content: '▾ '; }
-.hoard-tree .hoard-tree-name[aria-current='page'] { font-weight: 600; box-shadow: inset 2px 0 0 var(--accent); }
+.hoard-tree .hoard-tree-name[aria-current='page'] { font-weight: 600; border-inline-start: 2px solid var(--accent); }
 .hoard-tree-count { font-size: 11px; color: var(--muted); padding-inline-end: 6px; }
 .hoard-tree-act { opacity: 0; }
 .hoard-tree-row:hover .hoard-tree-act, .hoard-tree-row:focus-within .hoard-tree-act { opacity: 1; }
@@ -141,11 +143,14 @@ body[data-hoard-wiki] .chapter-body p { text-indent: 0; text-align: start; hyphe
   font: inherit; font-size: 12px; color: inherit; background: transparent;
   border: 1px solid color-mix(in srgb, var(--muted) 60%, transparent); border-radius: 3px;
 }
-.hoard-tree-input[aria-invalid='true'] { border-color: var(--red); border-width: 2px; }
+/* NEO's red is too dark for small text on the dark pane, so it is lifted there */
+.hoard-tree-input[aria-invalid='true'] { border-color: color-mix(in srgb, var(--red) 70%, var(--paper)); border-width: 2px; }
+body.light .hoard-tree-input[aria-invalid='true'] { border-color: var(--red); }
 .hoard-tree-input[aria-busy='true'] { opacity: 0.6; }
 .hoard-tree-hint, .hoard-tree-error { margin-block: 4px 0; font-size: 11px; }
 .hoard-tree-hint { color: var(--muted); }
-.hoard-tree-error { color: var(--red); }
+.hoard-tree-error { color: color-mix(in srgb, var(--red) 70%, var(--paper)); }
+body.light .hoard-tree-error { color: var(--red); }
 .hoard-tree-error:empty { display: none; }
 .hoard-tree-actions { display: flex; flex-wrap: wrap; gap: 4px; }
 .hoard-tree .hoard-tree-submit { color: var(--accent); font-weight: 600; }

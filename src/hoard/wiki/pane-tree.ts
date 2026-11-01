@@ -294,6 +294,7 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
     // told once the list is read again, which clears the lines
     let said = '';
     let left = '';
+    let renamed: { from: string; to: string } | null = null;
     try {
       if (ask.op === 'new') {
         await neo.invoke('pages.create', { tree: verdict.tree, path: verdict.path, html: newPageHtml() });
@@ -315,7 +316,7 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
           done.skipped ? `${plural(done.skipped, 'link')} in other files still say [[${was}]], because formatting runs through them` : '',
         ].filter(Boolean);
         left = kept.length ? `${kept.join('; ')}. Change them to [[${ask.value}]] by hand.` : '';
-        await host.renamed(ask.id, done.id);
+        renamed = { from: ask.id, to: done.id };
       }
     } catch (err) {
       const hadFocus = focusInPane();
@@ -330,6 +331,8 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
     reveal(to);
     active = to;
     await refresh();
+    // after the list, so the page read again resolves its links by the new title
+    if (renamed) await host.renamed(renamed.from, renamed.to);
     status.textContent = said;
     alert.textContent = left;
     if (hadFocus) focusRow(to);

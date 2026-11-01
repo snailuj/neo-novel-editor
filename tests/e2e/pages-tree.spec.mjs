@@ -249,6 +249,11 @@ test('new page, rename and move from the tree, with refusals next to the field',
     await tree.getByRole('button', { name: 'Pages' }).click();
     await row('Harbour').click();
     await expect(pane.locator('.hoard-wiki-line')).toHaveText(['The wiki harbour faces east.']);
+    await expect(pane.locator('.hoard-wiki-where')).toHaveText('wiki');
+    // a page linking to it is shown while it is renamed
+    await row('People').click();
+    await row('Ada Vell').click();
+    await expect(pane.locator('.hoard-wiki-where')).toHaveText('wiki / People');
 
     // rename: a title the other tree holds is refused next to the field, and the value stays
     await row('Harbour').hover();
@@ -270,12 +275,14 @@ test('new page, rename and move from the tree, with refusals next to the field',
     expect(fileOf(library, 'wiki/Quay.html')).toBe(PAGES['wiki/Harbour.html']);
     expect(fileOf(library, 'wiki/People/Ada Vell.html')).toContain('[[Quay]]');
     await expect.poll(() => page.evaluate(() => document.querySelector('#chapters .chapter-body p').textContent)).toBe('Meet at the [[Quay]] at noon.');
-    // the pane's trail and the page shown follow the rename
+    // the page shown is read again, its link reaching the page by its new title, and the
+    // trail follows the rename
+    await expect(pane.getByRole('button', { name: '[[Quay]]' })).toBeVisible();
+    await pane.getByRole('button', { name: '‹ Back' }).click();
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Quay');
     expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('wiki/Quay.html');
 
     // move: into a folder typed, made for it, inside the same tree
-    await row('People').click();
     await row('Ada Vell').hover();
     await tree.getByRole('button', { name: 'Move Ada Vell' }).click();
     const folder = tree.getByLabel('Folder in wiki to move “Ada Vell” to');
@@ -354,7 +361,7 @@ test('a rename the library changed under is refused in words, from the list read
     const gone = tree.getByLabel('New title for “Ada Vell”');
     await gone.fill('Ada Brook');
     await gone.press('Enter');
-    await expect(tree.locator('.hoard-tree-alert')).toHaveText('“Ada Vell” is no longer there, so nothing was changed. It may have been moved or removed outside NEO.');
+    await expect(tree.locator('.hoard-tree-alert')).toHaveText('“Ada Vell” is no longer there, so nothing was changed. It may have been moved or removed outside NEO. Look for it in the list, which now shows the pages as they are.');
     await expect(gone).toHaveCount(0);
     await expect(row('Ada Vell')).toHaveCount(0);
     // People held only that page, so its folder went too and the focus is on wiki

@@ -229,7 +229,7 @@ export function judge(ask: Ask, entries: readonly Listed[]): Verdict {
   const entry = entries.find((e) => e.id === ask.id);
   if (!entry) {
     const gone = titleOf(ask.id);
-    return refused('missing', `“${gone}” is no longer there, so nothing was changed. It may have been moved or removed outside NEO.`);
+    return refused('missing', `“${gone}” is no longer there, so nothing was changed. It may have been moved or removed outside NEO. Look for it in the list, which now shows the pages as they are.`);
   }
   if (ask.op === 'rename') {
     const path = join(folderOf(entry.path), `${ask.value}.html`);
