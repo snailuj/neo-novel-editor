@@ -431,8 +431,9 @@ async function hold(app, channels) {
       const gate = new Promise((resolve) => { held.resolve = resolve; });
       await out.catch(() => {});
       held.ready = true;
-      await gate;
+      const fail = await gate;
       globalThis.__answered++;
+      if (fail) throw new Error('the disk could not be read');
       return out;
     });
   }, channels);
@@ -443,14 +444,15 @@ async function heldOn(app, channel, n = 1) {
   await expect.poll(() => app.evaluate((_, channel) => globalThis.__waiting.filter((w) => w.channel === channel && w.ready).length, channel)).toBeGreaterThanOrEqual(n);
 }
 
-// The oldest (or newest) reply held on a channel let through, once one is worked out.
-async function letThrough(app, channel, newest = false) {
+// The oldest (or newest) reply held on a channel let through, once one is worked out; with
+// fail, an error in its place.
+async function letThrough(app, channel, newest = false, fail = false) {
   await heldOn(app, channel);
-  const before = await app.evaluate((_, [channel, newest]) => {
+  const before = await app.evaluate((_, [channel, newest, fail]) => {
     const at = globalThis.__waiting.map((w) => w.channel)[newest ? 'lastIndexOf' : 'indexOf'](channel);
-    globalThis.__waiting.splice(at, 1)[0].resolve();
+    globalThis.__waiting.splice(at, 1)[0].resolve(fail);
     return globalThis.__answered;
-  }, [channel, newest]);
+  }, [channel, newest, fail]);
   await expect.poll(() => app.evaluate(() => globalThis.__answered)).toBeGreaterThan(before);
 }
 
@@ -458,7 +460,7 @@ async function letThrough(app, channel, newest = false) {
 async function letAllThrough(app) {
   await app.evaluate(() => {
     globalThis.__holding = [];
-    for (const w of globalThis.__waiting.splice(0)) w.resolve();
+    for (const w of globalThis.__waiting.splice(0)) w.resolve(false);
   });
 }
 
@@ -720,6 +722,46 @@ test('a page read slowly does not take the writer out of the book', async () => 
     await page.keyboard.press('Enter');
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tides');
     await expect(pane.locator('.hoard-wiki-title')).toBeFocused();
+  } finally {
+    await fixture.close();
+  }
+});
+
+// Rule: a link the writer has gone on from says nothing: if the list read for it fails
+// after they went back, the page they went to shows no error about it.
+test('a link left behind that fails to read says nothing on the page gone to', async () => {
+  const { profile } = await libraryProfile();
+  const fixture = await launchProfile(profile);
+  try {
+    const { app, page } = fixture;
+    await page.waitForFunction(() => !!window.hoard);
+    await seedBook(page, '<p>A line of the book.</p>');
+    const pane = page.locator('.hoard-wiki-pane');
+    await page.evaluate(() => window.hoard.wiki.pane.open('wiki/Harbour.html'));
+    await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
+    await paneSettled(page);
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tides');
+
+    await hold(app, ['pages.list']);
+    await pane.getByRole('button', { name: '[[Ada Vell]]' }).click();
+    await pane.getByRole('button', { name: '‹ Back' }).click();
+    await heldOn(app, 'pages.list', 2);
+    await letThrough(app, 'pages.list', true);
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Harbour');
+    const shownSays = await pane.locator('.hoard-wiki-status').textContent();
+    await letThrough(app, 'pages.list', false, true);
+    await page.waitForTimeout(300);
+    await expect(pane.locator('.hoard-wiki-status')).toHaveText(shownSays);
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Harbour');
+
+    // the link the writer is still waiting on says so
+    await letAllThrough(app);
+    await pane.getByRole('button', { name: 'Forward ›' }).click();
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tides');
+    await hold(app, ['pages.list']);
+    await pane.getByRole('button', { name: '[[Ada Vell]]' }).click();
+    await letThrough(app, 'pages.list', false, true);
+    await expect(pane.locator('.hoard-wiki-status')).toHaveText(/^The link could not be followed: .*the disk could not be read\. Try again\.$/);
   } finally {
     await fixture.close();
   }

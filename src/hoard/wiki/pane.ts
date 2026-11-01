@@ -199,7 +199,14 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
     const fromStored = !!stored;
     // a page gone to since (Back, another link) stands over this one
     const mine = ++moves;
-    const library = fromStored ? await readList() : null;
+    let library: Listed[] | null = null;
+    try {
+      if (fromStored) library = await readList();
+    } catch (err) {
+      if (mine === moves) throw err;
+      console.warn('hoard: wiki pane: the list for a link the writer went on from did not read', err);
+      return;
+    }
     if (mine !== moves) return;
     const id = (library ? storedResolver(library) : o.resolve()).get(target);
     if (id) await open(id);
