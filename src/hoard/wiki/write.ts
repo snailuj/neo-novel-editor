@@ -4,16 +4,14 @@
 // meanwhile is never written over. The open book's window owns its chapter files, so the
 // window never asks while the wiki book is open.
 //
-// The librarian's change sits between two commits (GitLayer.around): what the writer had
-// pending is committed as theirs, then the page as the librarian's. When the pre-commit
-// gate refuses that commit, the page is put back as it was, so the change is in neither
-// the history nor the file. The writer's own change is left to the next checkpoint, as
-// their typing is.
+// The librarian's change sits between two commits and a gate refusal puts the page back
+// (asLibrarian, review/edit.ts, which pages.edit shares). The writer's own change is left
+// to the next checkpoint, as their typing is.
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { GateRefused, type Finding } from '../git/gate.ts';
 import type { GitLayer } from '../git/layer.ts';
 import { oneName, writeWhole } from '../files.ts';
+import { asLibrarian, type Written } from '../review/edit.ts';
 
 export type Who = 'librarian' | 'author';
 
@@ -26,10 +24,7 @@ export interface PageWrite {
   as: Who;
 }
 
-export type PageWritten =
-  | { ok: true }
-  | { ok: false; reason: 'missing' | 'stale' }
-  | { ok: false; reason: 'refused'; findings: Finding[] };
+export type PageWritten = Written;
 
 export interface PageWriterOptions {
   library(): string;
@@ -62,15 +57,5 @@ export async function writePage(o: PageWriterOptions, ask: PageWrite): Promise<P
     return { ok: true };
   }
 
-  try {
-    const { result: refused, after } = await o.layer.around([rel], swap);
-    if (refused) return { ok: false, reason: refused };
-    o.log('info', 'wiki.edit', { chId, as: 'librarian', commit: after });
-    return { ok: true };
-  } catch (err) {
-    if (!(err instanceof GateRefused)) throw err;
-    writeWhole(file, ask.before);
-    o.log('warn', 'wiki.edit: the library check refused the librarian\'s change, so the page is as it was', { chId, findings: err.findings });
-    return { ok: false, reason: 'refused', findings: err.findings };
-  }
+  return asLibrarian(o, 'wiki.edit', { chId }, [rel], swap, () => writeWhole(file, ask.before));
 }
