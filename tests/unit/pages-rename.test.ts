@@ -5,7 +5,7 @@
 // title the tree holds; and if it stops part way, running it again finishes it without
 // rewriting anything twice. Page names here are neutral words.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -466,4 +466,30 @@ for (const [what, leftover] of [['sidecar', '.neo/pages/wiki/Places/Port.html.js
     rmSync(path.join(library, leftover));
     assert.equal((await store.rename(FROM, 'Places/Port.html', null)).id, 'wiki/Places/Port.html');
   });
+}
+
+// Rule: a rename never moves a sidecar or marks file through a link that leaves its folder.
+for (const [what, folder] of [['marks file', '.neo/marks'], ['sidecar', '.neo/pages']] as const) {
+  for (const end of ['source', 'destination'] as const) {
+    test(`a rename is refused before anything moves when the ${what} ${end} is reached through a link that leaves ${folder}`, async (t) => {
+      const { store, library, get, has } = fixture(t);
+      const outside = tempDir(t, 'hoard-outside-');
+      const linkAt = path.join(library, `${folder}/wiki/${end === 'source' ? 'People' : 'Places'}`);
+      if (end === 'source') {
+        rmSync(outside, { recursive: true });
+        renameSync(linkAt, outside);
+      }
+      mkdirSync(path.dirname(linkAt), { recursive: true });
+      symlinkSync(outside, linkAt, 'junction');
+      const outsideBefore = readdirSync(outside).sort();
+      assert.deepEqual(outsideBefore, end === 'source' ? ['Harbour.html.json'] : [], 'the link leads out and the fixture reached its state');
+      const was = Object.fromEntries(['wiki/People/Harbour.html', 'wiki/Index.html'].map((rel) => [rel, get(rel)]));
+
+      await assert.rejects(store.rename(FROM, 'Places/Port.html', null), (e: PageRefused) => e.code === 'unsafe');
+      assert.equal(has('.neo/pages/.rename.json'), false, 'no note of a rename was written');
+      assert.equal(has('wiki/Places/Port.html'), false, 'the page did not move');
+      for (const [rel, text] of Object.entries(was)) assert.equal(get(rel), text, rel);
+      assert.deepEqual(readdirSync(outside).sort(), outsideBefore, 'nothing moved into or out of the folder the link leads to');
+    });
+  }
 }

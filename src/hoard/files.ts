@@ -44,6 +44,22 @@ export function linkProblem(root: string, file: string): 'out' | 'dangling' | nu
 }
 
 /**
+ * linkProblem for a file under a folder of the library (`.neo/marks`, `.neo/pages`): the
+ * one rule MarkStore and a page rename share. A folder not there yet holds nothing that
+ * can lead out, so it is safe. A file that is not under the folder is not judged here.
+ */
+export function folderLinkProblem(folder: string, file: string): 'out' | 'dangling' | null {
+  if (path.relative(folder, file).startsWith('..')) return null;
+  let root: string;
+  try {
+    root = realpathSync(folder);
+  } catch {
+    return null;
+  }
+  return linkProblem(root, file);
+}
+
+/**
  * The first folder on the way to `rel` (a '/'-path under `root`) that is a file, as
  * `Foo.html` is in `Foo.html/Bar.html`: nothing can be read or made below it. Null if none.
  */
