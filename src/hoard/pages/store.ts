@@ -243,7 +243,8 @@ export class PageStore {
    * ([[Old]], [[Old|alias]], [[Old#^id]], [[Old#Heading]], and the embed ![[Old]]) to the
    * new title, in pages of both trees and in the chapters of every NEO book. Which links
    * resolve to it is decided as titles.ts decides, so a wiki page shadowing a source of
-   * the same title takes its links and the source's rename touches none.
+   * the same title takes its links and the source's rename touches none. A new title held
+   * in the other tree is refused, since taking it would move that page's links.
    *
    * The chapters of `openBookId` are not written, since the window saves its own copy of
    * them; their edits come back in `deferred`. Everything else is one commit credited to
@@ -322,9 +323,11 @@ export class PageStore {
     const plan: HoardRenameV1 = { version: 1, from: id, to: newId, files: [], at: new Date().toISOString() };
     if (newTitle === oldTitle) return plan;
 
-    if (to.tree === 'wiki' && key(newTitle) !== key(oldTitle)) {
-      const hidden = index.taken('sources', newTitle);
-      if (hidden) this.o.log('warn', 'pages.rename.shadows', { id: newId, shadows: hidden.id });
+    // A wiki page takes the links of a source of its title, so a new title the other tree
+    // holds would re-point that page's links without anyone asking.
+    if (key(newTitle) !== key(oldTitle)) {
+      const held = index.taken(to.tree === 'wiki' ? 'sources' : 'wiki', newTitle);
+      if (held) throw new PageRefused('other-tree', `${JSON.stringify(newTitle)} is already a page in the other tree (${held.id}), and taking it would move that page's links`);
     }
     // Links reach the page only if it is the one their title resolves to.
     if (index.resolve(oldTitle)?.id !== id) {

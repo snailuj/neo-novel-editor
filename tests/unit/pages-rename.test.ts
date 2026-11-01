@@ -147,11 +147,20 @@ test('a title the tree holds is refused, folded as links fold it, and nothing mo
   assert.equal(get('wiki/Index.html'), INDEX);
   assert.equal(has('.neo/pages/.rename.json'), false);
   assert.equal(logged('pages.refused').length, 1);
-  // another tree may hold the title: the wiki page then wins its links
-  assert.equal((await store.rename(FROM, 'Lantern2.html', null)).id, 'wiki/Lantern2.html');
-  await store.create('sources', 'Beacon.html', '<p>s</p>');
-  assert.equal((await store.rename('wiki/Lantern2.html', 'Beacon.html', null)).id, 'wiki/Beacon.html');
-  assert.equal(logged('pages.rename.shadows').length, 1);
+});
+
+// Rule: a rename never moves links between the trees; a new title the other tree holds is refused.
+test('a rename onto a title the other tree holds is refused both ways, and nothing moves', async (t) => {
+  const { store, get, has, put, logged } = pagesLibrary(t);
+  put('wiki/Tide.html', '<p>w</p>');
+  put('sources/Moon.html', '<p>s</p>');
+  put('wiki/Index.html', '<p>[[Tide]] [[Moon]]</p>');
+  await assert.rejects(store.rename('sources/Moon.html', 'Deep/TIDE.html', null), (e: PageRefused) => e.code === 'other-tree');
+  await assert.rejects(store.rename('wiki/Tide.html', 'moon.html', null), (e: PageRefused) => e.code === 'other-tree');
+  assert.ok(has('sources/Moon.html') && has('wiki/Tide.html'), 'neither page moved');
+  assert.equal(get('wiki/Index.html'), '<p>[[Tide]] [[Moon]]</p>', 'no link was re-pointed');
+  assert.deepEqual(logged('pages.refused').map((l) => (l.data as { code: string }).code), ['other-tree', 'other-tree']);
+  assert.equal((await store.rename('sources/Moon.html', 'Deep/Moon.html', null)).id, 'sources/Deep/Moon.html', 'a move keeping its own title is allowed');
 });
 
 test('a rename refuses a missing page, a title no link can name, and a path out of the tree, and logs each', async (t) => {
