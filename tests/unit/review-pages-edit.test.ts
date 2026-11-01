@@ -10,6 +10,13 @@
 //   longer held out of the writer's commits, so the author's next edit to it is checkpointed;
 // - Failed-Restore-Stays-Held: a refused librarian edit whose restore fails stays held and is
 //   reported as an error;
+// - Author-Save-Frees-A-Held-Page: an author save of a held page frees it, and the next
+//   checkpoint commits it as the author's; a librarian edit, or an author save that
+//   was refused, does not say the author saved;
+// - Refused-Edit-Keeps-Earlier-Hold: a refused librarian edit never frees a hold that
+//   existed before it;
+// - Stale-Edit-Leaves-No-Librarian-Commit: a librarian edit refused as stale leaves no
+//   librarian commit, and the text that made it stale is not committed as the librarian's;
 // - Author-Edits-Both-Trees: an author edit lands in either tree;
 // - Edit-Needs-Current-Page: an edit lands only while the file holds what the caller read;
 // - Owners-List-Only-Librarian: review.owners names the librarian's pages among those asked.
@@ -140,6 +147,74 @@ test('Failed-Restore-Stays-Held: a refused librarian edit whose restore fails st
   assert.ok(!logged.some((l) => /as it was/.test(l.message)), 'no line says the page is as it was');
 });
 
+// A librarian edit the gate refuses whose restore fails, leaving the writer's newer text held.
+async function heldPage(t: Parameters<typeof library>[0], saved: string[] = []) {
+  const lib = await library(t);
+  const gate = new Gate({ library: () => lib.library, log: () => {} });
+  lib.layer.useGate(gate);
+  const AFTER_BAD = '<p data-block="b 1">The quay is very old.</p>';
+  const CHANGED = '<p data-block="b 2">Changed meanwhile.</p>';
+  const store = {
+    write: async (id: string, was: string, now: string) => {
+      const written = await lib.o.store.write(id, was, now);
+      if (written.ok && now === AFTER_BAD) writeFileSync(path.join(lib.library, id), CHANGED);
+      return written;
+    },
+  };
+  await assert.rejects(editPage({ ...lib.o, store, saved: (id: string) => { saved.push(id); } } as unknown as typeof lib.o, { page: OURS, before: BEFORE, after: AFTER_BAD, as: 'librarian' }));
+  assert.deepEqual(gate.held(), [OURS]);
+  assert.deepEqual(saved, [], 'a failed restore is not an author save');
+  return { ...lib, gate, CHANGED };
+}
+
+test('Author-Save-Frees-A-Held-Page: an author save of a held page frees it, and the next checkpoint commits it as the author\'s', async (t) => {
+  const saved: string[] = [];
+  const { o, layer, gate, page, CHANGED } = await heldPage(t, saved);
+  const hooked = { ...o, saved: (id: string) => { saved.push(id); gate.saved(id); } };
+  assert.deepEqual(await editPage(hooked, { page: OURS, before: CHANGED, after: AFTER, as: 'author' }), { ok: true });
+  assert.deepEqual(saved, [OURS]);
+  assert.deepEqual(gate.held(), []);
+  await layer.commitNow('import-author');
+  assert.equal(await layer.show('HEAD', OURS), AFTER);
+  assert.equal(page(OURS), AFTER);
+});
+
+test('Author-Save-Frees-A-Held-Page: a librarian edit and a refused author save do not say the author saved', async (t) => {
+  const { o } = await library(t);
+  const saved: string[] = [];
+  const hooked = { ...o, saved: (id: string) => { saved.push(id); } };
+  assert.deepEqual(await editPage(hooked, { page: OURS, before: BEFORE, after: AFTER, as: 'librarian' }), { ok: true });
+  assert.deepEqual(await editPage(hooked, { page: OURS, before: BEFORE, after: AFTER, as: 'author' }), { ok: false, reason: 'stale' });
+  assert.deepEqual(await editPage(hooked, { page: 'wiki/Gone.html', before: BEFORE, after: AFTER, as: 'author' }), { ok: false, reason: 'missing' });
+  assert.deepEqual(saved, []);
+});
+
+test('Refused-Edit-Keeps-Earlier-Hold: a librarian edit to a page the gate already holds is refused, and the hold stays', async (t) => {
+  const { o, gate, page, CHANGED, history } = await heldPage(t);
+  const was = await history();
+  const lines: string[] = [];
+  const logged = { ...o, log: (_level: string, message: string) => { lines.push(message); } };
+  // an edit the gate would refuse again: putting it back must not hand the writer's held text to their commits
+  const written = await editPage(logged, { page: OURS, before: CHANGED, after: '<p data-block="b 3">Again.</p>', as: 'librarian' });
+  assert.deepEqual(written, { ok: false, reason: 'held' });
+  assert.deepEqual(gate.held(), [OURS]);
+  assert.equal(page(OURS), CHANGED);
+  assert.deepEqual(await history(), was, 'no commit was made');
+  assert.ok(lines.some((l) => /still holds the page/.test(l)), JSON.stringify(lines));
+});
+
+test('Stale-Edit-Leaves-No-Librarian-Commit: a librarian edit refused as stale makes no librarian commit', async (t) => {
+  const { o, page, history, library: lib } = await library(t);
+  const newer = '<p data-block="b1">The quay is old, said the other device.</p>';
+  // the page changes between the author's commit and the swap
+  const store = { write: async (id: string, was: string, now: string) => { writeFileSync(path.join(lib, id), newer); return o.store.write(id, was, now); } };
+  const librarian = async () => (await history()).filter((l) => l.startsWith('Librarian|'));
+  const was = await librarian();
+  assert.deepEqual(await editPage({ ...o, store } as unknown as typeof o, { page: OURS, before: BEFORE, after: AFTER, as: 'librarian' }), { ok: false, reason: 'stale' });
+  assert.equal(page(OURS), newer);
+  assert.deepEqual(await librarian(), was);
+});
+
 test('Author-Edits-Both-Trees: an author edit to a sources page lands', async (t) => {
   const { o, page } = await library(t);
   assert.deepEqual(await editPage(o, { page: SOURCE, before: BEFORE, after: AFTER, as: 'author' }), { ok: true });
@@ -181,11 +256,14 @@ test('the channels: pages.edit and review.owners take a page form, and wiki.edit
   const { o, library: lib, page } = await library(t);
   const handlers = new Map<string, (payload: unknown) => unknown>();
   const host = { handle: (name: string, fn: (payload: unknown) => unknown) => handlers.set(name, fn), log: () => {}, paths: { library: () => lib } };
-  startReview(host as never, {} as never, { layer: o.layer, wiki: { pages: () => null } as never, pages: o.store as never });
+  const saved: string[] = [];
+  startReview(host as never, {} as never, { layer: o.layer, wiki: { pages: () => null } as never, pages: o.store as never, authorSavedPage: (id) => { saved.push(id); } });
   const call = async (name: string, payload: unknown) => handlers.get(name)!(payload);
   assert.deepEqual(await call('pages.edit', { page: SOURCE, before: BEFORE, after: AFTER, as: 'author' }), { ok: true });
   assert.equal(page(SOURCE), AFTER);
+  assert.deepEqual(saved, [SOURCE]);
   assert.deepEqual(await call('pages.edit', { page: SOURCE, before: AFTER, after: BEFORE, as: 'librarian' }), { ok: false, reason: 'owned' });
+  assert.deepEqual(saved, [SOURCE]);
   await assert.rejects(call('pages.edit', { page: 'notes/x.html', before: '', after: '', as: 'author' }), /pages\.edit/);
   assert.deepEqual(await call('review.owners', { pages: [OURS, THEIRS, SOURCE] }), { librarian: [OURS] });
   assert.deepEqual(await call('review.owners', { tree: 'wiki' }), { librarian: [OURS] });

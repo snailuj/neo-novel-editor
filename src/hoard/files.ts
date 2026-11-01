@@ -11,6 +11,17 @@ export function oneName(name: unknown, what: string): string {
   return name;
 }
 
+// lstat's throwIfNoEntry covers ENOENT only; a path through a file (`a.html/b.html`) is
+// ENOTDIR, and names nothing either.
+function lstatOrNull(file: string): ReturnType<typeof lstatSync> | undefined {
+  try {
+    return lstatSync(file, { throwIfNoEntry: false });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOTDIR') return undefined;
+    throw err;
+  }
+}
+
 /**
  * Whether `file` can be read or written without leaving `root` (a real path) by a link.
  * The nearest part of the path that exists decides, so a file not there yet is judged by
@@ -25,11 +36,24 @@ export function linkProblem(root: string, file: string): 'out' | 'dangling' | nu
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== 'ENOENT' && code !== 'ENOTDIR') throw err;
-      if (lstatSync(probe, { throwIfNoEntry: false })) return 'dangling';
+      if (lstatOrNull(probe)) return 'dangling';
       continue;
     }
     return real === root || real.startsWith(root + path.sep) ? null : 'out';
   }
+}
+
+/**
+ * The first folder on the way to `rel` (a '/'-path under `root`) that is a file, as
+ * `Foo.html` is in `Foo.html/Bar.html`: nothing can be read or made below it. Null if none.
+ */
+export function fileAbove(root: string, rel: string): string | null {
+  const parts = rel.split('/').slice(0, -1);
+  for (let n = 1; n <= parts.length; n++) {
+    const at = parts.slice(0, n).join('/');
+    if (lstatOrNull(path.join(root, ...at.split('/')))?.isFile()) return at;
+  }
+  return null;
 }
 
 export function writeWhole(file: string, text: string | Uint8Array): void {

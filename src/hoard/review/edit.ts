@@ -26,26 +26,35 @@ export type Refusal = 'missing' | 'stale';
 export type Written =
   | { ok: true }
   | { ok: false; reason: Refusal }
-  | { ok: false; reason: 'refused'; findings: Finding[] };
+  | { ok: false; reason: 'refused'; findings: Finding[] }
+  | { ok: false; reason: 'held' };
 
 export type Edited = Written | { ok: false; reason: 'owned' };
 
 /**
  * Runs `swap` (which writes `paths` and returns why it could not, or null) between the
- * librarian's two commits. A gate refusal calls `restore` and answers 'refused'; any
+ * librarian's two commits. A path the gate already holds is refused with 'held' before
+ * anything is written: putting a refused edit back frees its paths, which must not free a
+ * hold that was there first (the writer's refused text would then be committed as theirs).
+ * A gate refusal calls `restore` and answers 'refused'; any
  * other error goes on. A restored file is released from the gate's hold; a `restore` that
  * throws leaves it held and the error goes on.
  */
 export async function asLibrarian(
-  o: { layer: Pick<GitLayer, 'around' | 'release'>; log: Log },
+  o: { layer: Pick<GitLayer, 'around' | 'release' | 'held'>; log: Log },
   label: string,
   subject: Record<string, unknown>,
   paths: readonly string[],
   swap: () => Promise<Refusal | null>,
   restore: () => void | Promise<void>,
 ): Promise<Written> {
+  const already = o.layer.held(paths);
+  if (already.length) {
+    o.log('warn', `${label}: the library check still holds the page from an earlier refusal, so the librarian does not edit it until the writer saves it`, { ...subject, held: already });
+    return { ok: false, reason: 'held' };
+  }
   try {
-    const { result: refused, after } = await o.layer.around(paths, swap);
+    const { result: refused, after } = await o.layer.around(paths, swap, 'librarian', (refusal) => refusal === null);
     if (refused) return { ok: false, reason: refused };
     o.log('info', label, { ...subject, as: 'librarian', commit: after });
     return { ok: true };
@@ -71,8 +80,10 @@ export interface PageEdit {
 export interface PageEditorOptions {
   library(): string;
   store: Pick<PageStore, 'write'>;
-  layer: Pick<GitLayer, 'around' | 'release'>;
+  layer: Pick<GitLayer, 'around' | 'release' | 'held'>;
   log: Log;
+  /** Told the page's id once the author's edit of it is written; never for the librarian's. */
+  saved?: (page: string) => void;
 }
 
 export async function editPage(o: PageEditorOptions, ask: PageEdit): Promise<Edited> {
@@ -86,6 +97,7 @@ export async function editPage(o: PageEditorOptions, ask: PageEdit): Promise<Edi
     const refused = await swap();
     if (refused) return { ok: false, reason: refused };
     o.log('info', 'pages.edit', { page, as: 'author' });
+    o.saved?.(page);
     return { ok: true };
   }
   if (await ownerOf(o.library(), page, o.log) !== 'librarian') {

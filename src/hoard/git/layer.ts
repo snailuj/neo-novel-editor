@@ -80,6 +80,12 @@ export class GitLayer {
     this.#gate = gate;
   }
 
+  /** Those of `paths` the gate holds out of the writer's commits. */
+  held(paths: readonly string[]): string[] {
+    const held = new Set(this.#gate?.held());
+    return paths.filter((rel) => held.has(rel));
+  }
+
   /** Refused librarian edit's paths, put back: the writer's commits take them again. */
   release(paths: readonly string[]): void {
     this.#gate?.release(paths);
@@ -134,15 +140,17 @@ export class GitLayer {
    * what it changed committed as the librarian's before its error goes on. In a library
    * with no history apply runs alone. With `as` 'author' the edit is the author's own
    * (a page rename): both commits are theirs, and the edit's is not judged as a
-   * librarian's is.
+   * librarian's is. When `wrote` says apply's result wrote nothing, the second commit is
+   * not made (after is null): whatever else changed the paths is not the edit's, and is
+   * left for the writer's next checkpoint.
    */
-  around<T>(paths: readonly string[], apply: () => Promise<T>, as: Who = 'librarian'): Promise<Paired<T>> {
-    const run = this.#pairs.then(() => this.#around(paths, apply, as));
+  around<T>(paths: readonly string[], apply: () => Promise<T>, as: Who = 'librarian', wrote: (result: T) => boolean = () => true): Promise<Paired<T>> {
+    const run = this.#pairs.then(() => this.#around(paths, apply, as, wrote));
     this.#pairs = run.catch(() => {});
     return run;
   }
 
-  async #around<T>(paths: readonly string[], apply: () => Promise<T>, as: Who): Promise<Paired<T>> {
+  async #around<T>(paths: readonly string[], apply: () => Promise<T>, as: Who, wrote: (result: T) => boolean): Promise<Paired<T>> {
     if (this.#state.state !== 'tracked') return { result: await apply(), before: null, after: null };
     const { log } = this.#o;
     const start = performance.now();
@@ -158,6 +166,10 @@ export class GitLayer {
           log('error', 'git.librarian: the edit failed, and so did its commit', { message: String(late) });
         });
         throw err;
+      }
+      if (!wrote(result)) {
+        log('info', 'git.librarian: the edit wrote nothing, so no commit follows it', { paths, before });
+        return { result, before, after: null };
       }
       const after = await this.#commitAs(as, last, paths);
       log('info', as === 'author' ? 'git.author-pair' : 'git.librarian', { paths, before, after, ms: Math.round(performance.now() - start) });

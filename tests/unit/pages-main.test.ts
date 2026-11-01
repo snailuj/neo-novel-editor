@@ -1,8 +1,10 @@
 // Rules: the page channels answer the window half with checked payloads (a malformed
 // request is rejected, never half carried out), return what the store returns, and a
-// rename left part way is finished when the main half starts.
+// rename left part way is finished when the main half starts, and a librarian pair begun
+// on a page lands once the author's save of that page is written.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { LibrarianPairs } from '../../src/hoard/git/pair.ts';
 import { startPages } from '../../src/hoard/pages/main.ts';
 import { PageStore } from '../../src/hoard/pages/store.ts';
 import { pagesLibrary } from './pages-support.ts';
@@ -82,4 +84,39 @@ test('starting finishes a rename that was left part way, and says so', async (t)
   assert.equal(left.get('wiki/A.html'), '<p>[[Surf]]</p>');
   assert.equal(left.get('sources/B.html'), '<p>[[Surf]]</p>');
   assert.ok(recovered.store instanceof PageStore);
+});
+
+test('a librarian pair begun on a page lands once the author\'s save of that page is written', async (t) => {
+  const { library, put, get } = pagesLibrary(t);
+  put('wiki/Tide.html', '<p>one</p>');
+  const h = host(library);
+  // a tracked history that makes no commits: only the wait for the save is under test
+  const layer = { status: () => ({ state: 'tracked' }), around: async (_files: string[], fn: () => Promise<void>) => { await fn(); return { before: null, after: null }; } };
+  // a time limit far longer than the save, so only a landed write can end the wait in time
+  const pairs = new LibrarianPairs({ layer: layer as never, library: () => library, log: () => {}, settleMs: 30_000 });
+  startPages(h.fake, undefined, undefined, (page) => pairs.landed({ page }));
+
+  const asked = performance.now();
+  const typed = '<p>two</p>';
+  const [begun] = await Promise.all([
+    pairs.begin({ page: 'wiki/Tide.html', html: typed }),
+    new Promise<void>((resolve, reject) => setTimeout(() => { h.call('pages.write', { id: 'wiki/Tide.html', before: '<p>one</p>', after: typed }).then(() => resolve(), reject); }, 50)),
+  ]);
+  assert.ok('pair' in begun && begun.pair, JSON.stringify(begun));
+  assert.ok(performance.now() - asked < 15_000, 'the written save ends the wait, not the time limit');
+  assert.equal(get('wiki/Tide.html'), typed);
+  await pairs.end({ pair: begun.pair, html: null });
+});
+
+test('a refused save of a page does not say a write landed', async (t) => {
+  const { library, put } = pagesLibrary(t);
+  put('wiki/Tide.html', '<p>one</p>');
+  const h = host(library);
+  const landed: string[] = [];
+  startPages(h.fake, undefined, undefined, (page) => landed.push(page));
+  assert.deepEqual(await h.call('pages.write', { id: 'wiki/Tide.html', before: '<p>stale</p>', after: '<p>x</p>' }), { ok: false, reason: 'stale' });
+  assert.deepEqual(await h.call('pages.write', { id: 'wiki/Gone.html', before: 'a', after: 'b' }), { ok: false, reason: 'missing' });
+  assert.deepEqual(landed, []);
+  assert.deepEqual(await h.call('pages.write', { id: 'wiki/Tide.html', before: '<p>one</p>', after: '<p>y</p>' }), { ok: true });
+  assert.deepEqual(landed, ['wiki/Tide.html']);
 });
