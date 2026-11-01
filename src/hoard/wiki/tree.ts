@@ -2,6 +2,55 @@
 // this works out. The pages come from one pages.list; each tree (wiki/, sources/) shows its
 // folders first, by name, then its pages, by title. Only the rows of open folders are
 // worked out, so a library of thousands of pages in closed folders draws a few rows.
+//
+// ---- State machine (ui-state-design) ------------------------------------------------------
+// Two regions, two tables. Fixed by the plan's rulings: stored pages are read-only in the
+// pane (Stored-Pages-Read-Only); a move stays inside the page's tree (Move-Within-Tree); the
+// list is read when the tree unfolds, after each change and on Refresh (Tree-Refresh); there
+// is no folder rename, folder delete or page delete (Folder-Actions). Focus rule for every
+// cell: the tree moves the focus only when it is already in the pane; otherwise the writer
+// stays in the manuscript.
+//
+// A. The list. States, and what tells them apart:
+//   Folded      Pages button says aria-expanded=false, ▸; nothing else of the tree shows.
+//   Reading     "Reading pages…" in the status line; Refresh disabled; earlier rows stay.
+//   Listed      the rows; the page shown carries aria-current and a mark.
+//   Empty       "No pages yet…" saying where pages live and that New page makes one.
+//   ReadFailed  an alert naming what failed and "Choose Refresh to try again".
+//   event          Folded             Reading                 Listed / Empty / ReadFailed
+//   Pages button   unfold, read list  fold (reply still kept) fold
+//   Refresh        hidden             no-op: disabled+guarded  read list -> Reading
+//   reply ok       kept for unfold    Listed or Empty          (a stale reply is dropped)
+//   reply failed   kept for unfold    ReadFailed               (a stale reply is dropped)
+//   page row       hidden             earlier rows still open  open in the pane; focus stays on the row
+//   folder row     hidden             toggles open/closed      toggles open/closed; focus stays
+//   Repeats: the Pages button toggles; Refresh twice reads once; a page row twice shows the
+//   page once (the trail takes no second stop); a folder row toggles. Only a newer read's
+//   reply is drawn. Mutates nothing, so there is no undo.
+//
+// B. The row editor (Rename, Move, New page). States:
+//   closed   no field.
+//   open     a labelled field with its action button and Cancel; error null.
+//   invalid  as open, with aria-invalid and the reason in words under it (role=alert).
+//   pending  the field read-only, aria-busy; the action button disabled and saying
+//            "Renaming…", "Moving…" or "Making…".
+//   event              closed           open / invalid                                pending
+//   start (F2, Rename, open the field;  same field: focus it; another row: focus the   focus the field ("busy"),
+//     Move, New page)  focus it         open field and say finish or cancel ("busy")  no request
+//   input              -                keep the value; invalid judges it again       no-op (read-only)
+//   blur               -                judge it if changed -> invalid / open         no-op
+//   submit (Enter,     -                refused -> invalid, focus field; unchanged ->  no-op: guarded and
+//     action button)                    closed, focus origin; else pending, send once  disabled, so one request
+//   cancel (Esc)       -                closed, focus origin, nothing sent             no-op: it cannot be called back
+//   reply done         -                no-op                                          closed; list read again; focus the
+//                                                                                     page's row if focus was in the pane
+//   reply refused      -                no-op                                          invalid with the reason, value
+//                                                                                     kept; focus the field if in the pane
+//   A slow reply stays pending: the writer can keep writing, read pages and fold the tree;
+//   nothing times out, because the store finishes a rename it started even after a restart.
+//   Origin is the row (or the New page button) that opened the field. Inverses: a rename or
+//   a move is undone by another (links follow both ways); a new page has no undo in the
+//   pane (Folder-Actions leaves out page delete): its file is removed from the folder.
 import { checkPath, checkTitle, PageRefused, titleOf, TREES, type Tree } from '../pages/identity.ts';
 import { titleIndex } from '../pages/titles.ts';
 
@@ -189,4 +238,64 @@ export function explain(ask: Ask, fresh: readonly Listed[], err: unknown): { cod
   if (v.kind === 'refused') return { code: v.code, message: v.message };
   const why = (err instanceof Error ? err.message : String(err)).replace(/^plugin \S+: \S+ failed: /, '');
   return { code: null, message: `The page could not be ${DONE[ask.op]}: ${why}. Try again, or choose Refresh.` };
+}
+
+// ---- the row editor (table B above) -------------------------------------------------------
+export type Editor =
+  | { state: 'closed' }
+  | { state: 'open'; ask: Ask; initial: string; error: string | null }
+  | { state: 'pending'; ask: Ask; initial: string };
+
+export type EditorEvent =
+  | { type: 'start'; ask: Ask }
+  | { type: 'input'; value: string }
+  | { type: 'blur' }
+  | { type: 'submit' }
+  | { type: 'cancel' }
+  | { type: 'done' }
+  | { type: 'refused'; message: string };
+
+/** focus-field and busy put the focus in the open field; focus-origin on what opened it. */
+export type Effect = 'none' | 'focus-field' | 'busy' | 'focus-origin' | 'send' | 'settled';
+
+export const CLOSED: Editor = Object.freeze({ state: 'closed' });
+
+const target = (ask: Ask) => (ask.op === 'new' ? `${ask.tree}/${ask.folder}` : ask.id);
+const errorOf = (ask: Ask, entries: readonly Listed[]) => {
+  const v = judge(ask, entries);
+  return v.kind === 'refused' ? v.message : null;
+};
+
+export function step(editor: Editor, e: EditorEvent, entries: readonly Listed[]): { editor: Editor; effect: Effect; verdict?: Verdict } {
+  const stay = { editor, effect: 'none' as Effect };
+  if (editor.state === 'closed') {
+    return e.type === 'start' ? { editor: { state: 'open', ask: e.ask, initial: e.ask.value, error: null }, effect: 'focus-field' } : stay;
+  }
+  if (e.type === 'start') {
+    const same = e.ask.op === editor.ask.op && target(e.ask) === target(editor.ask);
+    return { editor, effect: same ? 'focus-field' : 'busy' };
+  }
+  if (editor.state === 'pending') {
+    if (e.type === 'done') return { editor: CLOSED, effect: 'settled' };
+    if (e.type === 'refused') return { editor: { state: 'open', ask: editor.ask, initial: editor.initial, error: e.message }, effect: 'focus-field' };
+    return stay;
+  }
+  switch (e.type) {
+    case 'input': {
+      const ask = { ...editor.ask, value: e.value };
+      return { editor: { ...editor, ask, error: editor.error === null ? null : errorOf(ask, entries) }, effect: 'none' };
+    }
+    case 'blur':
+      return editor.ask.value === editor.initial ? stay : { editor: { ...editor, error: errorOf(editor.ask, entries) }, effect: 'none' };
+    case 'submit': {
+      const verdict = judge(editor.ask, entries);
+      if (verdict.kind === 'refused') return { editor: { ...editor, error: verdict.message }, effect: 'focus-field', verdict };
+      if (verdict.kind === 'same') return { editor: CLOSED, effect: 'focus-origin', verdict };
+      return { editor: { state: 'pending', ask: editor.ask, initial: editor.initial }, effect: 'send', verdict };
+    }
+    case 'cancel':
+      return { editor: CLOSED, effect: 'focus-origin' };
+    default:
+      return stay;
+  }
 }

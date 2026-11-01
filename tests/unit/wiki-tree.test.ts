@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Tree } from '../../src/hoard/pages/identity.ts';
-import { buildTree, explain, foldersIn, judge, visibleRows } from '../../src/hoard/wiki/tree.ts';
+import { buildTree, CLOSED, explain, foldersIn, judge, step, visibleRows, type Editor, type EditorEvent } from '../../src/hoard/wiki/tree.ts';
 
 const page = (id: string) => {
   const tree = id.slice(0, id.indexOf('/')) as Tree;
@@ -135,4 +135,61 @@ test('the folders a move can pick are those of one tree', () => {
   const roots = buildTree([...LISTED, page('wiki/People/Kin/Bo.html')]);
   assert.deepEqual(foldersIn(roots, 'wiki'), ['', 'People', 'People/Kin']);
   assert.deepEqual(foldersIn(roots, 'sources'), ['', 'Notes']);
+});
+
+// The row editor's table (the header of wiki/tree.ts), walked one cell at a time.
+const run = (events: EditorEvent[], from: Editor = CLOSED) => {
+  let editor = from;
+  const effects: string[] = [];
+  for (const e of events) {
+    const next = step(editor, e, LISTED);
+    editor = next.editor;
+    effects.push(next.effect);
+  }
+  return { editor, effects };
+};
+const renameHarbour = { type: 'start', ask: { op: 'rename', id: 'wiki/Harbour.html', value: 'Harbour' } } as const;
+
+// Rule: a submit sends one request, and every gesture while it is in flight sends none:
+// a second submit, Esc, typing, or another row's Rename only bring the open field back.
+test('while a request is in flight no gesture sends another', () => {
+  const { editor, effects } = run([renameHarbour, { type: 'input', value: 'Quay' }, { type: 'submit' },
+    { type: 'submit' }, { type: 'cancel' }, { type: 'input', value: 'Pier' }, { type: 'blur' },
+    { type: 'start', ask: { op: 'move', id: 'wiki/People/Ada Vell.html', value: 'People' } }, renameHarbour]);
+  assert.deepEqual(effects, ['focus-field', 'none', 'send', 'none', 'none', 'none', 'none', 'busy', 'focus-field']);
+  assert.deepEqual(editor, { state: 'pending', ask: { op: 'rename', id: 'wiki/Harbour.html', value: 'Quay' }, initial: 'Harbour' });
+});
+
+// Rule: the store's answer settles the request: done closes the field, a refusal opens it
+// again with the typed value kept and the reason shown; an answer with nothing in flight
+// changes nothing.
+test('the answer closes the field, or opens it again with the value kept', () => {
+  const sent = run([renameHarbour, { type: 'input', value: 'Quay' }, { type: 'submit' }]).editor;
+  assert.deepEqual(run([{ type: 'done' }], sent), { editor: CLOSED, effects: ['settled'] });
+  assert.deepEqual(run([{ type: 'refused', message: 'Taken.' }], sent).editor, {
+    state: 'open', ask: { op: 'rename', id: 'wiki/Harbour.html', value: 'Quay' }, initial: 'Harbour', error: 'Taken.',
+  });
+  assert.deepEqual(run([{ type: 'done' }, { type: 'refused', message: 'x' }]), { editor: CLOSED, effects: ['none', 'none'] });
+  const open = run([renameHarbour]).editor;
+  assert.deepEqual(run([{ type: 'done' }], open), { editor: open, effects: ['none'] });
+});
+
+// Rule: a field is judged on submit and on leaving it once changed, never while a fresh
+// field is typed in; once it shows an error, each change judges it again; a submit that
+// changes nothing, or Esc, closes it and sends nothing.
+test('a field is judged on submit and on blur, and an unchanged one closes', () => {
+  const typed = run([renameHarbour, { type: 'input', value: 'Har|' }]).editor;
+  assert.equal(typed.state === 'open' && typed.error, null, 'no error while typing a fresh field');
+  const blurred = run([{ type: 'blur' }], typed).editor;
+  assert.match(blurred.state === 'open' ? blurred.error ?? '' : '', /can't hold \[ \] \| # or \^/);
+  const fixed = run([{ type: 'input', value: 'Harbours' }], blurred).editor;
+  assert.equal(fixed.state === 'open' && fixed.error, null, 'a field showing an error is judged again as it changes');
+  assert.deepEqual(run([{ type: 'blur' }], run([renameHarbour]).editor).effects, ['none']);
+  const fresh = run([{ type: 'start', ask: { op: 'new', tree: 'wiki', folder: '', value: '' } }, { type: 'blur' }]).editor;
+  assert.equal(fresh.state === 'open' && fresh.error, null, 'leaving an untouched New page field shows no error');
+  const refusedOnSubmit = run([{ type: 'input', value: 'harbour' }, { type: 'input', value: '' }, { type: 'submit' }], run([renameHarbour]).editor);
+  assert.deepEqual([refusedOnSubmit.editor.state, refusedOnSubmit.effects.at(-1)], ['open', 'focus-field']);
+  assert.deepEqual(run([renameHarbour, { type: 'submit' }]), { editor: CLOSED, effects: ['focus-field', 'focus-origin'] });
+  assert.deepEqual(run([renameHarbour, { type: 'input', value: 'Quay' }, { type: 'cancel' }]), { editor: CLOSED, effects: ['focus-field', 'none', 'focus-origin'] });
+  assert.deepEqual(run([{ type: 'submit' }, { type: 'cancel' }, { type: 'input', value: 'x' }]), { editor: CLOSED, effects: ['none', 'none', 'none'] });
 });
