@@ -14,7 +14,7 @@ import path from 'node:path';
 import type { HoardMarksV1, Mark, MarkAnchor, MarkKind, MarkState, MarkWho } from '../../generated/hoard-marks-v1.js';
 import { validateHoardMarksV1 } from '../../generated/validators.cjs';
 import { oneName, writeWhole } from '../files.ts';
-import { parseId } from '../pages/identity.ts';
+import { marksOf } from '../pages/identity.ts';
 import { isSuggestion, newMark, reply, transition } from './model.ts';
 
 type Level = 'error' | 'warn' | 'info' | 'debug';
@@ -82,8 +82,7 @@ export function sidecarPath(library: string, bookId: string, chId: string): stri
 
 /** A page's sidecar; throws PageRefused for an id that is not a safe page id. */
 export function pageSidecarPath(library: string, page: string): string {
-  const ref = parseId(page);
-  return path.join(library, '.neo', 'marks', ref.tree, ...ref.path.split('/')) + '.json';
+  return path.join(library, ...marksOf(page).split('/'));
 }
 
 const fileOf = (library: string, target: MarkTarget) =>

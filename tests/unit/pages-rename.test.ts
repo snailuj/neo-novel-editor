@@ -1,4 +1,5 @@
-// Rules: a rename moves the page and its sidecar and rewrites the links that resolve to
+// Rules: renaming a page moves its marks to the new id; a rename interrupted after the page
+// moved still ends with the marks at the new id after recovery. A rename moves the page and its sidecar and rewrites the links that resolve to
 // it, in pages of both trees and in NEO chapters, as one commit credited to the author;
 // it never writes the open book's chapters, and hands their edits back; it refuses a
 // title the tree holds; and if it stops part way, running it again finishes it without
@@ -21,6 +22,7 @@ type T = { after(fn: () => void): void };
 const SIDECAR = JSON.stringify({
   version: 1, source: { path: '/vault/Harbour.md', name: 'Harbour', sha256: 'a'.repeat(64) }, frontmatter: null, imported: '2026-10-15T22:00:00.000Z',
 }, null, 2);
+const MARKS = '{"version":1,"marks":[]}\n';
 const INDEX = [
   '<p>[[Harbour]]</p>', '<p>[[Harbour|the port]]</p>', '<p>[[harbour#^b1]]</p>', '<p>[[Harbour#Docks]]</p>',
   '<p>[[Harbour Master]] [[Lantern]]</p>', '<p>`[[Harbour]]` kept</p>', '<p class="wiki-code">[[Harbour]]</p>',
@@ -35,6 +37,7 @@ const INDEX_AFTER = [
 const FILES: Record<string, string> = {
   'wiki/People/Harbour.html': '<p data-block="a1">The wall. See [[Harbour]] itself.</p>',
   '.neo/pages/wiki/People/Harbour.html.json': SIDECAR,
+  '.neo/marks/wiki/People/Harbour.html.json': MARKS,
   'wiki/Index.html': INDEX,
   'wiki/Lantern.html': '<p>No link to the page.</p>',
   'sources/Harbour.html': '<p>A source of the same title. [[Lantern]]</p>',
@@ -232,6 +235,29 @@ test('starting up finishes a rename that NEO stopped in the middle of', async (t
   assert.equal(await restarted.recover(null), null, 'nothing is left to finish');
 });
 
+test('renaming a page moves its marks to the new id', async (t) => {
+  const { store, get, has } = fixture(t);
+  assert.ok(has('.neo/marks/wiki/People/Harbour.html.json'), 'the fixture reached its state');
+  await store.rename(FROM, 'Places/Port.html', null);
+  assert.equal(has('.neo/marks/wiki/People/Harbour.html.json'), false, 'none is left at the old id');
+  assert.equal(get('.neo/marks/wiki/Places/Port.html.json'), MARKS, 'the marks moved byte for byte');
+});
+
+for (const stopAt of ['sidecar', 'marks', 'rewrite'] as const) {
+  test(`a rename interrupted at the ${stopAt} step still ends with the marks at the new id after recovery`, async (t) => {
+    let stopped = false;
+    const broken = fixture(t, { onStep: (step: string) => { if (step === stopAt && !stopped) { stopped = true; throw new Error('power cut'); } } });
+    await assert.rejects(broken.store.rename(FROM, 'Places/Port.html', null), /power cut/);
+    assert.ok(stopped, 'the rename reached the step it was stopped at');
+    assert.equal(broken.has('wiki/Places/Port.html'), true, 'the page had moved');
+    const restarted = new PageStore({ library: () => broken.library, log: broken.log });
+    await restarted.recover(null);
+    assert.equal(broken.has('.neo/marks/wiki/People/Harbour.html.json'), false, 'none is left at the old id');
+    assert.equal(broken.get('.neo/marks/wiki/Places/Port.html.json'), MARKS);
+    assert.equal(await restarted.recover(null), null, 'nothing is left to finish');
+  });
+}
+
 // A library kept in git, with the fixture committed, and a store whose history is that layer.
 async function tracked(t: T, extra = {}) {
   isolateGitConfig(t, { name: 'Ada', email: 'ada@example.com' });
@@ -269,6 +295,7 @@ test('a rename is one commit credited to the author, holding the move, the sidec
   const changed = stdout.split('\n').filter(Boolean).map((l) => l.replace(/\t/g, ' ')).sort();
   assert.deepEqual(changed, [
     'D .neo/pages/wiki/People/Harbour.html.json', 'A .neo/pages/wiki/Places/Port.html.json',
+    'D .neo/marks/wiki/People/Harbour.html.json', 'A .neo/marks/wiki/Places/Port.html.json',
     'D wiki/People/Harbour.html', 'A wiki/Places/Port.html',
     'M wiki/Index.html', 'M sources/Notes.html', 'M book-fox-1/chapters/c1.html', 'M book-owl-2/chapters/c1.html',
     'A .neo/pages/renames.json',
