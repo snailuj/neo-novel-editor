@@ -92,6 +92,7 @@ test('a restore that cannot put a file back throws, and the paths stay held', as
   const faulty = {
     head: () => layer.head(), show: (c: string, r: string) => layer.show(c, r), changed: (a: string, b: string, u: string) => layer.changed(a, b, u),
     release: (paths: readonly string[]) => layer.release(paths),
+    held: (paths: readonly string[]) => layer.held(paths),
     // after the gate refuses, something takes the page's place, so it cannot be written back
     around: async <T>(paths: readonly string[], apply: () => Promise<T>) => {
       try {
@@ -116,4 +117,22 @@ test('a restore that cannot put a file back throws, and the paths stay held', as
   assert.equal(await status(), '');
   await assert.rejects(ripple.decide(ripple.overview().proposals[0]!.id, 'apply'), /could not put back wiki\/Harbour\.html/);
   assert.deepEqual(gate.held(), ['.neo/ripple/rulings.jsonl', 'wiki/Harbour.html'], 'nothing is released while a file is not back');
+});
+
+test('a page the gate still holds from an earlier refusal is not edited, and the card stays waiting', async (t) => {
+  const { lib, layer, gate, ripple, judged, status, read, warnings } = await setup(t);
+  const card = await judged([{ kind: 'claim', target: 'Harbour', anchor: 'made of timber', text: 'rebuilt in stone', reason: 'r', quote: 'The wall was rebuilt in stone' }]);
+  // an earlier refused librarian edit left the page held (its words since put back)
+  const original = read('wiki/Harbour.html')!;
+  await assert.rejects(layer.around(['wiki/Harbour.html'], async () => { lib.write('wiki/Harbour.html', '<p data-block="a_1">Held words.</p>'); }));
+  lib.write('wiki/Harbour.html', original); // the page as committed; the hold stays
+  assert.deepEqual(gate.held(), ['wiki/Harbour.html']);
+  const [page, rulings] = [read('wiki/Harbour.html'), read('.neo/ripple/rulings.jsonl')];
+  await assert.rejects(ripple.decide(card.id, 'apply'), /still holds .*wiki\/Harbour\.html/);
+  assert.equal(read('wiki/Harbour.html'), page, 'the held words are not touched');
+  assert.equal(read('.neo/ripple/rulings.jsonl'), rulings);
+  assert.deepEqual(gate.held(), ['wiki/Harbour.html'], 'the earlier hold is not freed');
+  assert.equal(ripple.overview().proposals[0]!.status, 'proposed');
+  assert.ok(warnings.some((w) => /still holds the page/.test(w.message)));
+  assert.equal(await status(), '', 'nothing of this apply is left on disk');
 });

@@ -48,6 +48,8 @@ export interface RippleOptions {
     around<T>(paths: readonly string[], apply: () => Promise<T>): Promise<Paired<T>>;
     /** Lets the writer's commits take these paths again, once a refused edit of them is put back. */
     release(paths: readonly string[]): void;
+    /** Those of these paths the gate still holds from an earlier refused edit. */
+    held(paths: readonly string[]): string[];
   };
   /** Who wrote each paragraph of a page; without it a librarian-owned page counts as the librarian's throughout. */
   blame?: (page: string) => Promise<BlameLine[]>;
@@ -454,9 +456,11 @@ export class Ripple {
       if (failed.length) throw new Error(`The library check refused this change and ripple could not put back ${failed.join(', ')}; they are held out of the history until they are mended.`);
     };
     const done = await asLibrarian({ layer: this.#o.layer, log: this.#o.log }, label, subject, paths, async () => { await apply(); return null; }, restore);
-    if (!done.ok && done.reason === 'refused') {
-      throw new Error(`The library check refused this change, so nothing was written: ${done.findings.map((f) => `${f.path}: ${f.message}`).join('; ')}`);
-    }
+    if (done.ok) return;
+    // the card stays waiting: nothing was written, and the caller is told why
+    if (done.reason === 'refused') throw new Error(`The library check refused this change, so nothing was written: ${done.findings.map((f) => `${f.path}: ${f.message}`).join('; ')}`);
+    if (done.reason === 'held') throw new Error(`The library check still holds ${paths.join(', ')} from an earlier refusal, so nothing was written. Save the page, then apply again.`);
+    throw new Error(`The change could not be written (${done.reason}). Apply again to read the page afresh.`);
   }
 
   /** What waits: jobs for the judge, proposals for the author. Reads; never writes. */

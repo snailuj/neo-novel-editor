@@ -47,6 +47,7 @@ function setup(t: T, extra: { library?: string; layer?: RippleOptions['layer']; 
       changed: async () => [],
       around: async (paths, apply) => { arounds.push([...paths]); return { result: await apply(), before: null, after: null }; },
       release: () => {},
+      held: () => [],
     },
   });
   const changes: string[] = [];
