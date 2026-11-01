@@ -28,6 +28,9 @@
 // and, for a plugin written for API 4:
 //   open(bookId)              another book opened, by the shelf's own path:
 //                             the open one is saved and closed first
+// and, for a plugin written for API 5, on each side section addPane makes:
+//   wide(on)                  the right-hand pane made wider while on, for
+//                             work in the section (see wide)
 // None of them writes a file: replace edits the page as typing does, and a
 // chapter reaches the disk through persistChapter alone. That is no wall.
 // A plugin's script runs in NEO's page, where window.neo, NEO's own way to
@@ -43,7 +46,7 @@
 'use strict';
 
 (() => {
-  const API_VERSIONS = Object.freeze([1, 2, 3, 4]);
+  const API_VERSIONS = Object.freeze([1, 2, 3, 4, 5]);
   const EVENTS = ['book-open', 'book-close', 'chapter-change', 'chapter-saved', 'selection', 'rendered'];
 
   // One entry per plugin that registered: { id, listeners, panes, commands,
@@ -812,7 +815,8 @@
     const element = document.createElement('div');
     const pane = { name: `plugin:${entry.id}:${id}`, title, element, tab: null, section: null };
     const show = () => showPane(entry, pane);
-    const made = v3 ? Object.freeze({ element, show }) : Object.freeze({ element });
+    const made = apiVersion >= 5 ? Object.freeze({ element, show, wide: (on) => wide(entry, pane, on) })
+      : v3 ? Object.freeze({ element, show }) : Object.freeze({ element });
     if (entry.disposed) return made;
     if (v3 && side) {
       const section = document.createElement('section');
@@ -869,6 +873,22 @@
     document.getElementById('side-pane').classList.add('open');
     pane.section.scrollIntoView({ block: 'nearest' });
     return true;
+  }
+
+  // API 5: a side section asks for a wider right-hand pane (#side-pane.wide
+  // in styles.css) while the writer works in it, and lets it go when done.
+  // The pane is wide while any section asks; an ask is undone by one
+  // wide(false), however often it was made, and goes with its plugin. A tab
+  // has no width of its own to give, so asking for one is a TypeError.
+  const wideAsks = new Set();
+  const markWide = () => document.getElementById('side-pane').classList.toggle('wide', wideAsks.size > 0);
+  function wide(entry, pane, on) {
+    if (typeof on !== 'boolean') throw new TypeError(`wide takes true or false, not ${shown(on)}`);
+    if (!pane.section && !entry.disposed) throw new TypeError(`pane ${pane.name} is a tab; only a side section widens the right-hand pane`);
+    if (entry.disposed) return;
+    if (on) wideAsks.add(pane);
+    else wideAsks.delete(pane);
+    markWide();
   }
 
   // switchTab's hook, on every switch away from the manuscript: every pane
@@ -1021,6 +1041,7 @@
     for (const pane of entry.panes.values()) {
       if (pane.section) {
         pane.section.remove();
+        if (wideAsks.delete(pane)) markWide();
         continue;
       }
       pane.tab.remove();

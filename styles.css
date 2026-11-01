@@ -1351,6 +1351,9 @@ body.focus-mode .walk-note { opacity: 0.6; }
   z-index: 70; overflow-y: auto; padding: 36px 0 20px;
 }
 #side-pane.open { transform: translateX(0); }
+/* a plugin's side section asks for room while the writer works in it
+   (plugins.js, wide; API 5) */
+#side-pane.wide { width: 440px; }
 #side-head {
   display: flex; justify-content: space-between; align-items: center;
   padding: 0 16px 14px; font-size: 12px; text-transform: uppercase;
@@ -1667,6 +1670,8 @@ body.bright .pop-menu button:disabled { color: #8a8a8a; }
 #editor-view.side-pinned #paper-scroll { left: calc(50% - 125px * var(--ui-zoom)); }
 #editor-view.nav-pinned #paper-scroll { left: calc(50% + 124px * var(--ui-zoom)); }
 #editor-view.nav-pinned.side-pinned #paper-scroll { left: calc(50% - 1px * var(--ui-zoom)); }
+#editor-view.side-pinned:has(#side-pane.wide) #paper-scroll { left: calc(50% - 220px * var(--ui-zoom)); }
+#editor-view.nav-pinned.side-pinned:has(#side-pane.wide) #paper-scroll { left: calc(50% - 96px * var(--ui-zoom)); }
 /* …except the Outline's cards, which fill the room between whichever panes
    are pinned (these come after the page rules above, so they win, #312) */
 #editor-view.board-on.side-pinned #paper-scroll { left: 0; right: calc(250px * var(--ui-zoom)); }

@@ -2,9 +2,10 @@
 // a page the writer looks up is shown without leaving their place. Following a link in
 // the manuscript shows its page here and leaves the caret where it was; links on the
 // page shown move the pane to their page; Back and Forward (Alt+Left and Alt+Right in
-// the pane) walk the trail. Edit in Wiki Book opens the wiki book at the page, which is
-// where pages are edited until the pane can edit them (roadmap: live preview, suggest,
-// accept, comment and resolve in the pane).
+// the pane) walk the trail. Edit in Wiki Book opens the wiki book at the page. The page's
+// words can be edited in place (wiki/pane-edit.ts), so before the pane moves to another
+// page, shows this one again or opens the wiki book, it waits for what was typed to be
+// saved (beforeLeave).
 //
 // The pane reads a page through the main half, from its chapter file, so it shows the
 // page as last saved, kept to its paragraphs, their wiki classes and NEO's inline
@@ -45,12 +46,14 @@ function pageBlocks(html: string): HTMLTemplateElement {
   return inert;
 }
 
-export function startWikiPane(neo: NeoApiV4, o: { resolve: () => Resolver; editInBook: (chId: string) => Promise<void> }) {
+export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editInBook: (chId: string) => Promise<void> }) {
   const pane = neo.addPane({ id: 'wiki', title: 'Wiki', side: true });
   const history = new PageHistory();
   let shown: PageRead | null = null;
   let asked = 0;
   const shownListeners: ((page: PageRead | null) => void)[] = [];
+  const leaving: (() => Promise<void>)[] = [];
+  const beforeLeaving = async () => { for (const fn of leaving) await fn(); };
   // where to take the reader on the next page drawn: words a search found
   let showAt: { pIdx: number; off: number; len: number } | null = null;
 
@@ -87,6 +90,8 @@ export function startWikiPane(neo: NeoApiV4, o: { resolve: () => Resolver; editI
       const chId = pages.get(link.target);
       if (chId) {
         const go = button('hoard-wiki-link', words);
+        // one piece while the page is edited: its words are changed in the wiki book
+        go.contentEditable = 'false';
         go.addEventListener('click', () => { open(chId); });
         out.push(go);
       } else {
@@ -169,6 +174,8 @@ export function startWikiPane(neo: NeoApiV4, o: { resolve: () => Resolver; editI
     if (hadFocus && !root.contains(document.activeElement)) title.focus();
     if (!chId) return;
     const mine = ++asked;
+    await beforeLeaving();
+    if (mine !== asked) return;
     let page: PageRead | null;
     try {
       page = (await neo.invoke('wiki.page', { chId })) as PageRead | null;
@@ -205,7 +212,12 @@ export function startWikiPane(neo: NeoApiV4, o: { resolve: () => Resolver; editI
 
   backButton.addEventListener('click', () => { back(); });
   forwardButton.addEventListener('click', () => { forward(); });
-  editButton.addEventListener('click', () => { if (shown) o.editInBook(shown.chId); });
+  editButton.addEventListener('click', async () => {
+    if (!shown) return;
+    const { chId } = shown;
+    await beforeLeaving();
+    await o.editInBook(chId);
+  });
   root.addEventListener('keydown', (e) => {
     if (!e.altKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
     e.preventDefault();
@@ -226,5 +238,9 @@ export function startWikiPane(neo: NeoApiV4, o: { resolve: () => Resolver; editI
     body,
     /** Told after each page is drawn in the pane, with null when it is gone. */
     onShown(fn: (page: PageRead | null) => void) { shownListeners.push(fn); },
+    /** Waited for before the pane shows a page (this one again too) or opens the wiki book. */
+    beforeLeave(fn: () => Promise<void>) { leaving.push(fn); },
+    /** A wider right-hand pane while on (host API 5). */
+    wide: (on: boolean) => pane.wide(on),
   };
 }

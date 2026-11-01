@@ -3,12 +3,14 @@
 // - ids come from what a job or proposal is, so the same answer read twice is the same ids;
 // - a job is done once judged with every proposal applied or rejected, or set aside;
 // - a line that does not read stops the read, and nothing writes over the file then;
-// - a record that is not a ruling is refused before anything is written.
+// - a record that is not a ruling is refused before anything is written;
+// - a card's key is what it changes, wording and job aside, and a proposal repeats a card
+//   the writer still has waiting or rejected, never one applied or a judge's nothing.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { complete, fold, jobId, proposalId, Rulings, RulingsError, sha256, type RippleJob, type RippleProposal } from '../../src/hoard/ripple/rulings.ts';
+import { cardKey, complete, fold, jobId, proposalId, repeatOf, Rulings, RulingsError, sha256, type RippleJob, type RippleProposal } from '../../src/hoard/ripple/rulings.ts';
 import { tempDir } from './git-support.ts';
 
 const AT = '2026-10-16T12:00:00.000Z';
@@ -81,4 +83,38 @@ test('append mends a file left without its last line break', async (t) => {
   const state = await rulings.append([job({ state: 'packeted' })]);
   assert.equal(state.lines, 2);
   assert.equal(state.jobs.get(job().id)?.state, 'packeted');
+});
+
+test('a card\'s key is what it changes, wording and job aside', () => {
+  const claim = proposal({ kind: 'claim', target: 'Harbour Wall', anchor: 'made of *timber*', text: 'rebuilt in stone', line: undefined });
+  const same = [
+    proposal({ job: 'j-other', reason: 'other words', quote: 'other quote', line: 'The [[harbour|wall]] fell, see [[Long-Storm#^b1]].' }),
+    proposal({ line: 'See [[Long Storm]] and the [[Harbour]], once more.' }),
+  ];
+  const base = proposal({ line: 'See [[Harbour]] after the [[Long Storm]].' });
+  for (const p of same) assert.equal(cardKey(p), cardKey(base), p.line);
+  assert.equal(cardKey({ ...claim, target: 'harbour-wall', anchor: 'made of timber', text: 'other' }), cardKey(claim));
+  const differs = [
+    proposal({ line: 'See [[Harbour]].' }),
+    proposal({ line: 'See [[Harbour]] after the [[Long Storm]].', target: 'Lighthouse' }),
+    proposal({ line: 'See [[Harbour]] after the [[Long Storm]].', source: { ...source, chId: 'ch-b' } }),
+    { ...claim, kind: 'topic' as const },
+  ];
+  for (const p of differs) assert.notEqual(cardKey(p), cardKey(base), JSON.stringify(p));
+  assert.notEqual(cardKey({ ...claim, anchor: 'made of oak' }), cardKey(claim));
+  assert.equal(cardKey(proposal({ line: 'Plain words, no link.' })), cardKey(proposal({ line: 'plain  words, no link' })));
+});
+
+test('a proposal repeats a card waiting or rejected, never one applied or a nothing', () => {
+  const later = (fields: Partial<RippleProposal> = {}) => proposal({ id: 'r-later0000000', job: 'j-later', line: 'Also [[Harbour]].', ...fields });
+  const ruled = (status: RippleProposal['status'], fields: Partial<RippleProposal> = {}) => fold(lines(proposal({ status, ...fields })));
+  assert.equal(fold('').proposals.size, 0);
+  assert.equal(repeatOf(fold(''), later()), null, 'a clean log holds no repeat');
+  for (const status of ['proposed', 'deferred', 'rejected'] as const) {
+    assert.equal(repeatOf(ruled(status), later())?.id, proposal().id, status);
+  }
+  assert.equal(repeatOf(ruled('applied'), later()), null, 'an applied card is on the page, where the judge sees it');
+  assert.equal(repeatOf(ruled('rejected', { kind: 'nothing', line: undefined, quote: undefined }), later({ kind: 'nothing', line: undefined, quote: undefined })), null, 'a nothing is not a card');
+  assert.equal(repeatOf(ruled('rejected'), later({ line: 'Also [[Lighthouse]].' })), null, 'another change is not a repeat');
+  assert.equal(repeatOf(ruled('rejected'), proposal()), null, 'a proposal does not repeat itself');
 });

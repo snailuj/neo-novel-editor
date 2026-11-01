@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "A wiki page written whole from the Wiki pane, version 1: the page's HTML as the pane read it and with the change, and whose change it is. Written only while the file still holds before.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["chId", "before", "after", "as"],
+  "properties": {
+    "chId": { "type": "string", "minLength": 1 },
+    "before": { "type": "string" },
+    "after": { "type": "string" },
+    "as": { "enum": ["librarian", "author"] }
+  }
+}

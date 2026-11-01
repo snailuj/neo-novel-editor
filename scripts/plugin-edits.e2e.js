@@ -721,7 +721,7 @@ test('bad input', async () => {
 
 test('old API', async () => {
   assert.equal(await js('window.__oldApi.activated'), true);
-  assert.deepEqual(await js('[...NeoPlugins.apiVersions]'), [1, 2, 3, 4]);
+  assert.deepEqual(await js('[...NeoPlugins.apiVersions]'), [1, 2, 3, 4, 5]);
   assert.deepEqual(await js('[typeof window.__oldApi.neo.where, typeof window.__oldApi.neo.go, typeof window.__oldApi.neo.replace, typeof window.__oldApi.neo.highlight]'), ['undefined', 'undefined', 'undefined', 'undefined']);
 });
 

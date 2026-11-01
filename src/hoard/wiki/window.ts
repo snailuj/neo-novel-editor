@@ -26,7 +26,7 @@ const frames = (n: number) => new Promise<void>((resolve) => {
   next(n);
 });
 
-export function startWiki(neo: NeoApiV4) {
+export function startWiki(neo: NeoApiV5) {
   let wiki: WikiPages | null = null;
   let importing = false;
   let redrawTimer: ReturnType<typeof setTimeout> | undefined;

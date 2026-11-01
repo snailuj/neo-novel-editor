@@ -1,7 +1,8 @@
 // The probe: a plugin that writes down everything the host tells it, for
-// scripts/plugins.e2e.js to read back. It is written for API 4, so what it
+// scripts/plugins.e2e.js to read back. It is written for API 5, so what it
 // keeps as neo has where, go, replace, highlight, hold and open too, for
-// scripts/plugin-edits.e2e.js, and it has a section in the right-hand pane;
+// scripts/plugin-edits.e2e.js, and it has a section in the right-hand pane
+// that can widen it;
 // its style.css styles its claims highlight.
 
 'use strict';
@@ -16,7 +17,7 @@ document.addEventListener('securitypolicyviolation', (e) => {
 
 NeoPlugins.register({
   id: 'probe',
-  apiVersion: 4,
+  apiVersion: 5,
   activate(neo) {
     window.__probe.activated = true;
     window.__probe.neo = neo;

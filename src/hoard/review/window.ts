@@ -3,22 +3,20 @@
 // suggestions instead of changes. Suggest Change, or a letter, a paste or a delete typed
 // on such a page, opens a composer in the Comments section with the selected words, the
 // keystroke already applied, so it is not lost. Once added, the librarian reviews the
-// suggestion (rules.ts) against the page as it is now: it applies an accepted change
+// suggestion (flow.ts, shared with the Wiki pane), and an accepted change is made here
 // as a librarian edit (git/librarian.ts: the writer's commit, the change, the librarian's
-// commit), or flags it with its reason as a comment. A flagged suggestion is the writer's to accept anyway
-// or withdraw. Edit Directly lets the caret's page go until the book closes; the next
-// open is in suggest mode again, as the spec has it.
+// commit). Edit Directly lets the caret's page go until the book closes; the next open is
+// in suggest mode again, as the spec has it.
 //
 // Nothing here runs on a caret move but a redraw of the mode line, and nothing opens
 // unless the writer asked: a command, a button, or a keystroke on a page they cannot
 // type in.
 import type { Mark } from '../../generated/hoard-marks-v1.js';
 import { anchorAt, anchorPoint } from '../marks/anchor.ts';
-import { isSuggestion } from '../marks/model.ts';
 import type { startLibrarian } from '../git/librarian.ts';
 import { claim, submitKey } from '../keys.ts';
 import type { CardAction, startMarks } from '../marks/window.ts';
-import { reviewSuggestion } from './rules.ts';
+import { reviewFlow } from './flow.ts';
 
 type Marks = ReturnType<typeof startMarks>;
 type Librarian = ReturnType<typeof startLibrarian>;
@@ -206,7 +204,8 @@ export function startReview(neo: NeoApiV4, marks: Marks, o: { pages: () => Pages
   // ---- applying a change -----------------------------------------------------------
   // The librarian's change, between the writer's commit and its own. Resolves with why
   // it was not made, or null.
-  async function applyAsLibrarian(place: NeoPlace, expected: string, words: string): Promise<string | null> {
+  async function applyAsLibrarian(chId: string, at: { pIdx: number; off: number; len: number }, expected: string, words: string): Promise<string | null> {
+    const place = { chId, ...at };
     const edit = await o.librarian.replace(place, expected, words);
     if (edit.ok) return edit.result.ok ? null : REFUSED[edit.result.reason] ?? edit.result.reason;
     if (edit.reason !== 'refused') return REFUSED[edit.reason] ?? edit.reason;
@@ -222,75 +221,27 @@ export function startReview(neo: NeoApiV4, marks: Marks, o: { pages: () => Pages
   }
 
   // The writer's own change, as typing makes it; the next checkpoint commits it as theirs.
-  async function applyAsWriter(place: NeoPlace, expected: string, words: string): Promise<string | null> {
-    const result = await neo.replace(place, expected, words);
+  async function applyAsWriter(chId: string, at: { pIdx: number; off: number; len: number }, expected: string, words: string): Promise<string | null> {
+    const result = await neo.replace({ chId, ...at }, expected, words);
     return result.ok ? null : REFUSED[result.reason] ?? result.reason;
   }
 
-  const find = (chId: string, markId: string) => marks.marksOf(chId).find((m) => m.id === markId);
-
-  // The librarian's review of one suggestion, against the page as it is now.
-  async function review(chId: string, markId: string) {
-    const mark = find(chId, markId);
-    const paragraphs = neo.chapter(chId)?.paragraphs;
-    if (!bookId || !mark || !paragraphs) return;
-    const forBook = bookId;
-    const verdict = reviewSuggestion(mark, marks.marksOf(chId), paragraphs, o.pages());
-    const flag = async (reason: string) => {
-      marks.settle(chId, await neo.invoke('review.verdict', { bookId: forBook, chId, markId, state: 'flagged', reason }) as { marks: Mark[] });
-      marks.tell('The librarian flagged your suggestion; its comment says why.');
-    };
-    if (verdict.verdict === 'flag') { await flag(verdict.reason); return; }
-    const refused = await applyAsLibrarian({ chId, ...verdict.place }, verdict.expected, verdict.text);
-    if (bookId !== forBook) return;
-    if (refused) { await flag(`The change could not be applied: ${refused}. Suggest it again if it still stands.`); return; }
-    marks.settle(chId, await neo.invoke('review.verdict', { bookId: forBook, chId, markId, state: 'accepted' }) as { marks: Mark[] });
-    marks.tell('The librarian accepted your suggestion.');
-  }
-
-  // The writer's own decision on a suggestion: accept (applied as theirs) or withdraw.
-  async function decide(chId: string, markId: string, state: 'accepted' | 'rejected') {
-    if (!bookId) return;
-    const forBook = bookId;
-    try {
-      if (state === 'accepted') {
-        const mark = find(chId, markId);
-        const paragraphs = neo.chapter(chId)?.paragraphs;
-        const span = mark && paragraphs ? reviewSuggestion(mark, [mark], paragraphs, { get: () => 'any' }) : null;
-        if (!span || span.verdict !== 'accept') {
-          marks.warn('The words this suggestion changes are no longer on the page, so it cannot be applied. Withdraw it, or suggest the change again.');
-          return;
-        }
-        const refused = await applyAsWriter({ chId, ...span.place }, span.expected, span.text);
-        if (refused) { marks.warn(`The change could not be applied: ${refused}. Try again.`); return; }
-      }
-      if (bookId !== forBook) return;
-      marks.settle(chId, await neo.invoke('marks.state', { bookId: forBook, chId, markId, state }) as { marks: Mark[] });
-      marks.warn('');
-      marks.tell(state === 'accepted' ? 'Change applied, as yours.' : 'Suggestion withdrawn; its words stay in its card.');
-    } catch (err) {
-      marks.warn(`The suggestion was not changed: ${message(err)}. The list now shows it as the file holds it.`);
-      marks.relist();
-    }
-  }
-
-  const askAgain = async (chId: string, markId: string) => {
-    try {
-      await review(chId, markId);
-    } catch (err) {
-      marks.warn(`The librarian could not review it: ${message(err)}. Try again.`);
-      marks.relist();
-    }
-  };
+  const flow = reviewFlow(neo, o.pages, {
+    bookId: () => bookId,
+    paragraphs: (chId) => neo.chapter(chId)?.paragraphs ?? null,
+    marksOf: (chId) => marks.marksOf(chId),
+    isLibrarians,
+    applyAsLibrarian,
+    applyAsWriter,
+    settle: (chId, answer) => marks.settle(chId, answer),
+    tell: (text) => marks.tell(text),
+    warn: (text) => marks.warn(text),
+    relist: () => marks.relist(),
+  });
+  const { review } = flow;
 
   marks.extend({
-    cardActions(mark: Mark, chId: string): CardAction[] {
-      if (!isSuggestion(mark.kind) || (mark.state !== 'open' && mark.state !== 'flagged')) return [];
-      const drop = { label: mark.created.who === 'author' ? 'Withdraw' : 'Reject', run: () => decide(chId, mark.id, 'rejected') };
-      if (mark.state === 'flagged') return [{ label: 'Accept anyway', run: () => decide(chId, mark.id, 'accepted') }, drop];
-      if (isLibrarians(chId)) return [{ label: 'Ask the librarian', run: () => askAgain(chId, mark.id) }, drop];
-      return [{ label: 'Accept', run: () => decide(chId, mark.id, 'accepted') }, drop];
-    },
+    cardActions: (mark: Mark, chId: string): CardAction[] => flow.cardActions(mark, chId),
     rendered: renderMode,
   });
 

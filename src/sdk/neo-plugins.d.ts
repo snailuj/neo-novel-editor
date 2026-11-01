@@ -228,6 +228,24 @@ interface NeoApiV4 extends NeoApiV3 {
   open(bookId: string): Promise<boolean>;
 }
 
+/** A pane as API 5 makes it: API 3's, and a side section can widen the right-hand pane. */
+interface NeoPaneV5 extends NeoPaneV3 {
+  /**
+   * Asks for a wider right-hand pane while on, for work in the section (editing, say),
+   * and lets it go with false. The pane is wide while any section asks; one false undoes
+   * an ask however often it was made, and a plugin that fails lets go of its own. Where
+   * the writer keeps the pane open beside the page, the page moves over for it. Does
+   * nothing once the plugin failed to activate. Throws TypeError on a tab, which has no
+   * width of its own to give, and for anything but true or false.
+   */
+  wide(on: boolean): void;
+}
+
+/** What activate(neo) receives for API 5: API 4, with panes that can widen. */
+interface NeoApiV5 extends NeoApiV4 {
+  addPane(pane: { id: string; title: string; side?: boolean }): NeoPaneV5;
+}
+
 interface NeoPluginBase {
   /** The id in the plugin's plugin.json. */
   id: string;
@@ -265,10 +283,15 @@ interface NeoPluginV4 extends NeoPluginBase {
   activate(neo: NeoApiV4): void | Promise<void>;
 }
 
-type NeoPlugin = NeoPluginV1 | NeoPluginV2 | NeoPluginV3 | NeoPluginV4;
+interface NeoPluginV5 extends NeoPluginBase {
+  apiVersion: 5;
+  activate(neo: NeoApiV5): void | Promise<void>;
+}
+
+type NeoPlugin = NeoPluginV1 | NeoPluginV2 | NeoPluginV3 | NeoPluginV4 | NeoPluginV5;
 
 declare const NeoPlugins: {
-  readonly apiVersions: readonly (1 | 2 | 3 | 4)[];
+  readonly apiVersions: readonly (1 | 2 | 3 | 4 | 5)[];
   register(plugin: NeoPlugin): void;
   /**
    * true when a value is a place: an object with chId a non-empty string, pIdx, off and
