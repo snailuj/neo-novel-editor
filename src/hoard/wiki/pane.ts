@@ -7,15 +7,29 @@
 // page, shows this one again or opens the wiki book, it waits for what was typed to be
 // saved (beforeLeave).
 //
-// The pane reads a page through the main half, from its chapter file, so it shows the
-// page as last saved, kept to its paragraphs, their wiki classes and NEO's inline
-// formatting (pageBlocks). It never takes the focus from the manuscript: only a click or a
-// key inside the pane moves the focus, and then it stays in the pane.
+// The pane shows two kinds of page while the Wiki book still exists: a Wiki book chapter,
+// read by wiki.page, and a stored page (pages as files, an id that starts wiki/ or
+// sources/), read by pages.read. A stored page is read-only here until the pane can edit
+// one (stage 6), so the pane's edit and marks code is told of no page while one is shown
+// (onShown gets null, shown() is null) and Edit in Wiki Book is disabled. Links on a stored
+// page reach pages by title, a wiki page before a source (pages/titles.ts), then the Wiki
+// book; the trail holds both kinds of id.
+//
+// The pane reads a page through the main half, from its file, so it shows the page as last
+// saved, kept to its paragraphs, their wiki classes and NEO's inline formatting
+// (pageBlocks). It never takes the focus from the manuscript: only a click or a key inside
+// the pane moves the focus, and then it stays in the pane.
+import { titleIndex } from '../pages/titles.ts';
 import { PageHistory } from './history.ts';
 import { linksIn } from './links.ts';
+import type { Listed } from './tree.ts';
 
 interface PageRead { bookId: string; chId: string; title: string; html: string }
+interface StoredRead { id: string; title: string; html: string }
 interface Resolver { get(target: string): string | undefined }
+
+/** A stored page's id, as against a Wiki book chapter's. */
+export const isStored = (id: string) => /^(?:wiki|sources)\//.test(id);
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] => {
   const node = document.createElement(tag);
@@ -49,7 +63,11 @@ function pageBlocks(html: string): HTMLTemplateElement {
 export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editInBook: (chId: string) => Promise<void> }) {
   const pane = neo.addPane({ id: 'wiki', title: 'Wiki', side: true });
   const history = new PageHistory();
+  // the page drawn: a Wiki book chapter, or a stored page, or neither
   let shown: PageRead | null = null;
+  let stored: StoredRead | null = null;
+  // the last pages.list, which a stored page's links resolve against
+  let listed: Listed[] | null = null;
   let asked = 0;
   const shownListeners: ((page: PageRead | null) => void)[] = [];
   const leaving: (() => Promise<void>)[] = [];
@@ -66,7 +84,7 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
   nav.append(backButton, forwardButton, editButton);
   const title = el('h3', 'hoard-wiki-title');
   title.tabIndex = -1;
-  const status = el('p', 'hoard-status');
+  const status = el('p', 'hoard-status hoard-wiki-status');
   status.setAttribute('role', 'status');
   const body = el('div', 'hoard-wiki-page');
   const empty = el('p', 'hoard-wiki-empty', 'Ctrl+click a [[link]] in your writing, or put the caret in one and choose Plugins > Follow Link, to look its page up here.');
@@ -76,7 +94,8 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
     backButton.disabled = !history.canBack;
     forwardButton.disabled = !history.canForward;
     editButton.disabled = !shown;
-    nav.hidden = !shown && !history.current;
+    editButton.title = stored ? 'Only a Wiki Book page opens in the Wiki Book.' : '';
+    nav.hidden = !shown && !stored && !history.current;
     empty.hidden = !!history.current;
   };
 
@@ -147,8 +166,18 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
     line.scrollIntoView({ block: 'center' });
   };
 
-  const render = (page: PageRead) => {
-    const pages = o.resolve();
+  const readList = async () => {
+    listed = (await neo.invoke('pages.list')) as Listed[];
+    return listed;
+  };
+  // A stored page's links: a stored page by title, wiki first, then the Wiki book.
+  const storedResolver = (): Resolver => {
+    const index = titleIndex(listed ?? []);
+    const book = o.resolve();
+    return { get: (target) => index.resolve(target)?.id ?? book.get(target) };
+  };
+
+  const render = (page: { title: string; html: string }, pages: Resolver) => {
     title.textContent = page.title;
     CSS.highlights?.delete(FOUND);
     body.replaceChildren(...[...pageBlocks(page.html).content.querySelectorAll('p')].map((source) => {
@@ -165,45 +194,54 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
 
   // Shows the trail's current page, once it has read; a later request wins.
   const showCurrent = async () => {
-    const chId = history.current;
+    const id = history.current;
     const at = showAt;
     showAt = null;
     // before a button the writer pressed is disabled, which would drop the focus
     const hadFocus = root.contains(document.activeElement);
     refreshNav();
     if (hadFocus && !root.contains(document.activeElement)) title.focus();
-    if (!chId) return;
+    if (!id) return;
     const mine = ++asked;
     await beforeLeaving();
     if (mine !== asked) return;
-    let page: PageRead | null;
+    let page: PageRead | StoredRead | null;
     try {
-      page = (await neo.invoke('wiki.page', { chId })) as PageRead | null;
+      if (isStored(id)) {
+        if (!listed) await readList();
+        page = (await neo.invoke('pages.read', { id })) as StoredRead | null;
+      } else {
+        page = (await neo.invoke('wiki.page', { chId: id })) as PageRead | null;
+      }
     } catch (err) {
       if (mine !== asked) return;
       status.textContent = `The page could not be read: ${err instanceof Error ? err.message : String(err)}`;
       return;
     }
     if (mine !== asked) return;
-    shown = page;
+    const chapter = page && !isStored(id) ? page as PageRead : null;
+    shown = chapter;
+    stored = page && isStored(id) ? { id, title: page.title, html: page.html } : null;
     if (!page) {
       title.textContent = '';
       body.replaceChildren();
-      status.textContent = 'That page is no longer in the wiki.';
+      status.textContent = isStored(id)
+        ? 'That page is no longer there. It may have been moved or removed outside NEO.'
+        : 'That page is no longer in the wiki.';
     } else {
-      status.textContent = '';
-      render(page);
+      status.textContent = stored ? 'Read-only: this page can\'t be changed in the pane yet.' : '';
+      render(page, stored ? storedResolver() : o.resolve());
       if (at) markAt(at);
     }
-    for (const fn of shownListeners) fn(page);
+    for (const fn of shownListeners) fn(chapter);
     refreshNav();
     if (hadFocus) title.focus();
   };
 
-  /** A page shown, and with at the words there marked and scrolled to. */
-  const open = (chId: string, at?: { pIdx: number; off: number; len: number }) => {
+  /** A page shown (a Wiki book chapter or a stored page), and with at the words there marked and scrolled to. */
+  const open = (id: string, at?: { pIdx: number; off: number; len: number }) => {
     showAt = at ?? null;
-    history.visit(chId);
+    history.visit(id);
     pane.show();
     return showCurrent();
   };
@@ -230,7 +268,10 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
     open,
     back,
     forward,
+    /** The Wiki book chapter shown; null while a stored page or nothing is. */
     shown: () => (shown ? { chId: shown.chId, title: shown.title } : null),
+    /** The stored page shown (wiki/... or sources/...); null while a chapter or nothing is. */
+    currentPage: () => stored?.id ?? null,
     /** The page shown again, as saved now (after an import, say). */
     reload: () => showCurrent(),
     /** The pane's section, and the element holding the page's lines, one per paragraph in order. */
