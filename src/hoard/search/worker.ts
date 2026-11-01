@@ -5,7 +5,10 @@ import { LibraryIndex } from './library.ts';
 import type { Answer } from './client.ts';
 import type { LibraryQuery } from './library.ts';
 
-const index = new LibraryIndex();
+// stderr reaches NEO's log through the utility process; only what needs a look is sent
+const index = new LibraryIndex({
+  log: (level, message, data) => { if (level === 'warn' || level === 'error') console.error(`search: ${message}`, data ?? ''); },
+});
 const port = (process as unknown as { parentPort: Electron.ParentPort }).parentPort;
 
 port.on('message', async (event) => {
