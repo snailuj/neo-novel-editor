@@ -147,13 +147,13 @@ export function activate(host: NeoMainHost): void {
   host.handle('ping', ping);
   const layer = startHistory(host);
   startGate(host, layer);
-  startLibrarianPairs(host, layer);
+  const pairs = startLibrarianPairs(host, layer);
   const marks = startMarks(host, layer);
   const wiki = startWiki(host, layer, marks);
   startRipple(host, layer, marks, wiki);
   startSearch(host);
   const opened = layer.open().catch((err: unknown) => host.log('error', 'git.open failed', String(err)));
-  const { store: pages } = startPages(host, layer, opened);
+  const { store: pages } = startPages(host, layer, opened, (page) => pairs.landed({ page }));
   startReview(host, marks, { layer, wiki, pages });
   startCompanion(host, layer, marks, wiki, pages);
 }
