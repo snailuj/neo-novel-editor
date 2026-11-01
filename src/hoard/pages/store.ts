@@ -16,7 +16,7 @@ import type { HoardRenameV1 } from '../../generated/hoard-rename-v1.js';
 import { key } from '../../librarian/links.ts';
 import { booksWithOwnRepo } from '../git/commit.ts';
 import type { GitLayer } from '../git/layer.ts';
-import { linkProblem, writeWhole } from '../files.ts';
+import { fileAbove, linkProblem, writeWhole } from '../files.ts';
 import { checkPath, idOf, marksOf, PageRefused, parseId, titleOf, TREES, type PageRef, type Tree } from './identity.ts';
 import { editsFor, rewriteHtml, type Retarget, type WindowEdit } from './rewrite.ts';
 import { Titles } from './titles.ts';
@@ -119,6 +119,8 @@ export class PageStore {
     }
     const problem = linkProblem(root, file);
     if (problem) throw new PageRefused('unsafe', `${idOf(ref)} is not a page path: ${problem === 'out' ? 'a link in it leads out of its tree' : 'it goes through a link that leads nowhere'}`);
+    const blocker = fileAbove(root, ref.path);
+    if (blocker) throw new PageRefused('unsafe', `${idOf(ref)} is not a page path: ${blocker} is a file, not a folder`);
     return file;
   }
 

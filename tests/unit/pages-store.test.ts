@@ -189,3 +189,21 @@ test('a path through a symlinked folder or to a symlinked file is refused for ev
   assert.equal(logged('pages.refused').length, 8);
   assert.deepEqual((await store.list()).map((p) => p.id), ['wiki/Tide.html'], 'list follows neither link');
 });
+
+// Rule: a page id whose parent segment is a file gets a clean refusal, not a raw error.
+test('a page id below a page file is refused for every request, and nothing is made', async (t) => {
+  const { store, put, has, get, logged } = pagesLibrary(t);
+  put('wiki/Foo.html', '<p>foo</p>');
+  put('wiki/Deep/Bar.html', '<p>bar</p>');
+  put('wiki/Deep/Baz.html', '<p>baz</p>');
+  const unsafe = (e: PageRefused) => e.code === 'unsafe' && /Foo\.html is a file/.test(e.message);
+  await assert.rejects(store.read('wiki/Foo.html/Bar.html'), unsafe);
+  await assert.rejects(store.write('wiki/Foo.html/Bar.html', 'a', 'b'), unsafe);
+  await assert.rejects(store.create('wiki', 'Foo.html/Bar.html', '<p>n</p>'), unsafe);
+  await assert.rejects(store.create('wiki', 'Deep/Baz.html/Qux.html', '<p>n</p>'), (e: PageRefused) => e.code === 'unsafe' && /Deep\/Baz\.html is a file/.test(e.message));
+  await assert.rejects(store.rename('wiki/Foo.html/Bar.html', 'Z.html', null), unsafe);
+  await assert.rejects(store.rename('wiki/Deep/Bar.html', 'Foo.html/Z.html', null), unsafe);
+  assert.equal(get('wiki/Foo.html'), '<p>foo</p>');
+  assert.equal(has('wiki/Deep/Bar.html'), true);
+  assert.equal(logged('pages.refused').length, 6);
+});
