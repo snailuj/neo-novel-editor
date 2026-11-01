@@ -15,7 +15,7 @@
 // - with history kept, the author's blocks are committed before the librarian's.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import type { Mark } from '../../src/generated/hoard-marks-v1.js';
@@ -247,3 +247,21 @@ test('an import that stops part way is finished by importing the same files agai
   assert.deepEqual(s.kinds(wiki.sort([quay])), [['same', 'Quay']], 'and once finished, it is done');
 });
 
+
+test('an import that stops while copying attachments or writing the logs is finished by importing again', async (t) => {
+  const s = setup(t);
+  const ship = s.put('vault/Ship.md', 'A ship of glass.\n![[Glass.png]]\n');
+  s.put('vault/assets/Glass.png', Buffer.from([1, 2, 3]));
+  mkdirSync(s.at('wiki'), { recursive: true });
+  writeFileSync(s.at('wiki/attachments'), 'not a folder'); // so the copy fails
+  const wiki = s.into('wiki');
+  await assert.rejects(wiki.apply(wiki.sort([ship])));
+  assert.ok(existsSync(s.at('wiki/Ship.html')), 'the page was written before the copy failed');
+  rmSync(s.at('wiki/attachments'));
+  const again = wiki.sort([ship]);
+  assert.deepEqual(s.kinds(again), [['update', 'Ship']], 'not taken as done');
+  await wiki.apply(again);
+  assert.deepEqual(s.files('wiki'), ['Ship.html', 'attachments/Glass.png']);
+  assert.deepEqual(s.manifest().map((r) => r.dest), ['wiki/attachments/Glass.png', 'wiki/Ship.html']);
+  assert.deepEqual(s.kinds(wiki.sort([ship])), [['same', 'Ship']]);
+});

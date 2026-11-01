@@ -10,9 +10,10 @@
 // file had when the import wrote it, so a page nobody has changed since is updated in
 // place from a newer source, wherever it has been moved to; a changed one gets the new
 // source as a page beside it. A provisional sidecar is written before its page, and the
-// final one after the page's last write, so an import that stops part way leaves a
-// sidecar that no source matches, or one with no page, which the next import writes
-// over: importing the same files again finishes the page, never takes it as done.
+// final one once the page, its attachments and the logs are all written, so an import
+// that stops part way leaves a sidecar that no source matches, or one with no page,
+// which the next import writes over: importing the same files again finishes the page,
+// never takes it as done.
 //
 // With history kept, an import is two commits, as the Wiki book's is (store.ts): the
 // author's first, with each page that is theirs and the author's blocks of the
@@ -280,7 +281,8 @@ export class PageImport {
     for (const [n, page] of pages.entries()) {
       const id = ids[n]!;
       writeWhole(this.#abs(id), page.page.html);
-      writeWhole(this.#abs(this.#sidecarOf(id)), `${JSON.stringify(sidecars[n], null, 2)}\n`);
+      // still provisional, now naming the page as it stands, until the logs are written too
+      writeWhole(this.#abs(this.#sidecarOf(id)), `${JSON.stringify({ ...sidecars[n]!, source: { ...sidecars[n]!.source, sha256: UNFINISHED } }, null, 2)}\n`);
       const made = this.#marks(page.page, base, at);
       if (this.#o.marks) {
         // An update keeps every mark there and adds only the source's marks it lacks.
@@ -316,6 +318,8 @@ export class PageImport {
     for (const c of changes) if (!validateHoardChangeV1(c)) throw new TypeError(`pages.import: refusing to log a change: ${JSON.stringify(validateHoardChangeV1.errors)}`);
     const separator = changesBefore && !changesBefore.endsWith('\n') ? '\n' : '';
     writeWhole(changesFile, changesBefore + separator + changes.map((c) => `${JSON.stringify(c)}\n`).join(''));
+    // Only now is each page done: its sidecar names its source.
+    pages.forEach((_, n) => writeWhole(this.#abs(this.#sidecarOf(ids[n]!)), `${JSON.stringify(sidecars[n], null, 2)}\n`));
 
     applied.missing = [...missing];
     this.#o.log('info', 'pages.import', {
