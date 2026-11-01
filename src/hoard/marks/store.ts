@@ -13,7 +13,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { HoardMarksV1, Mark, MarkAnchor, MarkKind, MarkState, MarkWho } from '../../generated/hoard-marks-v1.js';
 import { validateHoardMarksV1 } from '../../generated/validators.cjs';
-import { folderLinkProblem, oneName, writeWhole } from '../files.ts';
+import { folderLinkProblem, folderLinkText, oneName, writeWhole } from '../files.ts';
 import { marksOf, PageRefused, parseId } from '../pages/identity.ts';
 import { isSuggestion, newMark, reply, transition } from './model.ts';
 
@@ -155,6 +155,7 @@ export class MarkStore {
     await this.#queued(file, async () => {
       if (made.length === 0) return;
       const data = this.#read(file);
+      if (isPage(target)) this.#pageStillThere(first);
       this.#write(file, [...data.marks, ...made], { action: 'add-all', marks: made.length });
     });
   }
@@ -206,13 +207,14 @@ export class MarkStore {
   // out of the library. Like a page file (PageStore.inside), the real path of the nearest part
   // that exists must stay inside it. A chapter's sidecar is not under it and is not looked at.
   #contained(file: string): void {
-    const problem = folderLinkProblem(path.join(this.#o.library(), '.neo', 'marks'), file);
+    const problem = folderLinkProblem(this.#o.library(), '.neo/marks', file);
     if (!problem) return;
     this.#o.log('warn', 'marks.refused', { file, reason: problem });
-    throw new PageRefused('unsafe', `${file} is not a marks path: ${problem === 'out' ? 'a link in it leads out of .neo/marks' : 'it goes through a link that leads nowhere'}`);
+    throw new PageRefused('unsafe', `${file} is not a marks path: ${folderLinkText(problem, '.neo/marks')}`);
   }
 
-  // add() waits for head() between reading the marks and writing them. A rename that moves
+  // add() waits for head() between reading the marks and writing them (addAll() may wait in the
+  // queue behind such a write). A rename that moves
   // the page and its marks file in that wait would have this write recreate the old file, so
   // the mark would stay under an id that is no longer a page. A rename moves the page file
   // first and nothing awaits between this check and the write, so a page that is still here

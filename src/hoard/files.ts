@@ -44,19 +44,37 @@ export function linkProblem(root: string, file: string): 'out' | 'dangling' | nu
 }
 
 /**
- * linkProblem for a file under a folder of the library (`.neo/marks`, `.neo/pages`): the
- * one rule MarkStore and a page rename share. A folder not there yet holds nothing that
- * can lead out, so it is safe. A file that is not under the folder is not judged here.
+ * linkProblem for a file under a folder of the library (`wiki`, `.neo/marks`, `.neo/pages`):
+ * the one rule MarkStore and PageStore share. `folder` is a path under `library`. Two things
+ * must hold: the folder itself stays inside the library's real path, and the file stays
+ * inside the folder's. 'root' is a folder that is a link out of the library (itself, or
+ * through a link above it). A folder not there yet holds nothing that can lead out, so a
+ * file under it is safe. A file that is not under the folder is not judged here.
  */
-export function folderLinkProblem(folder: string, file: string): 'out' | 'dangling' | null {
-  if (path.relative(folder, file).startsWith('..')) return null;
+export function folderLinkProblem(library: string, folder: string, file: string): 'root' | 'out' | 'dangling' | null {
+  const at = path.join(library, ...folder.split('/'));
+  if (path.relative(at, file).startsWith('..')) return null;
+  let lib: string;
+  try {
+    lib = realpathSync(library);
+  } catch {
+    return null;
+  }
+  const rootProblem = linkProblem(lib, at);
+  if (rootProblem) return rootProblem === 'out' ? 'root' : 'dangling';
   let root: string;
   try {
-    root = realpathSync(folder);
+    root = realpathSync(at);
   } catch {
     return null;
   }
   return linkProblem(root, file);
+}
+
+/** Why folderLinkProblem refused a file, for the message of the refusal. */
+export function folderLinkText(problem: 'root' | 'out' | 'dangling', folder: string): string {
+  if (problem === 'root') return `${folder} is a link that leads out of the library`;
+  return problem === 'out' ? `a link in it leads out of ${folder}` : 'it goes through a link that leads nowhere';
 }
 
 /**
