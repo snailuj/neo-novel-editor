@@ -2,7 +2,7 @@
 // either as a chapter ({bookId, chId}) or as a page ({page}), never both and never
 // neither; and a librarian's verdict on a page's suggestion lands in that page's sidecar.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import {
@@ -41,6 +41,8 @@ test('every marks request names a chapter or a page, never both, never neither, 
 
 test('a verdict on a page\'s suggestion is signed by the librarian and written to the page\'s sidecar', async (t) => {
   const library = tempDir(t);
+  mkdirSync(path.dirname(path.join(library, page)), { recursive: true });
+  writeFileSync(path.join(library, page), '<p>The wall.</p>');
   const store = new MarkStore({ library: () => library, log: () => {} });
   const handlers = new Map<string, (payload: unknown) => unknown>();
   const host = { handle: (name: string, fn: (payload: unknown) => unknown) => handlers.set(name, fn), log: () => {}, paths: { library: () => library } };

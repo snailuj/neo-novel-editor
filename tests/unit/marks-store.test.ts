@@ -137,8 +137,17 @@ test('listing reads every chapter of a book and writes nothing', async (t) => {
 // Page marks: the same marks, on a page named by its id (<tree>/<path>) instead of a chapter.
 const pageId = 'wiki/People/Harbour.html';
 
+// A mark is added only to a page that is there, so the test makes its pages first.
+function pages(library: string, ...ids: string[]): void {
+  for (const id of ids) {
+    mkdirSync(path.dirname(path.join(library, id)), { recursive: true });
+    writeFileSync(path.join(library, id), '<p>The wall.</p>');
+  }
+}
+
 test('a page\'s marks live under .neo/marks/<tree>/<path>.json and survive a reload', async (t) => {
   const { library, store } = storeFor(t);
+  pages(library, pageId, 'sources/Notes/Tides.html');
   const made = await store.add({ page: pageId, kind: 'comment', anchor, body: 'Which harbour?' }, 'author');
   const file = path.join(library, '.neo', 'marks', 'wiki', 'People', 'Harbour.html.json');
   const saved = onDisk(file);
@@ -177,6 +186,7 @@ test('a page id that escapes the library or its tree is refused before anything 
 
 test('a page\'s marks take replies, states, a review and imported marks like a chapter\'s', async (t) => {
   const { library, store } = storeFor(t);
+  pages(library, pageId);
   const file = pageSidecarPath(library, pageId);
   const comment = await store.add({ page: pageId, kind: 'comment', anchor, body: 'Check.' }, 'author');
   await store.reply({ page: pageId, markId: comment.id, body: 'Done.' }, 'librarian');
@@ -204,6 +214,7 @@ test('a page\'s marks take replies, states, a review and imported marks like a c
 
 test('a book chapter\'s marks are untouched by page marks, and the reverse', async (t) => {
   const { library, store, file } = storeFor(t);
+  pages(library, pageId, 'wiki/book-fox-1/chapters/c1.html');
   await store.add({ ...ids, kind: 'comment', anchor, body: 'Chapter.' }, 'author');
   const chapter = readFileSync(file, 'utf8');
   await store.add({ page: pageId, kind: 'comment', anchor, body: 'Page.' }, 'author');
@@ -233,6 +244,7 @@ test('a page sidecar that does not read is reported and never written over', asy
 // Rule: page marks never read or write through a link that leaves .neo/marks.
 test('page marks are not read or written through a link that leaves .neo/marks', async (t) => {
   const { library, store, lines } = storeFor(t);
+  pages(library, 'wiki/Fine.html');
   const outside = path.join(library, 'outside');
   mkdirSync(outside, { recursive: true });
   mkdirSync(path.join(library, '.neo', 'marks', 'wiki'), { recursive: true });

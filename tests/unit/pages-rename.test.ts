@@ -10,6 +10,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { GitLayer, resolveSettings } from '../../src/hoard/git/layer.ts';
+import { MarkStore } from '../../src/hoard/marks/store.ts';
 import { PageRefused } from '../../src/hoard/pages/identity.ts';
 import { PageStore } from '../../src/hoard/pages/store.ts';
 import { validateHoardPageV1 } from '../../src/generated/validators.cjs';
@@ -493,3 +494,23 @@ for (const [what, folder] of [['marks file', '.neo/marks'], ['sidecar', '.neo/pa
     });
   }
 }
+
+// Rule: a mark added while its page is renamed never lands under the old id.
+test('a mark added to a page while it is renamed is refused, and never recreates the marks file at the old id', async (t) => {
+  const anchor = { exact: 'wall', prefix: 'The ', suffix: '. See', pIdx: 0, off: 4 };
+  const { store, library, get, has, log } = fixture(t);
+  let during: Promise<unknown> | null = null;
+  const marks = new MarkStore({ library: () => library, log, head: async () => { await during; return null; } });
+
+  // baseline: with no rename in flight the same add lands at the page's id
+  await marks.add({ page: FROM, kind: 'comment', anchor, body: 'Before.' }, 'author');
+  assert.equal(JSON.parse(get('.neo/marks/wiki/People/Harbour.html.json')).marks.length, 1, 'the baseline add reached the old id');
+  const moved = get('.neo/marks/wiki/People/Harbour.html.json');
+
+  during = store.rename(FROM, 'Places/Port.html', null);
+  await assert.rejects(marks.add({ page: FROM, kind: 'comment', anchor, body: 'During.' }, 'author'), (e: PageRefused) => e.code === 'missing');
+  await during;
+  assert.equal(has('wiki/Places/Port.html'), true, 'the rename finished');
+  assert.equal(has('.neo/marks/wiki/People/Harbour.html.json'), false, 'no marks file is left at the old id');
+  assert.equal(get('.neo/marks/wiki/Places/Port.html.json'), moved, 'the marks at the new id are those the page had');
+});
