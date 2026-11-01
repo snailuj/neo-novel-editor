@@ -81,7 +81,7 @@ function startHistory(host: NeoMainHost): GitLayer {
     layer.request(checked('git.checkpoint', validateHoardGitCheckpointV1, payload).reason);
     return null;
   });
-  host.handle('git.blame', (payload) => layer.blame(checked('git.blame', validateHoardGitBlameV1, payload)));
+  host.handle('git.blame', (payload) => layer.blame(targeted(checked('git.blame', validateHoardGitBlameV1, payload))));
   host.handle('git.status', () => layer.status());
   host.handle('git.keep-history', () => keepHistory(host, layer));
 
