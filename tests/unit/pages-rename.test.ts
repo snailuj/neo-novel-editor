@@ -4,7 +4,7 @@
 // title the tree holds; and if it stops part way, running it again finishes it without
 // rewriting anything twice. Page names here are neutral words.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -369,4 +369,57 @@ test('the record of finished renames keeps the last fifty', async (t) => {
   const record = JSON.parse(get('.neo/pages/renames.json')) as { from: string; to: string }[];
   assert.equal(record.length, 50);
   assert.deepEqual(record[0], { from: 'wiki/P5.html', to: 'wiki/P6.html' });
+});
+
+// Rule: a rename never writes its note unless the target path is free on disk, whatever
+// the cached titles say, so a refused rename leaves nothing to block the next one.
+test('a rename onto a file that arrived by sync is refused as taken, leaves no note, and the next rename works', async (t) => {
+  const { store, put, get, has, logged } = fixture(t);
+  await store.list();
+  put('wiki/Places/Port.html', '<p>arrived from another device</p>');
+  await assert.rejects(store.rename(FROM, 'Places/Port.html', null), (e: PageRefused) => e.code === 'taken');
+  assert.equal(has('.neo/pages/.rename.json'), false, 'no note of a rename is left');
+  assert.equal(has(FROM), true);
+  assert.equal(get('wiki/Places/Port.html'), '<p>arrived from another device</p>');
+  assert.equal(get('wiki/Index.html'), INDEX);
+  assert.equal(logged('pages.refused').length, 1);
+  assert.equal((await store.rename(FROM, 'Places/Quay.html', null)).id, 'wiki/Places/Quay.html');
+  assert.equal(await store.recover(null), null);
+});
+
+// Rule: recovery acts only on a note whose every path is a page id or a chapter of the
+// library, so a note written by hand can never move or rewrite a file outside it.
+test('a note naming paths out of the library is ignored at recovery, and nothing outside changes', async (t) => {
+  const outside = tempDir(t, 'hoard-outside-');
+  writeFileSync(path.join(outside, 'Secret.html'), '<p>[[Harbour]]</p>');
+  const away = path.relative(fixture(t).library, outside).split(path.sep).join('/');
+  const notes = [
+    { from: `wiki/../${away}/Secret.html`, to: 'wiki/Stolen.html', files: [] },
+    { from: FROM, to: `wiki/../${away}/Moved.html`, files: [] },
+    { from: FROM, to: 'sources/Port.html', files: [] },
+    { from: FROM, to: 'wiki/Places/Port.html', files: [`${away}/Secret.html`] },
+    { from: FROM, to: 'wiki/Places/Port.html', files: ['book-fox-1/chapters/../../wiki/Index.html'] },
+  ];
+  for (const note of notes) {
+    const lib = fixture(t);
+    lib.put('.neo/pages/.rename.json', JSON.stringify({ version: 1, ...note, at: '2026-10-15T22:00:00.000Z' }));
+    assert.equal(await lib.store.recover(null), null, JSON.stringify(note));
+    assert.equal(lib.has(FROM), true, 'the page did not move');
+    assert.equal(lib.get('wiki/Index.html'), INDEX);
+    assert.ok(lib.lines.some((l) => l.level === 'warn' && /not a safe rename note/.test(l.message)), 'the note is logged as ignored');
+  }
+  assert.deepEqual(readdirSync(outside), ['Secret.html']);
+  assert.equal(readFileSync(path.join(outside, 'Secret.html'), 'utf8'), '<p>[[Harbour]]</p>');
+});
+
+// Rule: a rename of a page whose file is gone is refused before its note is written.
+test('a rename of a page deleted since the titles were walked is refused as missing, leaves no note, and the next rename works', async (t) => {
+  const { store, library, has } = fixture(t);
+  await store.list();
+  rmSync(path.join(library, FROM));
+  await assert.rejects(store.rename(FROM, 'Places/Port.html', null), (e: PageRefused) => e.code === 'missing');
+  assert.equal(has('.neo/pages/.rename.json'), false, 'no note of a rename is left');
+  assert.equal(has('wiki/Places/Port.html'), false);
+  assert.equal((await store.rename('wiki/Lantern.html', 'Lamp.html', null)).id, 'wiki/Lamp.html');
+  assert.equal(await store.recover(null), null);
 });
