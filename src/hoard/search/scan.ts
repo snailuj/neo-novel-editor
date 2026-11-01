@@ -1,4 +1,4 @@
-// A search over chapters' paragraphs, the same in both halves: the worker runs it over
+// A search over chapters' and pages' paragraphs, the same in both halves: the worker runs it over
 // the library's files and the window over the open book's paragraphs as they stand.
 // Titles that hold the phrase come first, then each match in the order the chapters are
 // given, without overlaps; a phrase never runs from one paragraph into the next. Each
@@ -18,12 +18,18 @@ export interface ChapterText {
   paragraphs: readonly string[];
 }
 
-export interface Hit {
+/** A page of the library's wiki/ or sources/ folder, searched by its id (`<tree>/<path>`). */
+export interface PageText {
+  page: string;
+  /** The page's title (its file name without .html), which a search looks in. */
+  title: string;
+  paragraphs: readonly string[];
+}
+
+export type Text = ChapterText | PageText;
+
+interface Place {
   kind: 'title' | 'text';
-  bookId: string;
-  chId: string;
-  /** The chapter's label (its title, or its place in the book). */
-  chapter: string;
   pIdx: number;
   off: number;
   len: number;
@@ -32,20 +38,36 @@ export interface Hit {
   after: string;
 }
 
-export interface Found {
+export interface BookHit extends Place {
+  bookId: string;
+  chId: string;
+  /** The chapter's label (its title, or its place in the book). */
+  chapter: string;
+}
+
+export interface PageHit extends Place {
+  /** The page's id, `<tree>/<path>`. */
+  page: string;
+  title: string;
+}
+
+export type Hit = BookHit | PageHit;
+export type HitOf<T extends Text> = T extends PageText ? PageHit : BookHit;
+
+export interface Found<H extends Hit = Hit> {
   /** The first `limit` hits. */
-  hits: Hit[];
+  hits: H[];
   /** How many there are, up to `cap`. */
   total: number;
   /** true when the count stopped at the cap. */
   capped: boolean;
 }
 
-export interface ScanOptions {
+export interface ScanOptions<T extends Text = Text> {
   limit: number;
   cap: number;
   /** A paragraph folded; a caller that keeps folded text hands it over here. */
-  foldOf?: (chapter: ChapterText, pIdx: number) => Folded;
+  foldOf?: (item: T, pIdx: number) => Folded;
 }
 
 const BEFORE = 40;
@@ -65,35 +87,39 @@ function after(text: string, end: number): string {
   return space >= 0 ? cut.slice(0, space + 1) : cut;
 }
 
-export function searchChapters(chapters: Iterable<ChapterText>, query: string, options: ScanOptions): Found {
+// Where a hit belongs: the chapter's book and id, or the page's id.
+function owner(item: Text): Pick<PageHit, 'page' | 'title'> | Pick<BookHit, 'bookId' | 'chId' | 'chapter'> {
+  return 'page' in item
+    ? { page: item.page, title: item.title }
+    : { bookId: item.bookId, chId: item.chId, chapter: item.label ?? item.title };
+}
+
+export function searchChapters<T extends Text>(items: Iterable<T>, query: string, options: ScanOptions<T>): Found<HitOf<T>> {
   const q = foldQuery(query);
-  const found: Found = { hits: [], total: 0, capped: false };
+  const found: Found<HitOf<T>> = { hits: [], total: 0, capped: false };
   if (!q) return found;
-  const list = [...chapters];
-  const foldOf = options.foldOf ?? ((chapter: ChapterText, pIdx: number) => fold(chapter.paragraphs[pIdx]!));
-  const add = (hit: Hit) => {
-    if (found.hits.length < options.limit) found.hits.push(hit);
+  const list = [...items];
+  const foldOf = options.foldOf ?? ((item: T, pIdx: number) => fold(item.paragraphs[pIdx]!));
+  const add = (place: Place, item: T) => {
+    if (found.hits.length < options.limit) found.hits.push({ ...owner(item), ...place } as HitOf<T>);
     found.total++;
     if (found.total >= options.cap) found.capped = true;
   };
 
-  for (const chapter of list) {
+  for (const item of list) {
     if (found.capped) return found;
-    if (chapter.title && fold(chapter.title).text.includes(q)) {
-      add({ kind: 'title', bookId: chapter.bookId, chId: chapter.chId, chapter: chapter.label ?? chapter.title, pIdx: 0, off: 0, len: 0, before: '', match: chapter.title, after: '' });
+    if (item.title && fold(item.title).text.includes(q)) {
+      add({ kind: 'title', pIdx: 0, off: 0, len: 0, before: '', match: item.title, after: '' }, item);
     }
   }
-  for (const chapter of list) {
-    for (let pIdx = 0; pIdx < chapter.paragraphs.length; pIdx++) {
-      const text = chapter.paragraphs[pIdx]!;
-      const folded = foldOf(chapter, pIdx);
+  for (const item of list) {
+    for (let pIdx = 0; pIdx < item.paragraphs.length; pIdx++) {
+      const text = item.paragraphs[pIdx]!;
+      const folded = foldOf(item, pIdx);
       for (let a = folded.text.indexOf(q); a >= 0; a = folded.text.indexOf(q, a + q.length)) {
         if (found.capped) return found;
         const { off, len } = originalSpan(text, folded.at, a, a + q.length);
-        add({
-          kind: 'text', bookId: chapter.bookId, chId: chapter.chId, chapter: chapter.label ?? chapter.title, pIdx, off, len,
-          before: before(text, off), match: text.slice(off, off + len), after: after(text, off + len),
-        });
+        add({ kind: 'text', pIdx, off, len, before: before(text, off), match: text.slice(off, off + len), after: after(text, off + len) }, item);
       }
     }
   }

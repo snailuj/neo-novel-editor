@@ -73,7 +73,7 @@ function startHistory(host: NeoMainHost): GitLayer {
     layer.request(checked('git.checkpoint', validateHoardGitCheckpointV1, payload).reason);
     return null;
   });
-  host.handle('git.blame', (payload) => layer.blame(checked('git.blame', validateHoardGitBlameV1, payload)));
+  host.handle('git.blame', (payload) => layer.blame(targeted(checked('git.blame', validateHoardGitBlameV1, payload))));
   host.handle('git.status', () => layer.status());
   host.handle('git.keep-history', () => keepHistory(host, layer));
 
@@ -150,10 +150,10 @@ export function activate(host: NeoMainHost): void {
   startLibrarianPairs(host, layer);
   const marks = startMarks(host, layer);
   const wiki = startWiki(host, layer, marks);
-  startCompanion(host, layer, marks, wiki);
   startReview(host, marks, { layer, wiki });
   startSearch(host);
   const opened = layer.open().catch((err: unknown) => host.log('error', 'git.open failed', String(err)));
-  const { store } = startPages(host, layer, opened);
-  startRipple(host, layer, store, marks);
+  const { store: pages } = startPages(host, layer, opened);
+  startCompanion(host, layer, marks, wiki, pages);
+  startRipple(host, layer, pages, marks);
 }

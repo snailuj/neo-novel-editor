@@ -58,3 +58,33 @@ test('a library inside another repository is refused and left alone', async (t) 
   await assert.rejects(keepHistory(git, library, { librarian }), /inside another repository/);
   assert.throws(() => read(library, '.gitignore'), /ENOENT/);
 });
+
+// Rule: every page file, in either tree and at any depth, takes the chapter diff and merge
+// driver, in a new library and in one whose attributes file predates pages.
+const OLD_LINE = 'book-*/chapters/*.html diff=neochapter merge=neochapter -text';
+const PAGE_FILES = ['wiki/Harbour.html', 'wiki/People/Harbour.html', 'sources/Notes/Deep/Log.html', 'book-fox-1/chapters/c1.html'];
+
+async function attrsOf(git: ReturnType<typeof tempLibrary>['git'], library: string, file: string) {
+  const { stdout } = await git.run(library, ['check-attr', 'diff', 'merge', 'text', '--', file]);
+  return stdout.trim().split('\n').map((l) => l.slice(l.indexOf(': ') + 2));
+}
+
+test('every page file takes the chapter driver, in a new library', async (t) => {
+  isolateGitConfig(t, { name: 'Ada Author', email: 'ada@example.com' });
+  const { library, git } = tempLibrary(t);
+  await keepHistory(git, library, { librarian });
+  for (const file of PAGE_FILES) assert.deepEqual(await attrsOf(git, library, file), ['diff: neochapter', 'merge: neochapter', 'text: unset'], file);
+  assert.deepEqual(await attrsOf(git, library, 'wiki/Harbour.md'), ['diff: unspecified', 'merge: unspecified', 'text: unspecified']);
+});
+
+test('a library started before pages gets the page lines added once, with its own lines kept', async (t) => {
+  isolateGitConfig(t, { name: 'Ada Author', email: 'ada@example.com' });
+  const { library, git } = tempLibrary(t);
+  writeFileSync(path.join(library, '.gitattributes'), `*.png binary\n${OLD_LINE}\n`);
+  await keepHistory(git, library, { librarian });
+  await keepHistory(git, library, { librarian });
+  const lines = read(library, '.gitattributes').split('\n').filter(Boolean);
+  assert.deepEqual(lines.slice(0, 2), ['*.png binary', OLD_LINE]);
+  assert.equal(lines.length, 4);
+  assert.deepEqual(await attrsOf(git, library, 'sources/Log.html'), ['diff: neochapter', 'merge: neochapter', 'text: unset']);
+});

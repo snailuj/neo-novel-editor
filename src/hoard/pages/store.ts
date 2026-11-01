@@ -340,12 +340,37 @@ export class PageStore {
     if (text === null) return null;
     try {
       const data: unknown = JSON.parse(text);
-      if (validateHoardRenameV1(data)) return data;
+      if (validateHoardRenameV1(data)) {
+        const unsafe = this.#unsafeIn(data);
+        if (!unsafe) return data;
+        this.o.log('warn', `pages: ${file} is not a safe rename note, so it is ignored`, { path: unsafe });
+        return null;
+      }
       this.o.log('error', `pages: ${file} is not a rename note, so no rename is finished`, validateHoardRenameV1.errors);
     } catch (err) {
       this.o.log('error', `pages: ${file} does not parse, so no rename is finished`, String(err));
     }
     return null;
+  }
+
+  // The note is a file anyone can write, so each path in it must be one a rename could have
+  // planned: from and to pages of one tree, and each file a page or a chapter. Gives the
+  // first path that is not, or null.
+  #unsafeIn(plan: HoardRenameV1): string | null {
+    const page = (id: string): PageRef | null => {
+      try {
+        const ref = parseId(id);
+        this.inside(ref);
+        return ref;
+      } catch {
+        return null;
+      }
+    };
+    const [from, to] = [page(plan.from), page(plan.to)];
+    if (!from) return plan.from;
+    if (!to || to.tree !== from.tree) return plan.to;
+    const chapter = (rel: string) => CHAPTER.test(rel) && !rel.split('/').includes('..');
+    return plan.files.find((rel) => !chapter(rel) && !page(rel)) ?? null;
   }
 
   // Checks the request and finds the files that hold a link to rewrite. Writes nothing.
@@ -362,6 +387,11 @@ export class PageStore {
     const newTitle = this.checkTitle(to.path);
     const clash = index.taken(to.tree, newTitle, id);
     if (clash) throw new PageRefused('taken', `${JSON.stringify(newTitle)} is already a page in ${to.tree} (${clash.id})`);
+    // a file that arrived by sync since the titles were walked; a case-only rename on a
+    // case-folding disk finds its own file there, which is no clash
+    if (existsSync(this.file(to)) && !sameFile(this.file(from), this.file(to))) {
+      throw new PageRefused('taken', `${newId} is already a file on disk`);
+    }
     const plan: HoardRenameV1 = { version: 1, from: id, to: newId, files: [], at: new Date().toISOString() };
     if (newTitle === oldTitle) return plan;
 

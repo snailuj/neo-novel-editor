@@ -2,6 +2,7 @@
 // the command line, with an attributes file that names it, so blame reads the chapter a
 // paragraph per line on any machine, set up or not; textconv's cache keeps the second
 // blame of a chapter fast.
+import { parseId } from '../pages/identity.ts';
 import type { Git } from './runner.ts';
 
 export interface BlameLine {
@@ -74,7 +75,16 @@ export async function blameChapter(
   ids: { bookId: unknown; chId: unknown },
   options: BlameOptions,
 ): Promise<BlameLine[]> {
-  const file = `${oneName(ids.bookId, 'bookId')}/chapters/${oneName(ids.chId, 'chId')}.html`;
+  return blameFile(git, library, `${oneName(ids.bookId, 'bookId')}/chapters/${oneName(ids.chId, 'chId')}.html`, options);
+}
+
+/** A page's blame; its file is the page id itself. Throws PageRefused for an id that is not a safe page id. */
+export async function blamePage(git: Git, library: string, page: unknown, options: BlameOptions): Promise<BlameLine[]> {
+  parseId(page);
+  return blameFile(git, library, page as string, options);
+}
+
+async function blameFile(git: Git, library: string, file: string, options: BlameOptions): Promise<BlameLine[]> {
   const { stdout } = await git.run(library, [
     '-c', `core.attributesFile=${options.attributesFile}`,
     '-c', `diff.neochapter.textconv=${options.textconv.command}`,

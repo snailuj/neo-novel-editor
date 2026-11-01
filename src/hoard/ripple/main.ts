@@ -7,9 +7,9 @@ import { validateHoardRippleAskV1, validateHoardRippleDecideV1, validateHoardRip
 import type { GitLayer } from '../git/layer.ts';
 import type { MarkStore } from '../marks/store.ts';
 import type { PageStore } from '../pages/store.ts';
-import { ownerOf } from '../review/owner.ts';
-import { Ripple } from './engine.ts';
+import type { Ripple } from './engine.ts';
 import { describeRun } from './summary.ts';
+import { makeRipple } from './wire.ts';
 
 type Validator<T> = { (data: unknown): data is T; errors?: { instancePath: string; message?: string }[] | null };
 
@@ -22,17 +22,7 @@ function checked<T>(name: string, validate: Validator<T>, payload: unknown): T {
 }
 
 export function startRipple(host: NeoMainHost, layer: GitLayer, pages: PageStore, marks: MarkStore): Ripple {
-  const log = host.log.bind(host);
-  const library = () => host.paths.library();
-  const ripple = new Ripple({
-    library,
-    pages,
-    marks,
-    ownerOf: (root, page) => ownerOf(root, page, log),
-    layer,
-    wrote: (name) => layer.wrote(name),
-    log,
-  });
+  const ripple = makeRipple({ library: () => host.paths.library(), log: host.log.bind(host) }, layer, pages, marks);
   host.handle('ripple.run', async (payload) => {
     const { tell } = checked('ripple.run', validateHoardRippleRunV1, payload);
     const summary = await ripple.run();

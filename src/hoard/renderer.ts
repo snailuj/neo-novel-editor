@@ -59,11 +59,8 @@ NeoPlugins.register({
     const librarian = startLibrarian(neo);
     const review = startReview(neo, marks, { pages: wiki.index, librarian });
     const paneMarks = startPaneMarks(neo, wiki.pane, { pages: wiki.index });
-    const search = startSearch(neo, {
-      bookId: () => wiki.pages()?.bookId ?? null,
-      show: (chId, at) => wiki.pane.open(chId, at ?? undefined),
-    });
-    const companion = startCompanion(neo, { marks, wiki: () => wiki.pages() });
+    const search = startSearch(neo, { open: (id, at) => wiki.pane.open(id, at) });
+    const companion = startCompanion(neo, { marks, wikiBook: () => wiki.pages()?.bookId ?? null, pages: () => neo.invoke('pages.list') as Promise<{ id: string; tree: string; title: string }[]> });
     // the pane's currentPage() arrives with the file tree (stage 5); until then no page is open
     const paneNow = (wiki.pane as { currentPage?: () => string | null } | undefined)?.currentPage;
     const ripple = startRipple(neo, { currentPage: () => paneNow?.call(wiki.pane) ?? null });
