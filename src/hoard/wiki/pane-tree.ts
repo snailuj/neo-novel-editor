@@ -312,7 +312,7 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
           ? `Renamed “${was}” to “${ask.value}”.${changed.length ? ` Changed ${changed.join(' and ')}.` : ''}`
           : `Moved “${was}” to ${place(verdict.tree, folderOf(verdict.path))}.`;
         const kept = [
-          done.refused.length ? `${plural(done.refused.length, 'link')} in this book still say [[${was}]], because that text changed during the rename` : '',
+          done.refused.length ? `${plural(done.refused.length, 'link')} in this book still say [[${was}]], because the book could not take the change there` : '',
           done.skipped ? `${plural(done.skipped, 'link')} in other files still say [[${was}]], because formatting runs through them` : '',
         ].filter(Boolean);
         left = kept.length ? `${kept.join('; ')}. Change them to [[${ask.value}]] by hand.` : '';
