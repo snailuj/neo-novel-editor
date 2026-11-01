@@ -295,3 +295,30 @@ for (const [what, link] of [['.neo/marks', ['.neo', 'marks']], ['.neo', ['.neo']
     assert.equal((await store.list('wiki/Fine.html')).length, 1, 'with a folder of its own the same request is written');
   });
 }
+
+// Rule: addAll on a page that is gone writes nothing.
+test('addAll on a page that is gone, say renamed, writes nothing and never recreates the marks file at the old id', async (t) => {
+  const { library, store } = storeFor(t);
+  pages(library, pageId);
+  const file = pageSidecarPath(library, pageId);
+  const gone = (e: unknown) => e instanceof PageRefused && e.code === 'missing';
+  await store.addAll(pageId, [newMarkFor('m-before')]);
+  assert.deepEqual((await store.list(pageId)).map((m) => m.id), ['m-before'], 'with the page there the import is written');
+
+  // a page that was never there
+  await assert.rejects(store.addAll('wiki/Other.html', [newMarkFor()]), gone);
+  assert.equal(existsSync(pageSidecarPath(library, 'wiki/Other.html')), false);
+
+  // the page is renamed while an earlier write to its marks waits: the import behind it must not bring the old file back
+  let release = (): void => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const slow = new MarkStore({ library: () => library, head: async () => { await held; return null; }, log: () => {} });
+  const adding = slow.add({ page: pageId, kind: 'comment', anchor, body: 'Slow.' }, 'author');
+  const importing = slow.addAll(pageId, [newMarkFor('m-during')]);
+  rmSync(file);
+  rmSync(path.join(library, pageId));
+  release();
+  await assert.rejects(adding, gone);
+  await assert.rejects(importing, gone);
+  assert.equal(existsSync(file), false, 'no marks file at the old id');
+});

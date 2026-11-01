@@ -155,6 +155,7 @@ export class MarkStore {
     await this.#queued(file, async () => {
       if (made.length === 0) return;
       const data = this.#read(file);
+      if (isPage(target)) this.#pageStillThere(first);
       this.#write(file, [...data.marks, ...made], { action: 'add-all', marks: made.length });
     });
   }
@@ -212,7 +213,8 @@ export class MarkStore {
     throw new PageRefused('unsafe', `${file} is not a marks path: ${folderLinkText(problem, '.neo/marks')}`);
   }
 
-  // add() waits for head() between reading the marks and writing them. A rename that moves
+  // add() waits for head() between reading the marks and writing them (addAll() may wait in the
+  // queue behind such a write). A rename that moves
   // the page and its marks file in that wait would have this write recreate the old file, so
   // the mark would stay under an id that is no longer a page. A rename moves the page file
   // first and nothing awaits between this check and the write, so a page that is still here
