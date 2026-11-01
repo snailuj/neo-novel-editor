@@ -92,6 +92,8 @@ export class PageStore {
   // Built on first use and kept by create and rename; list() builds it again, since pages
   // also arrive through sync. Null until then, or after a rename failed part way.
   #titles: Titles<PageEntry> | null = null;
+  // counts each write, create and rename as it starts and as it ends: odd while one runs
+  #changes = 0;
 
   constructor(options: PageStoreOptions) {
     this.o = options;
@@ -189,9 +191,12 @@ export class PageStore {
 
   async list(): Promise<PageEntry[]> {
     const start = performance.now();
+    const at = this.#changes;
     const pages = await this.#scan();
-    this.#titles = new Titles(pages);
-    for (const group of this.#titles.duplicates) this.o.log('warn', 'pages: these pages share one title, so a link reaches only the first', group.map((p) => p.id));
+    const titles = new Titles(pages);
+    // a walk that a change ran beside may miss it, so the index the change kept stays
+    if (at % 2 === 0 && at === this.#changes) this.#titles = titles;
+    for (const group of titles.duplicates) this.o.log('warn', 'pages: these pages share one title, so a link reaches only the first', group.map((p) => p.id));
     this.o.log('info', 'pages.list', { pages: pages.length, ms: Math.round(performance.now() - start) });
     return pages;
   }
@@ -256,7 +261,14 @@ export class PageStore {
   // Writes, creates and renames run one at a time: each reads the library the last one
   // left, so a write cannot land between a rename's read of a file and its rewrite.
   #serial<T>(run: () => Promise<T>): Promise<T> {
-    const next = this.#tail.then(run);
+    const next = this.#tail.then(async () => {
+      this.#changes++;
+      try {
+        return await run();
+      } finally {
+        this.#changes++;
+      }
+    });
     this.#tail = next.catch(() => {});
     return next;
   }

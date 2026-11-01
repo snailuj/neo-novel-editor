@@ -6,7 +6,7 @@ import { mkdirSync, statSync, symlinkSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { PageRefused } from '../../src/hoard/pages/identity.ts';
-import { PageStore } from '../../src/hoard/pages/store.ts';
+import { PageStore, type PageEntry } from '../../src/hoard/pages/store.ts';
 import { pagesLibrary } from './pages-support.ts';
 
 test('list returns both trees\' .html files with their facts, and no body', async (t) => {
@@ -188,4 +188,37 @@ test('a path through a symlinked folder or to a symlinked file is refused for ev
   assert.equal(has('wiki/Tide.html'), true);
   assert.equal(logged('pages.refused').length, 8);
   assert.deepEqual((await store.list()).map((p) => p.id), ['wiki/Tide.html'], 'list follows neither link');
+});
+
+// Rule: a list whose walk began before a create, a rename or a write finished does not put
+// its titles in place of the index the change kept, so a title made meanwhile stays taken.
+test('a list that walked the trees before a change does not put back titles from before it', async (t) => {
+  const { library, log } = pagesLibrary(t);
+  let hold: Promise<void> | null = null;
+  let walked!: () => void;
+  const walkedOnce = new Promise<void>((resolve) => { walked = resolve; });
+  // the first walk after hold is set takes the library as it is, then waits before answering
+  class Held extends PageStore {
+    override async *entries(): AsyncGenerator<PageEntry> {
+      const gate = hold;
+      hold = null;
+      const seen: PageEntry[] = [];
+      for await (const p of super.entries()) seen.push(p);
+      if (gate) {
+        walked();
+        await gate;
+      }
+      yield* seen;
+    }
+  }
+  const store = new Held({ library: () => library, log });
+  await store.create('wiki', 'Harbour.html', '<p>x</p>');
+  let release!: () => void;
+  hold = new Promise<void>((resolve) => { release = resolve; });
+  const listing = store.list();
+  await walkedOnce;
+  await store.create('wiki', 'Places/Quay.html', '<p>x</p>');
+  release();
+  assert.deepEqual((await listing).map((p) => p.id), ['wiki/Harbour.html'], 'the list itself is from before the create');
+  await assert.rejects(store.create('wiki', 'Docks/quay.html', '<p>x</p>'), (e: PageRefused) => e.code === 'taken');
 });
