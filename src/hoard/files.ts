@@ -1,7 +1,7 @@
 // Writing inside the library the way NEO does. A file is written whole: a temporary
 // file, fsync, then a rename into place, so a crash leaves the old file or the new one,
 // never half of either. A name is one path segment, as main.js's libName() allows.
-import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs';
+import { closeSync, copyFileSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, writeSync } from 'node:fs';
 import path from 'node:path';
 
 export function oneName(name: unknown, what: string): string {
@@ -9,6 +9,27 @@ export function oneName(name: unknown, what: string): string {
     throw new TypeError(`${what} must be one name inside the library: ${JSON.stringify(name)}`);
   }
   return name;
+}
+
+/**
+ * Whether `file` can be read or written without leaving `root` (a real path) by a link.
+ * The nearest part of the path that exists decides, so a file not there yet is judged by
+ * its folder. 'out' is a link that leads out of `root`; 'dangling' is one that leads nowhere,
+ * which a write would follow. Null when the path is safe.
+ */
+export function linkProblem(root: string, file: string): 'out' | 'dangling' | null {
+  for (let probe = file; ; probe = path.dirname(probe)) {
+    let real: string;
+    try {
+      real = realpathSync(probe);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw err;
+      if (lstatSync(probe, { throwIfNoEntry: false })) return 'dangling';
+      continue;
+    }
+    return real === root || real.startsWith(root + path.sep) ? null : 'out';
+  }
 }
 
 export function writeWhole(file: string, text: string | Uint8Array): void {

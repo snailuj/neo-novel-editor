@@ -8,7 +8,7 @@
 // caller read (the rule wiki/write.ts keeps), so a change that arrived from another device
 // is never written over. Every refusal is logged; every request names its page by an id
 // that identity.ts has checked, so no path leaves its tree.
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
 import { opendir, readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { validateHoardRenameV1 } from '../../generated/validators.cjs';
@@ -16,7 +16,7 @@ import type { HoardRenameV1 } from '../../generated/hoard-rename-v1.js';
 import { key } from '../../librarian/links.ts';
 import { booksWithOwnRepo } from '../git/commit.ts';
 import type { GitLayer } from '../git/layer.ts';
-import { writeWhole } from '../files.ts';
+import { linkProblem, writeWhole } from '../files.ts';
 import { checkPath, idOf, marksOf, PageRefused, parseId, titleOf, TREES, type PageRef, type Tree } from './identity.ts';
 import { editsFor, rewriteHtml, type Retarget, type WindowEdit } from './rewrite.ts';
 import { Titles } from './titles.ts';
@@ -117,20 +117,9 @@ export class PageStore {
     } catch {
       return file; // no tree yet, so nothing in it can lead out
     }
-    const refuse = (why: string) => new PageRefused('unsafe', `${idOf(ref)} is not a page path: ${why}`);
-    for (let probe = file; ; probe = path.dirname(probe)) {
-      let real: string;
-      try {
-        real = realpathSync(probe);
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        if (code !== 'ENOENT' && code !== 'ENOTDIR') throw err;
-        if (lstatSync(probe, { throwIfNoEntry: false })) throw refuse('it goes through a link that leads nowhere');
-        continue;
-      }
-      if (real !== root && !real.startsWith(root + path.sep)) throw refuse('a link in it leads out of its tree');
-      return file;
-    }
+    const problem = linkProblem(root, file);
+    if (problem) throw new PageRefused('unsafe', `${idOf(ref)} is not a page path: ${problem === 'out' ? 'a link in it leads out of its tree' : 'it goes through a link that leads nowhere'}`);
+    return file;
   }
 
   /** Runs one request, logging it if it is refused. */
