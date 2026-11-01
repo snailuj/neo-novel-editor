@@ -405,6 +405,11 @@ export class Ripple {
       const page = made.page;
       const proposal: RippleProposal = { ...p, at, status: 'applied', outcome: 'written', ...(made.delta ? { delta: made.delta } : {}) };
       await this.#asLibrarian('ripple.apply', { page: page.id, proposal: p.id }, [page.id, this.#rulingsRel], async () => {
+        // the plan read the owner some time ago; the writer may have taken the page over since
+        if (await this.#o.ownerOf(this.#lib, page.id) !== 'librarian') {
+          this.#o.log('warn', 'ripple.owner.changed', { page: page.id, proposal: p.id });
+          return new Error(`${page.title} is no longer the librarian's, so nothing was written. Apply again to have it suggested instead.`);
+        }
         const written = await this.#o.pages.write(page.id, made.before, made.html);
         if (!written.ok) return new Error(`${page.title} changed while ripple was working on it (${written.reason}). Apply again to read it afresh.`);
         const state = this.#rulings.read();

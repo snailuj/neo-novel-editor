@@ -219,3 +219,36 @@ test('a refused change is not put back over words the author typed after Ripple 
   assert.ok(warnings.some((w) => w.message === 'ripple.restore.conflict' && (w.data as { page: string }).page === 'wiki/Harbour.html'));
   assert.equal(ripple.overview().proposals[0]!.status, 'proposed');
 });
+
+// Rule: Ripple writes a page only while it is still the librarian's. If the writer takes the
+// page over (its sidecar flips to the author's) between the plan and the write, nothing is
+// written, no librarian commit is made, and the card stays waiting.
+test('a page the author took over between the plan and the write is not written', async (t) => {
+  const { lib, layer, store, marks, log, warnings } = await setup(t);
+  lib.write('wiki/Quay.html', '<p data-block="q1">The quay is made of timber.</p>');
+  lib.write('.neo/pages/wiki/Quay.html.json', LORE);
+  await layer.commitNow('import');
+  const racy = new Proxy(layer, {
+    get: (target, key) => {
+      if (key !== 'around') { const v = Reflect.get(target, key); return typeof v === 'function' ? v.bind(target) : v; }
+      return (paths: readonly string[], apply: () => Promise<unknown>, ...rest: unknown[]) => {
+        lib.write('.neo/pages/wiki/Quay.html.json', JSON.stringify({ version: 1, source: { path: '/v/x.md', name: 'x', sha256: 'a'.repeat(64) }, frontmatter: { type: 'draft' }, imported: '2026-11-01T12:00:00.000Z' }));
+        return (target.around as (...a: unknown[]) => unknown)(paths, apply, ...rest);
+      };
+    },
+  }) as typeof layer;
+  const ripple = new Ripple({ library: () => lib.library, pages: store, marks, ownerOf: (root, id) => ownerOf(root, id), layer: racy, log });
+  const asked = await ripple.ask({ page: 'wiki/Storm.html' });
+  writeFileSync(ripple.overview().jobs.find((j) => j.id === asked.job)!.answer, [{ kind: 'preflight', brief_sha256: sha256(DEFAULT_BRIEF), echo: ECHO },
+    { kind: 'claim', target: 'Quay', anchor: 'made of timber', text: 'rebuilt in stone', reason: 'r', quote: 'The wall was rebuilt in stone' }].map((l) => JSON.stringify(l)).join('\n'));
+  await ripple.run();
+  await layer.commitNow('import-author');
+  const librarianCommits = async () => (await lib.git.run(lib.library, ['log', '--format=%an'])).stdout.split('\n').filter((a) => a === 'Librarian').length;
+  const [page, commits] = [readFileSync(path.join(lib.library, 'wiki/Quay.html'), 'utf8'), await librarianCommits()];
+  assert.equal(ripple.overview().proposals[0]!.kind, 'claim');
+  await assert.rejects(ripple.decide(ripple.overview().proposals[0]!.id, 'apply'), /Quay is no longer the librarian's/);
+  assert.equal(readFileSync(path.join(lib.library, 'wiki/Quay.html'), 'utf8'), page, 'the page is as it was');
+  assert.equal(await librarianCommits(), commits, 'no librarian commit');
+  assert.ok(warnings.some((w) => w.message === 'ripple.owner.changed' && (w.data as { page: string }).page === 'wiki/Quay.html'));
+  assert.equal(ripple.overview().proposals[0]!.status, 'proposed');
+});
