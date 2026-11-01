@@ -73,18 +73,18 @@ test('classify, review, re-run, apply', async () => {
   assert.equal(first.code, 0, first.stderr);
   assert.equal(readFileSync(path.join(dir, 'calls.txt'), 'utf8').length, 4, 'two pages, two votes');
   let rows = readSheet(readFileSync(sheet, 'utf8'));
-  assert.deepEqual(rows.map((r) => [r.page, r.label, r.wiki]), [
-    ['Daily/2026-01-01.md', 'morning-pages', 'no'],
-    ['Daily/2026-01-01.md', 'writing', 'yes'],
-    ['Daily/2026-01-01.md', 'tasks', 'no'],
-    ['Scratch.md', 'writing', 'yes'],
-    ['Scratch.md', 'tasks', 'no'],
+  assert.deepEqual(rows.map((r) => [r.page, r.label, r.dest]), [
+    ['Daily/2026-01-01.md', 'morning-pages', 'out'],
+    ['Daily/2026-01-01.md', 'writing', 'sources'],
+    ['Daily/2026-01-01.md', 'tasks', 'out'],
+    ['Scratch.md', 'writing', 'sources'],
+    ['Scratch.md', 'tasks', 'out'],
   ]);
   assert.match(first.stdout, /5 blocks/);
   assert.match(first.stderr, /"logger":"librarian\.blocks\.cli".*Scratch\.md/);
 
   // The author renames a dest; the page gains a block; a re-run judges only that one.
-  rows[3]!.wiki_page = 'Otter-Notes';
+  rows[3]!.dest_page = 'Otter-Notes';
   writeFileSync(sheet, writeSheet(rows));
   writeFileSync(path.join(vault, 'Scratch.md'), 'The otter again.\n\n- [ ] Shop\n\nA second otter.');
   const second = await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, '--pages', 'pages.txt', 'Scratch.md'], dir);
@@ -92,21 +92,22 @@ test('classify, review, re-run, apply', async () => {
   assert.equal(readFileSync(path.join(dir, 'calls.txt'), 'utf8').length, 5, 'one more call, for the new block only');
   rows = readSheet(readFileSync(sheet, 'utf8'));
   assert.equal(rows.length, 6);
-  assert.equal(rows[3]!.wiki_page, 'Otter-Notes');
+  assert.equal(rows[3]!.dest_page, 'Otter-Notes');
 
   const out = path.join(dir, 'out');
-  const applied = await run(['apply', '--vault', vault, '--sheet', sheet, '--out', out, '--path-prefix', 'E:\\Private\\out', '--picks', 'picks.jsonl'], dir);
+  const applied = await run(['apply', '--vault', vault, '--sheet', sheet, '--out', out, '--vault-prefix', 'E:\\Private\\vault', '--picks', 'picks.jsonl'], dir);
   assert.equal(applied.code, 0, applied.stderr);
   const picks = readFileSync(path.join(dir, 'picks.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { kind: string; target: string });
   assert.deepEqual(picks.map((p) => p.kind).sort(), ['morning-pages', 'morning-pages', 'writing', 'writing', 'writing']);
   assert.ok(picks.some((p) => p.target === 'Otter-Notes'));
-  await run(['apply', '--vault', vault, '--sheet', sheet, '--out', out, '--path-prefix', 'E:\\Private\\out', '--picks', 'wiki.jsonl', '--picks-kinds', 'writing'], dir);
+  await run(['apply', '--vault', vault, '--sheet', sheet, '--out', out, '--vault-prefix', 'E:\\Private\\vault', '--picks', 'wiki.jsonl', '--picks-kinds', 'writing'], dir);
   const wikiOnly = readFileSync(path.join(dir, 'wiki.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { kind: string });
   assert.deepEqual(wikiOnly.map((p) => p.kind), ['writing', 'writing', 'writing']);
   assert.equal((await run(['apply', '--vault', vault, '--sheet', sheet, '--out', out, '--picks', 'x.jsonl', '--picks-kinds', 'poems'], dir)).code, 2);
-  assert.ok(existsSync(path.join(out, 'wiki', 'Otter-Notes.md')));
   assert.ok(existsSync(path.join(out, 'Morning Pages.md')));
-  assert.match(readFileSync(path.join(out, 'import-list.txt'), 'utf8'), /^E:\\Private\\out\\wiki\\/);
+  assert.match(readFileSync(path.join(out, 'import-list.txt'), 'utf8'), /^E:\\Private\\vault\\Scratch\.md#L1-L1@[0-9a-f]{16} -> Otter-Notes$/m);
+  assert.match(readFileSync(path.join(out, 'import-list.txt'), 'utf8'), /^to: sources$/m);
+  assert.equal((await run(['apply', '--vault', vault, '--sheet', sheet, '--out', out, '--path-prefix', 'E:\\x'], dir)).code, 2, 'the old option is refused');
 });
 
 test('a page run alone keeps the rows of pages not in this run', async () => {
@@ -122,7 +123,7 @@ test('with no judge every unruled block is marked to check', async () => {
   const sheet = path.join(dir, 'sheet.csv');
   const r = await run(['classify', '--vault', vault, '--out', sheet, 'Scratch.md'], dir);
   assert.equal(r.code, 0);
-  assert.deepEqual(readSheet(readFileSync(sheet, 'utf8')).map((x) => [x.label, x.wiki, x.by]), [['other', 'check', 'no-judge'], ['tasks', 'check', 'no-judge']]);
+  assert.deepEqual(readSheet(readFileSync(sheet, 'utf8')).map((x) => [x.label, x.dest, x.by]), [['other', 'check', 'no-judge'], ['tasks', 'check', 'no-judge']]);
 });
 
 test('apply exits 1 and names a block that changed since review', async () => {
@@ -144,13 +145,13 @@ test('usage and a missing page', async () => {
   assert.equal(readSheet(readFileSync(path.join(dir, 's.csv'), 'utf8')).length, 2, 'the other pages still go in');
 });
 
-test('text repeated across pages goes to the wiki once', async () => {
+test('text repeated across pages goes to the library once', async () => {
   const { dir, vault, judge } = setup();
   writeFileSync(path.join(vault, 'Copy.md'), 'The otter again.');
   const sheet = path.join(dir, 'sheet.csv');
   await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, 'Scratch.md', 'Copy.md'], dir);
   const rows = readSheet(readFileSync(sheet, 'utf8'));
-  assert.deepEqual(rows.filter((r) => r.preview === 'The otter again.').map((r) => [r.page, r.wiki]), [['Scratch.md', 'yes'], ['Copy.md', 'no']]);
+  assert.deepEqual(rows.filter((r) => r.preview === 'The otter again.').map((r) => [r.page, r.dest]), [['Scratch.md', 'sources'], ['Copy.md', 'out']]);
 });
 
 test('group cuts classified pages into entries and topics, once unless asked again', async () => {
@@ -165,7 +166,7 @@ test('group cuts classified pages into entries and topics, once unless asked aga
   assert.equal(r.code, 0, r.stderr);
   assert.equal(calls() - before, 3, 'one entry call, two topic votes');
   const rows = readSheet(readFileSync(sheet, 'utf8'));
-  assert.deepEqual(rows.map((x) => [x.entry, x.topic, x.topic_by, x.wiki_page]), [
+  assert.deepEqual(rows.map((x) => [x.entry, x.topic, x.topic_by, x.dest_page]), [
     ['e1', 'Otters', 'judge', 'Scratch-Otters-(snippets)'],
     ['e2', '- [ ] Shop', 'judge', ''],
     ['e3', 'Otters', 'judge', 'Scratch-Otters-(snippets)'],
