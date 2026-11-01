@@ -23,6 +23,11 @@ export interface CardAction {
 export interface ReviewedPage {
   /** The book the page is in, or null when none is shown. */
   bookId(): string | null;
+  /**
+   * For a page in wiki/ or sources/: the page id its marks and verdicts are sent under, in
+   * place of bookId and chId; null for a key that is not one. Absent, every key is a chapter.
+   */
+  target?(key: string): { page: string } | null;
   /** The page's paragraphs as they read now, or null when it is not shown. */
   paragraphs(chId: string): string[] | null;
   marksOf(chId: string): Mark[];
@@ -42,30 +47,36 @@ const message = (err: unknown) => (err instanceof Error ? err.message : String(e
 
 export function reviewFlow(neo: Pick<NeoApiV4, 'invoke'>, pages: () => Pages, page: ReviewedPage) {
   const find = (chId: string, markId: string) => page.marksOf(chId).find((m) => m.id === markId);
+  // Where a request for this page goes: its page id, or the open book's chapter; null when neither is shown.
+  const aim = (chId: string): { page: string } | { bookId: string; chId: string } | null => {
+    const bookId = page.bookId();
+    return page.target?.(chId) ?? (bookId ? { bookId, chId } : null);
+  };
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
   // The librarian's review of one suggestion, against the page as it is now.
   async function review(chId: string, markId: string) {
     const mark = find(chId, markId);
     const paragraphs = page.paragraphs(chId);
-    const bookId = page.bookId();
-    if (!bookId || !mark || !paragraphs) return;
+    const at = aim(chId);
+    if (!at || !mark || !paragraphs) return;
     const verdict = reviewSuggestion(mark, page.marksOf(chId), paragraphs, pages());
     const flag = async (reason: string) => {
-      page.settle(chId, await neo.invoke('review.verdict', { bookId, chId, markId, state: 'flagged', reason }) as { marks: Mark[] });
+      page.settle(chId, await neo.invoke('review.verdict', { ...at, markId, state: 'flagged', reason }) as { marks: Mark[] });
       page.tell('The librarian flagged your suggestion; its comment says why.');
     };
     if (verdict.verdict === 'flag') { await flag(verdict.reason); return; }
     const refused = await page.applyAsLibrarian(chId, verdict.place, verdict.expected, verdict.text);
-    if (page.bookId() !== bookId) return;
+    if (!same(aim(chId), at)) return;
     if (refused) { await flag(`The change could not be applied: ${refused}. Suggest it again if it still stands.`); return; }
-    page.settle(chId, await neo.invoke('review.verdict', { bookId, chId, markId, state: 'accepted' }) as { marks: Mark[] });
+    page.settle(chId, await neo.invoke('review.verdict', { ...at, markId, state: 'accepted' }) as { marks: Mark[] });
     page.tell('The librarian accepted your suggestion.');
   }
 
   // The writer's own decision on a suggestion: accept (applied as theirs) or withdraw.
   async function decide(chId: string, markId: string, state: 'accepted' | 'rejected') {
-    const bookId = page.bookId();
-    if (!bookId) return;
+    const at = aim(chId);
+    if (!at) return;
     try {
       if (state === 'accepted') {
         const mark = find(chId, markId);
@@ -78,8 +89,8 @@ export function reviewFlow(neo: Pick<NeoApiV4, 'invoke'>, pages: () => Pages, pa
         const refused = await page.applyAsWriter(chId, span.place, span.expected, span.text);
         if (refused) { page.warn(`The change could not be applied: ${refused}. Try again.`); return; }
       }
-      if (page.bookId() !== bookId) return;
-      page.settle(chId, await neo.invoke('marks.state', { bookId, chId, markId, state }) as { marks: Mark[] });
+      if (!same(aim(chId), at)) return;
+      page.settle(chId, await neo.invoke('marks.state', { ...at, markId, state }) as { marks: Mark[] });
       page.warn('');
       page.tell(state === 'accepted' ? 'Change applied, as yours.' : 'Suggestion withdrawn; its words stay in its card.');
     } catch (err) {
