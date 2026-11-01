@@ -5,8 +5,8 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 
 /** What a run did, as a sentence or two for the writer. */
 export function describeRun(s: RunSummary): { message: string; detail: string } {
-  if (!s.wiki) return { message: 'There is no wiki yet.', detail: 'Ripple carries changes through the wiki. Import pages to the wiki first.' };
-  if (s.baseline) return { message: 'Ripple is watching the wiki from now on.', detail: 'Pages you import or change from here on get a packet for the judge the next time Ripple runs. For a chapter you want judged now, use Ripple This Chapter.' };
+  if (!s.wiki) return { message: 'There are no pages yet.', detail: 'Ripple carries changes through the wiki and the sources. Import pages first.' };
+  if (s.baseline) return { message: 'Ripple is watching the library from now on.', detail: 'Pages you import or change from here on get a packet for the judge the next time Ripple runs. For a page you want judged now, use Ripple This Page.' };
   const parts: string[] = [];
   if (s.packeted) parts.push(`${plural(s.packeted, 'packet')} for the judge ${s.packeted === 1 ? 'is' : 'are'} in ${s.packets}.`);
   if (s.read) {

@@ -1,11 +1,10 @@
 // The Ripple section beside the book: what waits for the judge, and each proposal the
 // judge made, for the writer to apply, reject or set aside. Nothing here runs unless the
-// writer asks: Plugins > Run Ripple, Plugins > Ripple This Chapter, or a button here.
+// writer asks: Plugins > Run Ripple, Plugins > Ripple This Page, or a button here.
 // The section is drawn when it is shown or after a run, never while the writer types.
 // A proposal's buttons stay hidden until its card is hovered or holds the focus.
 
 interface Overview {
-  wiki: boolean;
   packets: string;
   jobs: { id: string; title: string; hop: number; state: string; problem: string | null; packet: string; answer: string }[];
   proposals: {
@@ -17,7 +16,7 @@ interface Overview {
 }
 
 interface Ran { said: { message: string; detail: string } }
-interface Decided { said: string; page: { bookId: string; chId: string } | null }
+interface Decided { said: string; page: string | null }
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] => {
   const node = document.createElement(tag);
@@ -36,10 +35,23 @@ const KIND: Record<Overview['proposals'][number]['kind'], string> = {
   claim: 'Change', topic: 'Add a line', mint: 'New page', nothing: 'Leave alone',
 };
 
+/** What Ripple This Page says, asking about the page open in the pane (its id), if any. */
+export async function rippleThisPage(neo: Pick<NeoApiV4, 'invoke'>, currentPage: () => string | null): Promise<{ text: string; bad: boolean }> {
+  const page = currentPage();
+  if (!page) return { text: 'No page is open in the side pane. Open one there, then choose Ripple This Page.', bad: true };
+  try {
+    const asked = await neo.invoke('ripple.ask', { page }) as { made: boolean; packet: string | null };
+    const title = page.slice(page.lastIndexOf('/') + 1).replace(/\.html$/, '');
+    if (asked.made) return { text: `The packet for ${title} is in the packets folder, for the judge: ${asked.packet}`, bad: false };
+    return { text: `Ripple has this page's words already${asked.packet ? `; its packet is ${asked.packet}` : ''}.`, bad: false };
+  } catch (err) {
+    return { text: err instanceof Error ? err.message : String(err), bad: true };
+  }
+}
+
 export function startRipple(neo: NeoApiV4, o: {
-  wikiId: () => string | null;
-  /** A wiki page shown beside the book, the page list read again first. */
-  show: (chId: string) => Promise<void>;
+  /** The id of the page open in the side pane, or null when none is (a chapter of a book is no page). */
+  currentPage: () => string | null;
 }) {
   const pane = neo.addPane({ id: 'ripple', title: 'Ripple', side: true });
   const root = pane.element;
@@ -60,11 +72,6 @@ export function startRipple(neo: NeoApiV4, o: {
     status.textContent = bad ? '' : text;
     alert.textContent = bad ? text : '';
   };
-  const wikiOpen = () => {
-    const id = o.wikiId();
-    return id !== null && neo.book()?.id === id;
-  };
-
   const card = (p: Overview['proposals'][number]) => {
     const c = el('div', 'sticky hoard-ripple-card');
     c.tabIndex = -1;
@@ -85,10 +92,6 @@ export function startRipple(neo: NeoApiV4, o: {
     if (p.delta) c.append(el('p', 'hoard-label', p.delta));
     const actions = el('div', 's-actions');
     const apply = button('', 'Apply');
-    if (wikiOpen()) {
-      apply.disabled = true;
-      apply.title = 'The wiki is open. Apply from another book.';
-    }
     const reject = button('', 'Reject');
     const later = button('', 'Later');
     if (p.status === 'deferred') later.hidden = true;
@@ -109,10 +112,6 @@ export function startRipple(neo: NeoApiV4, o: {
       return;
     }
     list.replaceChildren();
-    if (!view.wiki) {
-      list.append(el('p', 'hoard-wiki-empty', 'Ripple carries changes through the wiki. Import pages to the wiki first.'));
-      return;
-    }
     const waiting = view.jobs;
     if (waiting.length) {
       list.append(el('h4', 'hoard-ripple-group', `Waiting for the judge (${waiting.length})`));
@@ -137,7 +136,7 @@ export function startRipple(neo: NeoApiV4, o: {
     if (!waiting.length && !proposed.length && !deferred.length) {
       list.append(el('p', 'hoard-wiki-empty', view.applied || view.rejected
         ? `Nothing waits. ${view.applied} applied and ${view.rejected} rejected so far.`
-        : 'Nothing waits. Run Ripple after importing or changing wiki pages, or use Ripple This Chapter.'));
+        : 'Nothing waits. Run Ripple after importing or changing pages, or use Ripple This Page.'));
     }
   };
 
@@ -145,9 +144,8 @@ export function startRipple(neo: NeoApiV4, o: {
     if (busy) return;
     busy = true;
     try {
-      const done = await neo.invoke('ripple.decide', { openBookId: neo.book()?.id ?? null, id, decision }) as Decided;
+      const done = await neo.invoke('ripple.decide', { id, decision }) as Decided;
       say(done.said);
-      if (decision === 'apply' && done.page && done.page.bookId === o.wikiId() && !wikiOpen()) await o.show(done.page.chId).catch(() => {});
     } catch (err) {
       say(err instanceof Error ? err.message : String(err), true);
     } finally {
@@ -173,26 +171,13 @@ export function startRipple(neo: NeoApiV4, o: {
     await draw();
   };
 
-  const rippleChapter = async () => {
-    const book = neo.book();
-    const chId = neo.where()?.chId ?? null;
-    if (!book || !chId) {
-      neo.status('Put the caret in a chapter, then choose Ripple This Chapter.');
-      return;
-    }
+  const ripplePage = async () => {
     if (busy) return;
     busy = true;
     pane.show();
-    const titles = (book['chapterTitles'] ?? {}) as Record<string, string>;
-    const n = book.chapterOrder.indexOf(chId);
-    const title = titles[chId] || `${book.title || 'Untitled'}, chapter ${n + 1}`;
     try {
-      const asked = await neo.invoke('ripple.ask', { bookId: book.id, chId, title }) as { made: boolean; packet: string | null; wiki: boolean };
-      if (!asked.wiki) say('There is no wiki yet. Import pages to the wiki first.', true);
-      else if (asked.made) say(`The packet for ${title} is in the packets folder, for the judge: ${asked.packet}`);
-      else say(`Ripple has this chapter's words already${asked.packet ? `; its packet is ${asked.packet}` : ''}.`);
-    } catch (err) {
-      say(err instanceof Error ? err.message : String(err), true);
+      const said = await rippleThisPage(neo, o.currentPage);
+      say(said.text, said.bad);
     } finally {
       busy = false;
     }
@@ -204,8 +189,8 @@ export function startRipple(neo: NeoApiV4, o: {
     neo.invoke('ripple.folder').catch((err: unknown) => say(`The folder did not open: ${err instanceof Error ? err.message : String(err)}`, true));
   });
   neo.addCommand('run-ripple', run);
-  neo.addCommand('ripple-chapter', rippleChapter);
+  neo.addCommand('ripple-page', ripplePage);
   neo.on('book-open', () => draw());
 
-  return { run, rippleChapter, draw, decide };
+  return { run, ripplePage, draw, decide };
 }

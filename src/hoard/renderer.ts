@@ -64,7 +64,9 @@ NeoPlugins.register({
       show: (chId, at) => wiki.pane.open(chId, at ?? undefined),
     });
     const companion = startCompanion(neo, { marks, wiki: () => wiki.pages() });
-    const ripple = startRipple(neo, { wikiId: () => wiki.pages()?.bookId ?? null, show: async (chId) => { await wiki.reindex(); await wiki.pane.open(chId); } });
+    // the pane's currentPage() arrives with the file tree (stage 5); until then no page is open
+    const paneNow = (wiki.pane as { currentPage?: () => string | null } | undefined)?.currentPage;
+    const ripple = startRipple(neo, { currentPage: () => paneNow?.call(wiki.pane) ?? null });
     Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, librarian, review, paneMarks, search, companion, ripple }) });
   },
 });
