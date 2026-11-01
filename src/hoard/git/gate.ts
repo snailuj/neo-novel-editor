@@ -13,7 +13,8 @@ import {
 } from '../../generated/validators.cjs';
 import { checkNote } from '../../librarian/lint.ts';
 import { ManifestError, parseManifest } from '../../librarian/manifest.ts';
-import { HOARD_LAYOUT, type Layout, type Scheme, schemeFrom } from '../../librarian/scheme.ts';
+import { type Scheme, schemeFrom } from '../../librarian/scheme.ts';
+import { LIBRARY_LAYOUT, PAGE_PATH } from './layout.ts';
 
 export type GateRule = 'Sidecar-Fits-Its-Schema' | 'Frontmatter-Fits-The-Scheme' | 'Block-Ids-Citable';
 
@@ -51,19 +52,6 @@ const CITABLE = /^[A-Za-z0-9-]+$/;
 // FN1 and AT2 judge a page's path and a generator on an author body; neither applies to
 // a sidecar whose page path is made up here.
 const FRONTMATTER_RULE = /^(?:FM|PR)\d+ /;
-// Every page in the wiki zone, none librarian-authored, no capture or mark folders: so
-// checkNote runs its frontmatter rules and none of its body rules.
-const PAGE_PATH = 'wiki/page.md';
-const WIKI_LAYOUT: Layout = Object.freeze({
-  ...HOARD_LAYOUT,
-  librarianDirs: ['wiki/'],
-  asIsDirs: [],
-  skipDirs: [],
-  authorBodyDirs: [],
-  librarianAuthoredDirs: [],
-  captureDirs: [],
-  markDirs: [],
-}) as Layout;
 
 const why = (v: Validator) => (v.errors ?? []).map((e) => `${e.instancePath || '/'} ${e.message ?? 'is invalid'}`).join('; ');
 
@@ -113,7 +101,7 @@ function uncitableIds(file: StagedFile): Finding[] {
 function frontmatterFindings(file: StagedFile, frontmatter: unknown, scheme: Scheme): Finding[] {
   const text = frontmatter === null ? '' : `---\n${JSON.stringify(frontmatter)}\n---\n`;
   const prefix = `${PAGE_PATH}: `;
-  return checkNote(PAGE_PATH, text, { scheme, layout: WIKI_LAYOUT })
+  return checkNote(PAGE_PATH, text, { scheme, layout: LIBRARY_LAYOUT })
     .map((f) => (f.startsWith(prefix) ? f.slice(prefix.length) : f))
     .filter((f) => FRONTMATTER_RULE.test(f))
     .map((message) => ({ path: file.path, rule: 'Frontmatter-Fits-The-Scheme' as const, message }));
