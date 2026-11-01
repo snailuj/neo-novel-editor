@@ -136,3 +136,53 @@ test('a page the gate still holds from an earlier refusal is not edited, and the
   assert.ok(warnings.some((w) => /still holds the page/.test(w.message)));
   assert.equal(await status(), '', 'nothing of this apply is left on disk');
 });
+
+// Rule: a Ripple apply that does not write never makes a librarian commit. A write refused
+// as stale, or a mint whose page has appeared meanwhile, would otherwise reach the git
+// layer as a failed edit, which commits the touched paths as the librarian's: the author's
+// newer words would land in a librarian commit.
+async function racing(t: { after(fn: () => void): void }, race: (lib: { library: string; write(rel: string, text: string): void }) => { write?: (id: string) => void; create?: () => void }) {
+  const s = await setup(t);
+  s.lib.write('wiki/Quay.html', '<p data-block="q1">The quay is made of timber.</p>');
+  s.lib.write('.neo/pages/wiki/Quay.html.json', LORE);
+  await s.layer.commitNow('import');
+  const hooks = race(s.lib);
+  const pages = {
+    list: () => s.store.list(), read: (id: string) => s.store.read(id),
+    write: async (id: string, before: string, after: string) => { hooks.write?.(id); return s.store.write(id, before, after); },
+    create: async (tree: 'wiki' | 'sources', p: string, html: string) => { hooks.create?.(); return s.store.create(tree, p, html); },
+  };
+  const ripple = new Ripple({ library: () => s.lib.library, pages, marks: s.marks, ownerOf: (root, id) => ownerOf(root, id), layer: s.layer, log: s.log });
+  const librarianCommits = async () => (await s.lib.git.run(s.lib.library, ['log', '--format=%an'])).stdout.split('\n').filter((a) => a === 'Librarian').length;
+  const judge = async (lines: object[]) => {
+    const asked = await ripple.ask({ page: 'wiki/Storm.html' });
+    writeFileSync(ripple.overview().jobs.find((j) => j.id === asked.job)!.answer, [{ kind: 'preflight', brief_sha256: sha256(DEFAULT_BRIEF), echo: ECHO }, ...lines].map((l) => JSON.stringify(l)).join('\n'));
+    await ripple.run();
+    await s.layer.commitNow('import-author');
+    return ripple.overview().proposals[0]!;
+  };
+  return { ...s, ripple, librarianCommits, judge };
+}
+
+test('a write refused as stale makes no librarian commit and leaves the author\'s newer words alone', async (t) => {
+  const typed = '<p data-block="n1">The author typed this.</p>';
+  const { ripple, judge, librarianCommits, read } = await racing(t, (l) => ({ write: (id) => { l.write(id, `${readFileSync(path.join(l.library, id), 'utf8')}${typed}`); } }));
+  const card = await judge([{ kind: 'claim', target: 'Quay', anchor: 'made of timber', text: 'rebuilt in stone', reason: 'r', quote: 'The wall was rebuilt in stone' }]);
+  const [commits, rulings] = [await librarianCommits(), read('.neo/ripple/rulings.jsonl')];
+  await assert.rejects(ripple.decide(card.id, 'apply'), /changed while ripple was working/);
+  assert.equal(await librarianCommits(), commits, 'no librarian commit');
+  assert.match(read('wiki/Quay.html')!, /The author typed this\./, 'the author\'s words are still there');
+  assert.equal(read('.neo/ripple/rulings.jsonl'), rulings);
+  assert.equal(ripple.overview().proposals[0]!.status, 'proposed');
+});
+
+test('a mint whose page has appeared meanwhile makes no librarian commit and leaves that page alone', async (t) => {
+  const { ripple, judge, librarianCommits, read } = await racing(t, (l) => ({ create: () => { l.write('wiki/Stone Wall.html', '<p data-block="w1">The author made this page.</p>'); l.write('.neo/pages/wiki/Stone Wall.html.json', LORE); } }));
+  const card = await judge([{ kind: 'mint', title: 'Stone Wall', text: 'The wall.', reason: 'r', quote: 'The wall was rebuilt in stone' }]);
+  const commits = await librarianCommits();
+  const done = await ripple.decide(card.id, 'apply');
+  assert.equal(done.proposal.status, 'deferred');
+  assert.equal(await librarianCommits(), commits, 'no librarian commit');
+  assert.equal(read('wiki/Stone Wall.html'), '<p data-block="w1">The author made this page.</p>');
+  assert.equal(read('.neo/pages/wiki/Stone Wall.html.json'), LORE, 'the sidecar that came with it is left alone too');
+});

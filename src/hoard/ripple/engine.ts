@@ -399,11 +399,12 @@ export class Ripple {
       const proposal: RippleProposal = { ...p, at, status: 'applied', outcome: 'written', ...(made.delta ? { delta: made.delta } : {}) };
       await this.#asLibrarian('ripple.apply', { page: page.id, proposal: p.id }, [page.id, this.#rulingsRel], async () => {
         const written = await this.#o.pages.write(page.id, made.before, made.html);
-        if (!written.ok) throw new Error(`${page.title} changed while ripple was working on it (${written.reason}). Apply again to read it afresh.`);
+        if (!written.ok) return new Error(`${page.title} changed while ripple was working on it (${written.reason}). Apply again to read it afresh.`);
         const state = this.#rulings.read();
         const job = next(state, { page: page.id, title: page.title }, made.html, await this.#o.layer.head());
         await this.#rulings.append([proposal, ...(job ? [job] : [])]);
         if (job) this.#o.log('info', 'ripple.job', { id: job.id, page: page.id, origin: job.origin, hop: job.hop });
+        return null;
       });
       this.#o.log('info', 'ripple.write', { page: page.id, proposal: p.id });
       return { proposal, said: `${page.title} is changed. Undo it from the page's history, or by hand.`, page: page.id };
@@ -414,7 +415,12 @@ export class Ripple {
     try {
       await this.#asLibrarian('ripple.apply', { page: id, proposal: p.id }, [id, sidecarRel(id), this.#rulingsRel], async () => {
         const html = made.paragraphs.map((t) => `<p data-block="${randomBytes(3).toString('hex')}">${inline(t).html || '<br>'}</p>`).join('');
-        await this.#o.pages.create('wiki', `${made.title}.html`, html);
+        try {
+          await this.#o.pages.create('wiki', `${made.title}.html`, html);
+        } catch (err) {
+          if (err instanceof PageRefused) return err; // a page by that name came meanwhile: nothing of ours was written
+          throw err;
+        }
         created = true;
         // a page with no sidecar is the author's, so the sidecar follows the page and a stop between leaves it safe
         const sidecar: HoardPageV1 = {
@@ -426,6 +432,7 @@ export class Ripple {
         const job = next(this.#rulings.read(), { page: id, title: made.title }, html, await this.#o.layer.head());
         await this.#rulings.append([proposal, ...(job ? [job] : [])]);
         if (job) this.#o.log('info', 'ripple.job', { id: job.id, page: id, origin: job.origin, hop: job.hop });
+        return null;
       });
     } catch (err) {
       if (!created && err instanceof PageRefused) return ruled({ status: 'deferred', delta: err.message }, err.message);
@@ -438,7 +445,7 @@ export class Ripple {
   // A librarian edit of `paths` (one commit, GitLayer.around). When the pre-commit gate
   // refuses it, every path is put back as it was (a file the edit made is removed), so the
   // library is as it was and the refusal goes to the caller.
-  async #asLibrarian(label: string, subject: Record<string, unknown>, paths: readonly string[], apply: () => Promise<void>): Promise<void> {
+  async #asLibrarian(label: string, subject: Record<string, unknown>, paths: readonly string[], apply: () => Promise<Error | null>): Promise<void> {
     const before = paths.map((rel) => [rel, this.#read(rel)] as const);
     // every file is tried; one that will not go back throws, so the gate keeps its paths held
     const restore = () => {
@@ -455,7 +462,15 @@ export class Ripple {
       }
       if (failed.length) throw new Error(`The library check refused this change and ripple could not put back ${failed.join(', ')}; they are held out of the history until they are mended.`);
     };
-    const done = await asLibrarian({ layer: this.#o.layer, log: this.#o.log }, label, subject, paths, async () => { await apply(); return null; }, restore);
+    // An apply that did not write returns why, rather than throwing: a throw reaches the git
+    // layer as a failed edit, whose paths it commits as the librarian's, and they would hold
+    // whatever the writer put there meanwhile. Returned, the layer makes no commit.
+    let unwritten: Error | null = null;
+    const done = await asLibrarian({ layer: this.#o.layer, log: this.#o.log }, label, subject, paths, async () => {
+      unwritten = await apply();
+      return unwritten ? 'stale' : null;
+    }, restore);
+    if (unwritten) throw unwritten;
     if (done.ok) return;
     // the card stays waiting: nothing was written, and the caller is told why
     if (done.reason === 'refused') throw new Error(`The library check refused this change, so nothing was written: ${done.findings.map((f) => `${f.path}: ${f.message}`).join('; ')}`);
