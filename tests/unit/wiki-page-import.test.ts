@@ -227,3 +227,23 @@ test('an import commits the author\'s blocks and pages first, then the librarian
     { part: 'librarian', files: ['Plain.html', 'Quay.html'], quay: '"Mind the step," she said. | The quay is old.' },
   ]);
 });
+
+test('an import that stops part way is finished by importing the same files again, not taken as done', async (t) => {
+  let fail = true;
+  const s = setup(t, {
+    commit: async (part) => {
+      if (part === 'author' && fail) throw new Error('git stopped');
+    },
+  });
+  const quay = s.put('vault/Quay.md', '---\ntype: lore\n---\n> "Mind the step," she said.\nThe quay is old.\n');
+  const wiki = s.into('wiki');
+  await assert.rejects(wiki.apply(wiki.sort([quay])), /git stopped/);
+  assert.deepEqual(s.text('wiki/Quay.html'), ['"Mind the step," she said.'], 'only the author\'s blocks were written');
+  fail = false;
+  const again = wiki.sort([quay]);
+  assert.deepEqual(s.kinds(again), [['update', 'Quay']]);
+  await wiki.apply(again);
+  assert.deepEqual(s.text('wiki/Quay.html'), ['"Mind the step," she said.', 'The quay is old.']);
+  assert.deepEqual(s.kinds(wiki.sort([quay])), [['same', 'Quay']], 'and once finished, it is done');
+});
+

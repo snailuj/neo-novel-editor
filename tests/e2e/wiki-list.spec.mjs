@@ -100,7 +100,7 @@ test('an import list brings pages from an old vault and from hoard into sources 
     expect(asked.detail).toContain('Already in hoard, so they come in with hoard\'s pages: Harbour.');
     expect(asked.detail).toContain('Into the wiki:\n\nComing in: tide-(era).');
     expect(done.message).toBe('3 pages are in sources and the wiki.');
-    expect(done.detail).toContain('1 image or PDF was copied into sources and the wiki.');
+    expect(done.detail).toContain('1 image or PDF was copied into sources.');
     expect(done.buttons).toEqual(['Close']);
 
     const html = (rel) => readFileSync(path.join(library, ...rel.split('/')), 'utf8');

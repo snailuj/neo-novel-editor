@@ -9,9 +9,10 @@
 // which a rename moves with it (pages/store.ts). The sidecar records the hash the page
 // file had when the import wrote it, so a page nobody has changed since is updated in
 // place from a newer source, wherever it has been moved to; a changed one gets the new
-// source as a page beside it. The sidecar is written before its page, so a crash leaves
-// a sidecar with no page, which the next import writes over, never a page it cannot
-// place.
+// source as a page beside it. A provisional sidecar is written before its page, and the
+// final one after the page's last write, so an import that stops part way leaves a
+// sidecar that no source matches, or one with no page, which the next import writes
+// over: importing the same files again finishes the page, never takes it as done.
 //
 // With history kept, an import is two commits, as the Wiki book's is (store.ts): the
 // author's first, with each page that is theirs and the author's blocks of the
@@ -77,6 +78,8 @@ export interface PageApplied {
 }
 
 // A title becomes the target of a [[link]], which the grammar ends at ] | # or ^ (pages/store.ts).
+/** The source hash of a provisional sidecar: no file's SHA-256 is this. */
+const UNFINISHED = '0'.repeat(64);
 const UNLINKABLE = /[[\]|#^\p{Cc}]/u;
 
 // The folders a source page keeps: its file's, from its vault's root; none for a file
@@ -254,12 +257,20 @@ export class PageImport {
       if (!validateHoardPageV1(sidecar)) throw new TypeError(`pages.import: refusing to write a page sidecar: ${JSON.stringify(validateHoardPageV1.errors)}`);
       return sidecar;
     });
-    pages.forEach((_, n) => writeWhole(this.#abs(this.#sidecarOf(ids[n]!)), `${JSON.stringify(sidecars[n], null, 2)}\n`));
+    // With history kept, a page first holds only the author's blocks (or all of it, when the
+    // author owns it), committed before the librarian's are added.
+    const first = pages.map((page) => (this.#o.commit && ownerOf(page.page.frontmatter) !== 'author' ? pageHtml(page.page.blocks, 'author') : page.page.html));
+    // Each sidecar is provisional until its page holds its final text: its source hash
+    // matches no file, and `written` is the page as it is now, so an import that stops part
+    // way is taken up again as an update rather than seen as already done.
+    pages.forEach((_, n) => {
+      const file = this.#abs(ids[n]!);
+      const now = this.#o.commit ? sha256(first[n]!) : existsSync(file) ? sha256(readFileSync(file)) : sha256(first[n]!);
+      const provisional: HoardPageV1 = { ...sidecars[n]!, source: { ...sidecars[n]!.source, sha256: UNFINISHED }, written: now };
+      writeWhole(this.#abs(this.#sidecarOf(ids[n]!)), `${JSON.stringify(provisional, null, 2)}\n`);
+    });
     if (this.#o.commit) {
-      pages.forEach((page, n) => {
-        const theirs = ownerOf(page.page.frontmatter) === 'author';
-        writeWhole(this.#abs(ids[n]!), theirs ? page.page.html : pageHtml(page.page.blocks, 'author'));
-      });
+      pages.forEach((_, n) => writeWhole(this.#abs(ids[n]!), first[n]!));
       this.#o.wrote?.(tree);
       this.#o.wrote?.('.neo');
       await this.#o.commit('author');
@@ -269,6 +280,7 @@ export class PageImport {
     for (const [n, page] of pages.entries()) {
       const id = ids[n]!;
       writeWhole(this.#abs(id), page.page.html);
+      writeWhole(this.#abs(this.#sidecarOf(id)), `${JSON.stringify(sidecars[n], null, 2)}\n`);
       const made = this.#marks(page.page, base, at);
       if (this.#o.marks) {
         // An update keeps every mark there and adds only the source's marks it lacks.

@@ -196,12 +196,13 @@ async function runImport(host: NeoMainHost, targets: Targets, from: 'pages' | 'l
   const missing = done.flatMap((d) => d.applied.missing);
   const n = sum((a) => a.imported + a.updated);
   const into = joined(done.map((d) => d.target.where));
+  const copiedInto = joined(done.filter((d) => d.applied.attachments).map((d) => d.target.where));
   const said = [
     updated ? `${updated} ${plural(updated, 'page was', 'pages were')} updated from a newer source.` : '',
     marks ? `${marks} ${plural(marks, 'mark', 'marks')} came with them.` : '',
     marksLeft ? `${marksLeft} CriticMarkup ${plural(marksLeft, 'mark was', 'marks were')} left out, because page files cannot hold marks yet.` : '',
     keptAsText ? `${keptAsText} CriticMarkup ${plural(keptAsText, 'mark stays', 'marks stay')} in the text as written, because ${plural(keptAsText, 'it', 'they')} cannot be a mark here.` : '',
-    attachments ? `${attachments} ${plural(attachments, 'image or PDF was', 'images or PDFs were')} copied into ${into}.` : '',
+    attachments ? `${attachments} ${plural(attachments, 'image or PDF was', 'images or PDFs were')} copied into ${copiedInto}.` : '',
     missing.length ? `Not found, so not copied: ${missing.slice(0, 12).join(', ')}${missing.length > 12 ? ` and ${missing.length - 12} more` : ''}.` : '',
     done.some((d) => d.target.button && d.target.button !== 'Open Wiki Book') ? 'A book an import list fills is on no shelf: Plugins > Open Imported Book… opens it.' : '',
   ].filter(Boolean);
