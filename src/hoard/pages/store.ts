@@ -391,11 +391,8 @@ export class PageStore {
     // what a deleted page left under its id would stop the move half way, every time it is retried
     for (const [folder, mine, theirs] of [['.neo/pages', sidecarOf(id), sidecarOf(newId)], ['.neo/marks', marksOf(id), marksOf(newId)]] as const) {
       const [here, there] = [path.join(this.o.library(), ...mine.split('/')), path.join(this.o.library(), ...theirs.split('/'))];
-      // #moveFile follows links, so a link in either path that leaves its folder would carry the file out of the library
-      for (const file of [here, there]) {
-        const problem = folderLinkProblem(path.join(this.o.library(), folder), file);
-        if (problem) throw new PageRefused('unsafe', `${path.relative(this.o.library(), file)} is not a sidecar path: ${problem === 'out' ? `a link in it leads out of ${folder}` : 'it goes through a link that leads nowhere'}`);
-      }
+      // #moveFile refuses these too, right before it moves; this is the early refusal, before a note is written
+      for (const file of [here, there]) this.#contained(folder, file);
       if (existsSync(there) && !(existsSync(here) && sameFile(here, there))) throw new PageRefused('taken', `${theirs} is left over from an earlier page of that name`);
     }
     const plan: HoardRenameV1 = { version: 1, from: id, to: newId, files: [], at: new Date().toISOString() };
@@ -447,7 +444,24 @@ export class PageStore {
     }
   }
 
-  #moveFile(from: string, to: string): boolean {
+  // Refuses a file whose path goes through a link that leaves `folder` (a path in the library).
+  #contained(folder: string, file: string): void {
+    const problem = folderLinkProblem(path.join(this.o.library(), folder), file);
+    if (problem) throw new PageRefused('unsafe', `${path.relative(this.o.library(), file)} is not a path under ${folder}: ${problem === 'out' ? `a link in it leads out of ${folder}` : 'it goes through a link that leads nowhere'}`);
+  }
+
+  // The move follows links, so each end is checked against the folder the file belongs to right
+  // before it, whether the rename is new or a note left by a stopped one is finished: a link
+  // changed since the plan was made must not carry the file out of the library. A refusal leaves
+  // the note in place and escalates, so the rename is finished once the link is put right.
+  #moveFile(from: string, to: string, folder: string): boolean {
+    try {
+      this.#contained(folder, from);
+      this.#contained(folder, to);
+    } catch (err) {
+      if (err instanceof PageRefused) this.o.log('error', 'pages.rename: a move goes through a link that leaves its folder, so nothing is moved and the note is kept', { from, to, folder, reason: err.message });
+      throw err;
+    }
     const [src, dst] = [existsSync(from), existsSync(to)];
     if (!src && dst) return false; // an earlier run moved it
     if (!src) throw new Error(`pages: ${from} is not there to move`);
@@ -477,7 +491,8 @@ export class PageStore {
     if (there(JOURNAL)) named.add(JOURNAL);
     if (plan.from !== plan.to) named.add(RECORD);
     const inOwnRepo = (rel: string) => own.some((b) => rel.startsWith(`${b}/`));
-    const run = () => this.#execute(plan, openBookId);
+    // a move refused part way leaves the page where the index does not have it
+    const run = () => this.#execute(plan, openBookId).catch((err: unknown) => { this.#titles = null; throw err; });
     const result = this.o.layer ? (await this.o.layer.around([...named].filter((rel) => !inOwnRepo(rel)), run, 'author')).result : await run();
     this.#track(plan.from, plan.to);
     const ms = Math.round(performance.now() - start);
@@ -529,18 +544,18 @@ export class PageStore {
     step?.('journal', JOURNAL);
     writeWhole(abs(JOURNAL), `${JSON.stringify(plan, null, 2)}\n`);
     step?.('move', plan.from);
-    if (plan.from !== plan.to && this.#moveFile(abs(plan.from), abs(plan.to))) this.o.log('debug', 'pages.rename: moved', { from: plan.from, to: plan.to });
+    if (plan.from !== plan.to && this.#moveFile(abs(plan.from), abs(plan.to), parseId(plan.from).tree)) this.o.log('debug', 'pages.rename: moved', { from: plan.from, to: plan.to });
     const [sideFrom, sideTo] = [abs(sidecarOf(plan.from)), abs(sidecarOf(plan.to))];
     // a page made here, not imported, has no sidecar; one already moved by an earlier run is not there to move
     if (plan.from !== plan.to && existsSync(sideFrom)) {
       step?.('sidecar', sideFrom);
-      this.#moveFile(sideFrom, sideTo);
+      this.#moveFile(sideFrom, sideTo, '.neo/pages');
     }
     // the page's marks follow it; the same rule as its sidecar, so a run that stopped after either is finished by the next
     const [marksFrom, marksTo] = [abs(marksOf(plan.from)), abs(marksOf(plan.to))];
     if (plan.from !== plan.to && existsSync(marksFrom)) {
       step?.('marks', marksFrom);
-      this.#moveFile(marksFrom, marksTo);
+      this.#moveFile(marksFrom, marksTo, '.neo/marks');
     }
     const retarget = this.#retarget(titleOf(parseId(plan.from).path), titleOf(parseId(plan.to).path));
     for (const rel of plan.files) {
