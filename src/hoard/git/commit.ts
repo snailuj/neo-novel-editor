@@ -26,7 +26,9 @@ export type Reason =
   | 'librarian-before'
   | 'librarian-after'
   | 'import-author'
-  | 'import';
+  | 'import'
+  | 'page-before'
+  | 'page-rename';
 
 const SUBJECTS: Record<Reason, string> = {
   start: 'Library history starts',
@@ -39,6 +41,8 @@ const SUBJECTS: Record<Reason, string> = {
   'librarian-after': 'Librarian edit',
   'import-author': 'Pages imported to the wiki: quotations and code, as the author\'s',
   import: 'Pages imported to the wiki',
+  'page-before': 'Writing, before a page rename',
+  'page-rename': 'Page renamed, and the links to it rewritten',
 };
 
 // Whose commit each reason is: the librarian's own changes are theirs, all else the author's.
