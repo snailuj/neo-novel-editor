@@ -13,7 +13,8 @@
 // one (stage 6), so the pane's edit and marks code is told of no page while one is shown
 // (onShown gets null, shown() is null) and Edit in Wiki Book is disabled. Links on a stored
 // page reach pages by title, a wiki page before a source (pages/titles.ts), then the Wiki
-// book; the trail holds both kinds of id.
+// book; the trail holds both kinds of id. Above the page, the Pages tree (wiki/pane-tree.ts)
+// lists the stored pages to open, make, rename and move; the trail follows a rename.
 //
 // The pane reads a page through the main half, from its file, so it shows the page as last
 // saved, kept to its paragraphs, their wiki classes and NEO's inline formatting
@@ -22,6 +23,7 @@
 import { titleIndex } from '../pages/titles.ts';
 import { PageHistory } from './history.ts';
 import { linksIn } from './links.ts';
+import { startPagesTree } from './pane-tree.ts';
 import type { Listed } from './tree.ts';
 
 interface PageRead { bookId: string; chId: string; title: string; html: string }
@@ -87,8 +89,19 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
   const status = el('p', 'hoard-status hoard-wiki-status');
   status.setAttribute('role', 'status');
   const body = el('div', 'hoard-wiki-page');
-  const empty = el('p', 'hoard-wiki-empty', 'Ctrl+click a [[link]] in your writing, or put the caret in one and choose Plugins > Follow Link, to look its page up here.');
-  root.append(nav, title, status, body, empty);
+  const empty = el('p', 'hoard-wiki-empty', 'Ctrl+click a [[link]] in your writing, or put the caret in one and choose Plugins > Follow Link, to look its page up here. Or open Pages above and pick one.');
+  const tree = startPagesTree(neo, {
+    open: (id) => open(id),
+    renamed: async (from, to) => {
+      history.rename(from, to);
+      if (stored?.id === from) stored = { ...stored, id: to };
+      // the page shown may be the one renamed, or hold a link to it
+      if (history.current) await showCurrent();
+    },
+    listed: (entries) => { listed = entries; },
+    paneRoot: root,
+  });
+  root.append(tree.element, nav, title, status, body, empty);
 
   const refreshNav = () => {
     backButton.disabled = !history.canBack;
@@ -234,8 +247,10 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
       if (at) markAt(at);
     }
     for (const fn of shownListeners) fn(chapter);
+    tree.markShown(stored?.id ?? null);
     refreshNav();
-    if (hadFocus) title.focus();
+    // a page opened from the tree leaves the focus on its row
+    if (hadFocus && !tree.element.contains(document.activeElement)) title.focus();
   };
 
   /** A page shown (a Wiki book chapter or a stored page), and with at the words there marked and scrolled to. */
@@ -272,6 +287,8 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
     shown: () => (shown ? { chId: shown.chId, title: shown.title } : null),
     /** The stored page shown (wiki/... or sources/...); null while a chapter or nothing is. */
     currentPage: () => stored?.id ?? null,
+    /** The Pages tree, for tests and the console. */
+    tree: { refresh: () => tree.refresh(), state: () => tree.state() },
     /** The page shown again, as saved now (after an import, say). */
     reload: () => showCurrent(),
     /** The pane's section, and the element holding the page's lines, one per paragraph in order. */

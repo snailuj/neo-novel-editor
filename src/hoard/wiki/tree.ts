@@ -42,6 +42,7 @@
 //   submit (Enter,     -                refused -> invalid, focus field; unchanged ->  no-op: guarded and
 //     action button)                    closed, focus origin; else pending, send once  disabled, so one request
 //   cancel (Esc)       -                closed, focus origin, nothing sent             no-op: it cannot be called back
+//                                                                                     (NEO's Esc takes the writer to the page)
 //   reply done         -                no-op                                          closed; list read again; focus the
 //                                                                                     page's row if focus was in the pane
 //   reply refused      -                no-op                                          invalid with the reason, value

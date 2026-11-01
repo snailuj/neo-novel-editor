@@ -111,6 +111,47 @@ body[data-hoard-wiki] .chapter-body p { text-indent: 0; text-align: start; hyphe
 .hoard-wiki-missing { color: var(--muted); text-decoration: underline dotted; }
 .hoard-wiki-empty { font-size: 12px; color: var(--muted); }
 
+/* The Pages tree at the top of the wiki pane (wiki/pane-tree.ts): rows are buttons in
+   nested lists, indented by depth, each at least 44px tall; a row's Rename and Move show
+   on hover or while the row holds the focus, as NEO's controls do. The page shown is
+   marked by weight and a bar as well as colour. No transitions. */
+.hoard-tree { margin-block-end: 8px; border-block-end: 1px solid color-mix(in srgb, var(--muted) 30%, transparent); }
+.hoard-tree-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.hoard-tree button {
+  background: none; border: none; color: var(--muted); font: inherit; font-size: 11px; cursor: pointer;
+  min-block-size: 44px; min-inline-size: 44px; padding-inline: 6px; text-align: start;
+}
+.hoard-tree button:hover, .hoard-tree .hoard-tree-name[aria-current='page'] { color: var(--accent); }
+.hoard-tree button[aria-disabled='true'] { opacity: 0.4; cursor: default; }
+.hoard-tree button:focus-visible, .hoard-tree-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.hoard-tree .hoard-tree-fold { flex: 1; font-size: 12px; font-weight: 600; padding-inline-start: 0; }
+.hoard-tree-chevron { display: inline-block; inline-size: 1.2em; }
+.hoard-tree-list, .hoard-tree-sub { list-style: none; margin: 0; padding: 0; }
+.hoard-tree-row { display: flex; align-items: center; padding-inline-start: calc(var(--depth, 0) * 0.9em); }
+.hoard-tree .hoard-tree-name { flex: 1; min-inline-size: 0; overflow-wrap: anywhere; font-size: 12px; }
+.hoard-tree-folder > .hoard-tree-row > .hoard-tree-name::before { content: '▸ '; color: var(--muted); }
+.hoard-tree-folder > .hoard-tree-row > .hoard-tree-name[aria-expanded='true']::before { content: '▾ '; }
+.hoard-tree .hoard-tree-name[aria-current='page'] { font-weight: 600; box-shadow: inset 2px 0 0 var(--accent); }
+.hoard-tree-count { font-size: 11px; color: var(--muted); padding-inline-end: 6px; }
+.hoard-tree-act { opacity: 0; }
+.hoard-tree-row:hover .hoard-tree-act, .hoard-tree-row:focus-within .hoard-tree-act { opacity: 1; }
+.hoard-tree-editor { margin-block: 4px 8px; margin-inline-start: 1.2em; }
+.hoard-tree-input {
+  display: block; box-sizing: border-box; inline-size: 100%; min-block-size: 44px; padding-inline: 6px;
+  font: inherit; font-size: 12px; color: inherit; background: transparent;
+  border: 1px solid color-mix(in srgb, var(--muted) 60%, transparent); border-radius: 3px;
+}
+.hoard-tree-input[aria-invalid='true'] { border-color: var(--red); border-width: 2px; }
+.hoard-tree-input[aria-busy='true'] { opacity: 0.6; }
+.hoard-tree-hint, .hoard-tree-error { margin-block: 4px 0; font-size: 11px; }
+.hoard-tree-hint { color: var(--muted); }
+.hoard-tree-error { color: var(--red); }
+.hoard-tree-error:empty { display: none; }
+.hoard-tree-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.hoard-tree .hoard-tree-submit { color: var(--accent); font-weight: 600; }
+.hoard-tree-empty { font-size: 12px; color: var(--muted); }
+.hoard-tree-body[hidden], .hoard-tree-empty[hidden] { display: none; }
+
 /* Editing in the pane (wiki/pane-edit.ts): the page takes the caret as NEO's own pages
    do, with no outline of its own; an empty line keeps a line's height so the caret can
    go in. The librarian's mode line reads as the book's does. */
