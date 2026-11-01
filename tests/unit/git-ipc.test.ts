@@ -3,13 +3,14 @@
 // an id in one of the two trees.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { validateHoardGitBlameV1 } from '../../src/generated/validators.cjs';
+import { validateHoardGitBlameV1, validateHoardGitLibrarianBeginV1 } from '../../src/generated/validators.cjs';
 
 const chapter = { bookId: 'book-fox-1', chId: 'c1' };
 const page = 'wiki/People/Harbour.html';
 
 const requests: [string, (d: unknown) => boolean, Record<string, unknown>][] = [
   ['git.blame', validateHoardGitBlameV1, {}],
+  ['git.librarian-begin', validateHoardGitLibrarianBeginV1, { html: '<p>One.</p>' }],
 ];
 
 test('every git request names a chapter or a page, never both, never neither, never half a chapter', () => {

@@ -8,6 +8,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { oneName } from '../files.ts';
+import { parseId } from '../pages/identity.ts';
 import { GateRefused, type Finding } from './gate.ts';
 import type { GitLayer, Paired } from './layer.ts';
 import type { GitLog } from './runner.ts';
@@ -44,15 +45,20 @@ export class LibrarianPairs {
     this.#o = { settleMs: 5_000, abandonMs: 60_000, ...options };
   }
 
-  /** A chapter write has landed. */
-  landed(bookId: string, chId: string): void {
-    const waiters = this.#waiting.get(`${bookId}/chapters/${chId}.html`);
+  /** A write has landed: a chapter's, by its book and chapter ids, or a page's, by its id. */
+  landed(bookId: string, chId: string): void;
+  landed(target: { page: string }): void;
+  landed(first: string | { page: string }, chId?: string): void {
+    const rel = typeof first === 'string' ? `${first}/chapters/${chId}.html` : first.page;
+    const waiters = this.#waiting.get(rel);
     if (waiters) for (const wake of [...waiters]) wake();
   }
 
-  /** Commits the writer's work as the author's once the chapter on disk is html. */
-  async begin(ask: { bookId: string; chId: string; html: string }): Promise<Begun> {
-    const rel = `${oneName(ask.bookId, 'bookId')}/chapters/${oneName(ask.chId, 'chId')}.html`;
+  /** Commits the writer's work as the author's once the file on disk, a chapter or a page, is html. */
+  async begin(ask: ({ bookId: string; chId: string } | { page: string }) & { html: string }): Promise<Begun> {
+    // A page's file is its id; parseId refuses one that leaves its tree.
+    if ('page' in ask) parseId(ask.page);
+    const rel = 'page' in ask ? ask.page : `${oneName(ask.bookId, 'bookId')}/chapters/${oneName(ask.chId, 'chId')}.html`;
     const { layer, log } = this.#o;
     if (layer.status().state !== 'tracked') return { pair: null };
     if (!(await this.#settled(rel, ask.html))) {

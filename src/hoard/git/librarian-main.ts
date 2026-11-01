@@ -1,6 +1,7 @@
 // The main half's channels for the librarian's commit pair: the window begins an edit,
 // applies it, and ends it, and every chapter write that lands wakes a wait on the disk.
 import { validateHoardGitLibrarianBeginV1, validateHoardGitLibrarianEndV1 } from '../../generated/validators.cjs';
+import { targeted } from '../marks/store.ts';
 import type { GitLayer } from './layer.ts';
 import { LibrarianPairs } from './pair.ts';
 
@@ -17,7 +18,7 @@ export function startLibrarianPairs(host: NeoMainHost, layer: GitLayer): Librari
   host.onAfterWrite((event) => {
     if (event.kind === 'chapter') pairs.landed(event.bookId, event.name);
   });
-  host.handle('git.librarian-begin', (payload) => pairs.begin(checked('git.librarian-begin', validateHoardGitLibrarianBeginV1, payload)));
+  host.handle('git.librarian-begin', (payload) => pairs.begin(targeted(checked('git.librarian-begin', validateHoardGitLibrarianBeginV1, payload))));
   host.handle('git.librarian-end', (payload) => pairs.end(checked('git.librarian-end', validateHoardGitLibrarianEndV1, payload)));
   return pairs;
 }
