@@ -263,5 +263,22 @@ test('an import that stops while copying attachments or writing the logs is fini
   await wiki.apply(again);
   assert.deepEqual(s.files('wiki'), ['Ship.html', 'attachments/Glass.png']);
   assert.deepEqual(s.manifest().map((r) => r.dest), ['wiki/attachments/Glass.png', 'wiki/Ship.html']);
+  assert.deepEqual(s.changes().map((c) => [c.kind, c.page]), [['attachment-imported', 'wiki/Ship.html'], ['page-imported', 'wiki/Ship.html']], 'still the page\'s import, never logged before');
   assert.deepEqual(s.kinds(wiki.sort([ship])), [['same', 'Ship']]);
+});
+
+test('a retry that writes a page anew records its new hash, even when the manifest holds the source already', async (t) => {
+  const s = setup(t);
+  const ebb = s.put('vault/Ebb.md', 'The tide.\n');
+  const wiki = s.into('wiki');
+  await wiki.apply(wiki.sort([ebb]));
+  // as if the import stopped after the manifest but before the change log and final sidecar
+  const side = s.json('.neo/pages/wiki/Ebb.html.json');
+  writeFileSync(s.at('.neo/pages/wiki/Ebb.html.json'), JSON.stringify({ ...side, source: { ...side.source, sha256: '0'.repeat(64) } }));
+  const [record] = s.manifest();
+  writeFileSync(s.at('.neo/manifest.jsonl'), `${JSON.stringify({ ...record, file_sha256: 'f'.repeat(64) })}\n`);
+  writeFileSync(s.at('.neo/changes.jsonl'), '');
+  await wiki.apply(wiki.sort([ebb]));
+  assert.deepEqual(s.manifest().map((r) => r.file_sha256), ['f'.repeat(64), sha(readFileSync(s.at('wiki/Ebb.html')))]);
+  assert.deepEqual(s.changes().map((c) => c.kind), ['page-imported']);
 });

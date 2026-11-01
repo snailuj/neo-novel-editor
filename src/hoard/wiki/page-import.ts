@@ -258,6 +258,20 @@ export class PageImport {
       if (!validateHoardPageV1(sidecar)) throw new TypeError(`pages.import: refusing to write a page sidecar: ${JSON.stringify(validateHoardPageV1.errors)}`);
       return sidecar;
     });
+    // An update of a page whose first import stopped before its change was logged is
+    // still that page's import: its sidecar is provisional and no change names it.
+    const logged = new Set(changesBefore.split('\n').flatMap((l) => {
+      try { return [(JSON.parse(l) as { page?: unknown }).page]; } catch { return []; }
+    }));
+    const firstImport = pages.map((p, n) => {
+      if (p.kind !== 'update') return true;
+      try {
+        const was = JSON.parse(readFileSync(this.#abs(this.#sidecarOf(ids[n]!)), 'utf8')) as { source?: { sha256?: unknown } };
+        return was.source?.sha256 === UNFINISHED && !logged.has(ids[n]);
+      } catch {
+        return false;
+      }
+    });
     // With history kept, a page first holds only the author's blocks (or all of it, when the
     // author owns it), committed before the librarian's are added.
     const first = pages.map((page) => (this.#o.commit && ownerOf(page.page.frontmatter) !== 'author' ? pageHtml(page.page.blocks, 'author') : page.page.html));
@@ -307,11 +321,13 @@ export class PageImport {
         changes.push({ version: 1, at, kind: 'attachment-imported', page: id, dest: copy.dest, src: found.file });
       }
       for (const target of page.missing) missing.add(target);
-      records = appendRecord(records, {
-        src: page.path, dest: id, method: page.sections.length ? 'split' : 'converted', src_sha256: page.sha256, file_sha256: sidecars[n]!.written!, ingested_at: at,
-      }).records;
-      changes.push({ version: 1, at, kind: page.kind === 'update' ? 'page-updated' : 'page-imported', page: id, dest: id, src: page.path });
-      (page.kind === 'update' ? applied.updated : applied.imported).push({ page: id, name: page.name });
+      // A record of this source and page with another file hash (a retry wrote the page anew) is not a duplicate.
+      const record = { src: page.path, dest: id, method: page.sections.length ? 'split' as const : 'converted' as const, src_sha256: page.sha256, file_sha256: sidecars[n]!.written!, ingested_at: at };
+      const recorded = records.some((r) => r.src === record.src && r.dest === record.dest && r.src_sha256 === record.src_sha256 && r.file_sha256 === record.file_sha256);
+      if (!recorded) records = appendRecord(records, record, { dedupe: false }).records;
+      const fresh = firstImport[n];
+      changes.push({ version: 1, at, kind: fresh ? 'page-imported' : 'page-updated', page: id, dest: id, src: page.path });
+      (fresh ? applied.imported : applied.updated).push({ page: id, name: page.name });
     }
 
     writeWhole(manifestFile, records.map(serialiseRecord).join(''));
