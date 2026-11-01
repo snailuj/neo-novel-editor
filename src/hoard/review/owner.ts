@@ -26,7 +26,7 @@ function voices(frontmatter: Record<string, unknown>): string[] {
     .filter(Boolean);
 }
 
-export function ownerOf(frontmatter: unknown): Owner {
+export function ownerFromFrontmatter(frontmatter: unknown): Owner {
   if (!isRecord(frontmatter)) return 'author';
   const recorded = voices(frontmatter);
   if (recorded.length) return recorded[0].toLowerCase() === LIBRARIAN ? 'librarian' : 'author';
@@ -55,7 +55,7 @@ export function librarianPages(library: string, bookId: string, log: Log): strin
       log('warn', `review: ${file} is not a page sidecar, so its page is the writer's`, validateHoardPageV1.errors);
       continue;
     }
-    if (ownerOf(data.frontmatter) === 'librarian') found.push(name.slice(0, -'.json'.length));
+    if (ownerFromFrontmatter(data.frontmatter) === 'librarian') found.push(name.slice(0, -'.json'.length));
   }
   return found;
 }

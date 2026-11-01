@@ -7,7 +7,7 @@ import { validateHoardPageV1 } from '../../generated/validators.cjs';
 import { key } from '../../librarian/links.ts';
 import { oneName } from '../files.ts';
 import { paragraphTexts } from '../html.ts';
-import { ownerOf, type Owner } from '../review/owner.ts';
+import { ownerFromFrontmatter, type Owner } from '../review/owner.ts';
 import type { WikiPages } from '../wiki/store.ts';
 import { corpusOf, type Corpus } from './shortlist.ts';
 
@@ -42,7 +42,7 @@ export function readWiki(library: string, wiki: WikiPages, log: Log): Wiki {
       if (validateHoardPageV1(data)) {
         const fm = data.frontmatter && typeof data.frontmatter === 'object' ? data.frontmatter as Record<string, unknown> : {};
         page.aliases = strings(fm['aliases']);
-        page.owner = ownerOf(data.frontmatter);
+        page.owner = ownerFromFrontmatter(data.frontmatter);
       }
     } catch (err) {
       log('warn', 'ripple: a page sidecar does not read, so its page is the writer\'s', { file, why: String(err) });

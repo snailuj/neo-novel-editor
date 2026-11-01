@@ -8,31 +8,31 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { librarianPages, ownerOf } from '../../src/hoard/review/owner.ts';
+import { librarianPages, ownerFromFrontmatter } from '../../src/hoard/review/owner.ts';
 
 test('the first recorded voice decides', () => {
-  assert.equal(ownerOf({ provenance: { author: 'Librarian' } }), 'librarian');
-  assert.equal(ownerOf({ provenance: { author: ['librarian', 'Ada Author'] } }), 'librarian');
-  assert.equal(ownerOf({ provenance: { author: 'librarian, Ada Author' } }), 'librarian');
-  assert.equal(ownerOf({ provenance: { author: 'Ada Author, librarian' } }), 'author');
+  assert.equal(ownerFromFrontmatter({ provenance: { author: 'Librarian' } }), 'librarian');
+  assert.equal(ownerFromFrontmatter({ provenance: { author: ['librarian', 'Ada Author'] } }), 'librarian');
+  assert.equal(ownerFromFrontmatter({ provenance: { author: 'librarian, Ada Author' } }), 'librarian');
+  assert.equal(ownerFromFrontmatter({ provenance: { author: 'Ada Author, librarian' } }), 'author');
   // a recorded voice wins over the type
-  assert.equal(ownerOf({ type: 'lore', provenance: { author: 'Ada Author' } }), 'author');
-  assert.equal(ownerOf({ type: 'writing', provenance: { author: 'librarian' } }), 'librarian');
+  assert.equal(ownerFromFrontmatter({ type: 'lore', provenance: { author: 'Ada Author' } }), 'author');
+  assert.equal(ownerFromFrontmatter({ type: 'writing', provenance: { author: 'librarian' } }), 'librarian');
 });
 
 test('with no voice recorded, lore and project pages are the librarian\'s', () => {
-  assert.equal(ownerOf({ type: 'lore' }), 'librarian');
-  assert.equal(ownerOf({ type: 'project' }), 'librarian');
-  assert.equal(ownerOf({ type: 'lore', provenance: { author: '  ' } }), 'librarian');
-  assert.equal(ownerOf({ type: 'writing' }), 'author');
-  assert.equal(ownerOf({ type: 'source' }), 'author');
+  assert.equal(ownerFromFrontmatter({ type: 'lore' }), 'librarian');
+  assert.equal(ownerFromFrontmatter({ type: 'project' }), 'librarian');
+  assert.equal(ownerFromFrontmatter({ type: 'lore', provenance: { author: '  ' } }), 'librarian');
+  assert.equal(ownerFromFrontmatter({ type: 'writing' }), 'author');
+  assert.equal(ownerFromFrontmatter({ type: 'source' }), 'author');
 });
 
 test('a page with no frontmatter, or none that says, is the writer\'s', () => {
-  assert.equal(ownerOf(null), 'author');
-  assert.equal(ownerOf({}), 'author');
-  assert.equal(ownerOf({ type: ['lore'] }), 'author');
-  assert.equal(ownerOf({ provenance: 'librarian' }), 'author');
+  assert.equal(ownerFromFrontmatter(null), 'author');
+  assert.equal(ownerFromFrontmatter({}), 'author');
+  assert.equal(ownerFromFrontmatter({ type: ['lore'] }), 'author');
+  assert.equal(ownerFromFrontmatter({ provenance: 'librarian' }), 'author');
 });
 
 function library(pages: Record<string, unknown>) {
