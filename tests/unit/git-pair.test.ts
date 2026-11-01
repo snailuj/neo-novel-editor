@@ -124,6 +124,20 @@ test('an edit that fails still has what it changed committed as the librarian\'s
   assert.deepEqual((await history(git, library))[0], 'Ada|import-author');
 });
 
+test('an edit that says it wrote nothing leaves no librarian commit, and what changed the path stays for the writer\'s checkpoint', async (t) => {
+  const { library, git, write, layer } = await tracked(t);
+  const was = await history(git, library);
+  const paired = await layer.around([C1], async () => {
+    write(C1, '<p>The writer, from another device.</p>');
+    return 'stale';
+  }, 'librarian', (result) => result !== 'stale');
+  assert.deepEqual(paired, { result: 'stale', before: paired.before, after: null });
+  const afters = (h: string[]) => h.filter((l) => l.startsWith('Librarian|')).length;
+  assert.equal(afters(await history(git, library)), afters(was), 'no commit of the librarian\'s was made');
+  await layer.commitNow('import-author');
+  assert.deepEqual((await history(git, library))[0], 'Ada|import-author');
+});
+
 test('when the author\'s commit fails the edit never runs', async (t) => {
   isolateGitConfig(t, null);
   const lib = tempLibrary(t);

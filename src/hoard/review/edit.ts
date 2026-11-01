@@ -54,7 +54,7 @@ export async function asLibrarian(
     return { ok: false, reason: 'held' };
   }
   try {
-    const { result: refused, after } = await o.layer.around(paths, swap);
+    const { result: refused, after } = await o.layer.around(paths, swap, 'librarian', (refusal) => refusal === null);
     if (refused) return { ok: false, reason: refused };
     o.log('info', label, { ...subject, as: 'librarian', commit: after });
     return { ok: true };

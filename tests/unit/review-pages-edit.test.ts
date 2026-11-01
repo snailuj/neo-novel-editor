@@ -15,6 +15,8 @@
 //   was refused, does not say the author saved;
 // - Refused-Edit-Keeps-Earlier-Hold: a refused librarian edit never frees a hold that
 //   existed before it;
+// - Stale-Edit-Leaves-No-Librarian-Commit: a librarian edit refused as stale leaves no
+//   librarian commit, and the text that made it stale is not committed as the librarian's;
 // - Author-Edits-Both-Trees: an author edit lands in either tree;
 // - Edit-Needs-Current-Page: an edit lands only while the file holds what the caller read;
 // - Owners-List-Only-Librarian: review.owners names the librarian's pages among those asked.
@@ -199,6 +201,18 @@ test('Refused-Edit-Keeps-Earlier-Hold: a librarian edit to a page the gate alrea
   assert.equal(page(OURS), CHANGED);
   assert.deepEqual(await history(), was, 'no commit was made');
   assert.ok(lines.some((l) => /still holds the page/.test(l)), JSON.stringify(lines));
+});
+
+test('Stale-Edit-Leaves-No-Librarian-Commit: a librarian edit refused as stale makes no librarian commit', async (t) => {
+  const { o, page, history, library: lib } = await library(t);
+  const newer = '<p data-block="b1">The quay is old, said the other device.</p>';
+  // the page changes between the author's commit and the swap
+  const store = { write: async (id: string, was: string, now: string) => { writeFileSync(path.join(lib, id), newer); return o.store.write(id, was, now); } };
+  const librarian = async () => (await history()).filter((l) => l.startsWith('Librarian|'));
+  const was = await librarian();
+  assert.deepEqual(await editPage({ ...o, store } as unknown as typeof o, { page: OURS, before: BEFORE, after: AFTER, as: 'librarian' }), { ok: false, reason: 'stale' });
+  assert.equal(page(OURS), newer);
+  assert.deepEqual(await librarian(), was);
 });
 
 test('Author-Edits-Both-Trees: an author edit to a sources page lands', async (t) => {
