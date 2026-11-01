@@ -21,7 +21,7 @@ import { ownerOf } from './owner.ts';
 
 type Log = (level: 'error' | 'warn' | 'info' | 'debug', message: string, data?: unknown) => void;
 
-export type Refusal = 'missing' | 'stale';
+export type Refusal = 'missing' | 'stale' | 'owned';
 
 export type Written =
   | { ok: true }
@@ -29,7 +29,7 @@ export type Written =
   | { ok: false; reason: 'refused'; findings: Finding[] }
   | { ok: false; reason: 'held' };
 
-export type Edited = Written | { ok: false; reason: 'owned' };
+export type Edited = Written;
 
 /**
  * Runs `swap` (which writes `paths` and returns why it could not, or null) between the
@@ -89,21 +89,28 @@ export interface PageEditorOptions {
 export async function editPage(o: PageEditorOptions, ask: PageEdit): Promise<Edited> {
   const { page, before, after } = ask;
   parseId(page);
-  const swap = async (): Promise<Refusal | null> => {
+  const write = async (): Promise<Refusal | null> => {
     const written = await o.store.write(page, before, after);
     return written.ok ? null : written.reason;
   };
   if (ask.as === 'author') {
-    const refused = await swap();
+    const refused = await write();
     if (refused) return { ok: false, reason: refused };
     o.log('info', 'pages.edit', { page, as: 'author' });
     o.saved?.(page);
     return { ok: true };
   }
-  if (await ownerOf(o.library(), page, o.log) !== 'librarian') {
+  const owned = async (): Promise<boolean> => {
+    if (await ownerOf(o.library(), page, o.log) === 'librarian') return true;
     o.log('warn', 'pages.edit: the librarian writes only its own wiki pages, so the page is as it was', { page });
-    return { ok: false, reason: 'owned' };
-  }
+    return false;
+  };
+  // Cheap early refusal, so a page that is not the librarian's never pauses checkpoints.
+  if (!await owned()) return { ok: false, reason: 'owned' };
+  // The owner is read again right before the write: the sidecar can turn author while around
+  // pauses checkpoints and commits the writer's pending work, and the librarian must not
+  // write, or commit, a page that is the author's when the write happens.
+  const swap = async (): Promise<Refusal | null> => (await owned() ? write() : 'owned');
   const restore = async (): Promise<void> => {
     const put = await o.store.write(page, after, before);
     if (put.ok) return;

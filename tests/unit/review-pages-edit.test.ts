@@ -17,6 +17,8 @@
 //   existed before it;
 // - Stale-Edit-Leaves-No-Librarian-Commit: a librarian edit refused as stale leaves no
 //   librarian commit, and the text that made it stale is not committed as the librarian's;
+// - Librarian-Never-Writes-An-Authors-Page: the librarian never writes, or commits, a page that
+//   is the author's at the moment of the write, even if the sidecar changed after the first look;
 // - Author-Edits-Both-Trees: an author edit lands in either tree;
 // - Edit-Needs-Current-Page: an edit lands only while the file holds what the caller read;
 // - Owners-List-Only-Librarian: review.owners names the librarian's pages among those asked.
@@ -213,6 +215,24 @@ test('Stale-Edit-Leaves-No-Librarian-Commit: a librarian edit refused as stale m
   assert.deepEqual(await editPage({ ...o, store } as unknown as typeof o, { page: OURS, before: BEFORE, after: AFTER, as: 'librarian' }), { ok: false, reason: 'stale' });
   assert.equal(page(OURS), newer);
   assert.deepEqual(await librarian(), was);
+});
+
+test('Librarian-Never-Writes-An-Authors-Page: a sidecar that turns author after the first look leaves the page unwritten and uncommitted', async (t) => {
+  const { o, layer, page, history, write, library: lib } = await library(t);
+  const gate = new Gate({ library: () => lib, log: () => {} });
+  layer.useGate(gate);
+  // The writer claims the page after editPage first looked and before the swap runs.
+  const around: typeof layer.around = (paths, apply, as, wrote) => layer.around(paths, async () => {
+    write(`.neo/pages/${OURS}.json`, sidecar({ type: 'writing' }));
+    return apply();
+  }, as, wrote);
+  const racing = { ...o, layer: { around, release: layer.release.bind(layer), held: layer.held.bind(layer) } };
+  const librarian = async () => (await history()).filter((l) => l.startsWith('Librarian|'));
+  const was = await librarian();
+  assert.deepEqual(await editPage(racing, { page: OURS, before: BEFORE, after: AFTER, as: 'librarian' }), { ok: false, reason: 'owned' });
+  assert.equal(page(OURS), BEFORE);
+  assert.deepEqual(await librarian(), was, 'no librarian commit');
+  assert.deepEqual(gate.held(), [], 'nothing is left held');
 });
 
 test('Author-Edits-Both-Trees: an author edit to a sources page lands', async (t) => {
