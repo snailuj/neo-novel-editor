@@ -33,3 +33,6 @@ docs/sessions/
 # built TypeScript layer and Playwright output
 /plugins/hoard/
 /test-results/
+
+# generated from schemas/ by tools/gen.mjs; `npm install` and `npm run check` regenerate it
+/src/generated/

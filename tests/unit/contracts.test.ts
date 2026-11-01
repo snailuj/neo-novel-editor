@@ -35,6 +35,16 @@ test('generated files match', () => {
   assert.equal(status, 0, output);
 });
 
+// validators.cjs is one long line, so any two branches that touch any schema conflicted on
+// all of it. Nothing gen.mjs writes is tracked: `npm install` and `npm run check` regenerate it.
+test('generated files are not tracked', () => {
+  const git = (...args: string[]) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+  assert.equal(git('ls-files', 'src/generated').stdout, '', 'git tracks nothing under src/generated');
+  for (const file of ['validators.cjs', 'validators.d.cts', 'some-new-schema-v1.d.ts']) {
+    assert.equal(git('check-ignore', '-q', `src/generated/${file}`).status, 0, `src/generated/${file} is ignored`);
+  }
+});
+
 test('drift is caught', () => {
   const tmp = mkdtempSync(path.join(tmpdir(), 'hoard-gen-'));
   try {
