@@ -69,6 +69,9 @@ export interface Renamed {
 
 // The note of a rename in progress; see schemas/hoard-rename-v1.json.
 const JOURNAL = '.neo/pages/.rename.json';
+// The last renames that finished, so a repeated request can be told it is done already.
+const RECORD = '.neo/pages/renames.json';
+const RECORD_LENGTH = 50;
 const CHAPTER = /^(book-[^/]+)\/chapters\/([^/]+)\.html$/;
 const sidecarOf = (id: string) => `.neo/pages/${id}.json`;
 const readNow = (file: string): string | null => {
@@ -296,7 +299,7 @@ export class PageStore {
         if (pending.from === id && pending.to === idOf(to)) return finished;
       }
       // a repeat of a rename that finished, say a request sent again: the page is already there
-      if (id !== idOf(to) && !existsSync(this.file(from)) && existsSync(this.file(to))) {
+      if (id !== idOf(to) && !existsSync(this.file(from)) && existsSync(this.file(to)) && this.#lastRenameOf(id) === idOf(to)) {
         this.o.log('info', 'pages.rename.done-already', { from: id, to: idOf(to) });
         return { id: idOf(to), from: id, rewrittenFiles: 0, rewrittenLinks: 0, skipped: 0, deferred: [] };
       }
@@ -434,6 +437,7 @@ export class PageStore {
     for (const rel of plan.files) if (rel === plan.to || there(rel)) named.add(rel);
     // a note left by a stopped run is committed with the writer's pending work first; its removal belongs to this commit
     if (there(JOURNAL)) named.add(JOURNAL);
+    if (plan.from !== plan.to) named.add(RECORD);
     const inOwnRepo = (rel: string) => own.some((b) => rel.startsWith(`${b}/`));
     const run = () => this.#execute(plan, openBookId);
     const result = this.o.layer ? (await this.o.layer.around([...named].filter((rel) => !inOwnRepo(rel)), run, 'author')).result : await run();
@@ -443,6 +447,26 @@ export class PageStore {
       from: plan.from, to: plan.to, files: result.rewrittenFiles, links: result.rewrittenLinks, deferred: result.deferred.length, skipped: result.skipped, ms,
     });
     return result;
+  }
+
+  /** The renames recorded as finished, oldest first; empty when the record is missing or unreadable. */
+  #finished(): { from: string; to: string }[] {
+    const file = path.join(this.o.library(), RECORD);
+    const text = readNow(file);
+    if (text === null) return [];
+    try {
+      const data: unknown = JSON.parse(text);
+      if (Array.isArray(data) && data.every((r) => typeof r?.from === 'string' && typeof r?.to === 'string')) return data as { from: string; to: string }[];
+    } catch {
+      // logged below
+    }
+    this.o.log('warn', `pages: ${file} is not a record of renames, so it is started again`);
+    return [];
+  }
+
+  /** Where the last finished rename of `id` took it, if one is recorded. */
+  #lastRenameOf(id: string): string | undefined {
+    return this.#finished().findLast((r) => r.from === id)?.to;
   }
 
   // Moves a renamed page in the index, if one is built.
@@ -499,6 +523,10 @@ export class PageStore {
       writeWhole(abs(rel), out.html);
       result.rewrittenFiles++;
       result.rewrittenLinks += out.rewritten;
+    }
+    if (plan.from !== plan.to) {
+      const record = [...this.#finished().filter((r) => r.from !== plan.from), { from: plan.from, to: plan.to }].slice(-RECORD_LENGTH);
+      writeWhole(abs(RECORD), `${JSON.stringify(record, null, 2)}\n`);
     }
     rmSync(abs(JOURNAL), { force: true });
     for (const tree of new Set([parseId(plan.from).tree, parseId(plan.to).tree])) this.o.layer?.wrote(tree);

@@ -271,6 +271,7 @@ test('a rename is one commit credited to the author, holding the move, the sidec
     'D .neo/pages/wiki/People/Harbour.html.json', 'A .neo/pages/wiki/Places/Port.html.json',
     'D wiki/People/Harbour.html', 'A wiki/Places/Port.html',
     'M wiki/Index.html', 'M sources/Notes.html', 'M book-fox-1/chapters/c1.html', 'M book-owl-2/chapters/c1.html',
+    'A .neo/pages/renames.json',
   ].sort());
   const rest = await lib.git.run(lib.library, ['status', '--porcelain']);
   assert.equal(rest.stdout.trim(), '', 'the library is clean, the rename note included');
@@ -343,4 +344,29 @@ test('a rename repeated after it succeeded is a logged no-op, not a missing page
   assert.equal(logged('pages.refused').length, 0);
   // with neither the page nor its target there, it is still refused
   await assert.rejects(store.rename(FROM, 'Places/Quay.html', null), (e: PageRefused) => e.code === 'missing');
+});
+
+// Rule: only a rename that this library recorded as finished is answered as done already.
+test('a rename of a page that is gone is refused as before when no finished rename matches it', async (t) => {
+  const { store, put, has, get, library } = fixture(t);
+  put('wiki/Places/Port.html', '<p>another page by that name</p>');
+  await assert.rejects(store.rename('wiki/Never.html', 'Places/Port.html', null), (e: PageRefused) => e.code === 'missing');
+  // a page moved away by sync, while another page holds the name it was to take
+  await store.rename('wiki/Lantern.html', 'Beacon.html', null);
+  await assert.rejects(store.rename('wiki/Lantern.html', 'Places/Port.html', null), (e: PageRefused) => e.code === 'missing');
+  assert.equal(get('wiki/Places/Port.html'), '<p>another page by that name</p>');
+  // the record is the library's, so a new store answers the finished rename too, and the record stays bounded
+  const record = JSON.parse(get('.neo/pages/renames.json')) as { from: string; to: string }[];
+  assert.deepEqual(record.at(-1), { from: 'wiki/Lantern.html', to: 'wiki/Beacon.html' });
+  assert.equal((await new PageStore({ library: () => library, log: () => {} }).rename('wiki/Lantern.html', 'Beacon.html', null)).id, 'wiki/Beacon.html');
+  assert.equal(has('wiki/Lantern.html'), false);
+});
+
+test('the record of finished renames keeps the last fifty', async (t) => {
+  const { store, put, get } = pagesLibrary(t);
+  put('wiki/P0.html', '<p>p</p>');
+  for (let i = 0; i < 55; i++) await store.rename(`wiki/P${i}.html`, `P${i + 1}.html`, null);
+  const record = JSON.parse(get('.neo/pages/renames.json')) as { from: string; to: string }[];
+  assert.equal(record.length, 50);
+  assert.deepEqual(record[0], { from: 'wiki/P5.html', to: 'wiki/P6.html' });
 });
