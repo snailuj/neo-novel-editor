@@ -50,6 +50,10 @@
 //   page gone (the     -                closed; the alert says it is gone and nothing  as open / invalid
 //     list read again                   changed; focus its folder row if in the pane
 //     lacks it)
+//   folder gone (the   -                a new page's field moves to the nearest       as it is: the store makes the
+//     list read again                   folder above still there, title kept; the     folder; a refusal then moves it
+//     lacks a new                       status says where; the focus stays
+//     page's folder)
 //   A slow reply stays pending: the writer can keep writing, read pages and fold the tree;
 //   nothing times out, because the store finishes a rename it started even after a restart.
 //   Origin is the row (or the New page button) that opened the field. Inverses: a rename or
@@ -281,17 +285,26 @@ export type EditorEvent =
   | { type: 'cancel' }
   | { type: 'done' }
   | { type: 'refused'; message: string }
-  | { type: 'vanished' };
+  | { type: 'vanished' }
+  | { type: 'listed' };
 
 /**
  * focus-field and busy put the focus in the open field; focus-origin on what opened it;
- * focus-parent on the folder row that held a page gone from the list.
+ * focus-parent on the folder row that held a page gone from the list; folder-gone draws a
+ * new page's field under the folder it moved to and says so.
  */
-export type Effect = 'none' | 'focus-field' | 'busy' | 'focus-origin' | 'focus-parent' | 'send' | 'settled';
+export type Effect = 'none' | 'focus-field' | 'busy' | 'focus-origin' | 'focus-parent' | 'send' | 'settled' | 'folder-gone';
 
 export const CLOSED: Editor = Object.freeze({ state: 'closed' });
 
 const target = (ask: Ask) => (ask.op === 'new' ? `${ask.tree}/${ask.folder}` : ask.id);
+// a folder is there while a page is in it or below it, so the nearest one still there
+const folderLeft = (tree: Tree, folder: string, entries: readonly Listed[]) => {
+  for (let f = folder; f; f = folderOf(f)) {
+    if (entries.some((e) => e.tree === tree && e.path.startsWith(`${f}/`))) return f;
+  }
+  return '';
+};
 const errorOf = (ask: Ask, entries: readonly Listed[]) => {
   const v = judge(ask, entries);
   return v.kind === 'refused' ? v.message : null;
@@ -303,6 +316,13 @@ export function step(editor: Editor, e: EditorEvent, entries: readonly Listed[])
     return e.type === 'start' ? { editor: { state: 'open', ask: e.ask, initial: e.ask.value, error: null }, effect: 'focus-field' } : stay;
   }
   if (e.type === 'vanished') return { editor: CLOSED, effect: 'focus-parent' };
+  if (e.type === 'listed') {
+    if (editor.state !== 'open' || editor.ask.op !== 'new') return stay;
+    const folder = folderLeft(editor.ask.tree, editor.ask.folder, entries);
+    if (folder === editor.ask.folder) return stay;
+    const ask = { ...editor.ask, folder };
+    return { editor: { ...editor, ask, error: editor.error === null ? null : errorOf(ask, entries) }, effect: 'folder-gone' };
+  }
   if (e.type === 'start') {
     const same = e.ask.op === editor.ask.op && target(e.ask) === target(editor.ask);
     return { editor, effect: same ? 'focus-field' : 'busy' };

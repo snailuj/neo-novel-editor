@@ -259,6 +259,7 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
         console.warn('hoard: pages tree: refused', { op: ask.op, code: 'missing', id: ask.id });
         dispatch({ type: 'vanished' });
       }
+      dispatch({ type: 'listed' });
       draw();
     } catch (err) {
       if (mine !== generation) return;
@@ -322,6 +323,8 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
       const told = explain(ask, entries, err);
       console.warn('hoard: pages tree: refused', { op: ask.op, code: told.code, message: told.message });
       dispatch({ type: 'refused', message: told.message }, hadFocus);
+      // the folder of a new page may have gone while the store worked
+      dispatch({ type: 'listed' });
       return;
     }
     const hadFocus = focusInPane();
@@ -349,15 +352,20 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
       if (next.effect === 'focus-origin') origin(was.ask)?.focus();
       if (next.effect === 'focus-parent') nearestRow(askKey(was.ask))?.focus();
     }
-    if (opened || next.effect === 'busy') {
+    const refolded = next.effect === 'folder-gone';
+    if (opened || next.effect === 'busy' || refolded) {
       const key = askKey((editor as Exclude<Editor, { state: 'closed' }>).ask);
       reveal(key);
-      if (e.type === 'start' && e.ask.op === 'new') open.add(key);
+      if ((e.type === 'start' && e.ask.op === 'new') || refolded) open.add(key);
       draw();
     } else {
       drawEditor();
     }
     if (next.effect === 'busy') status.textContent = 'Finish or cancel the open field first.';
+    if (refolded && was.state !== 'closed' && was.ask.op === 'new' && editor.state === 'open' && editor.ask.op === 'new') {
+      status.textContent = `The folder ${place(was.ask.tree, was.ask.folder)} is no longer there. It may have been moved or removed outside NEO. The new page will go in ${place(editor.ask.tree, editor.ask.folder)}.`;
+      console.info('hoard: pages tree: folder gone', { from: place(was.ask.tree, was.ask.folder), to: place(editor.ask.tree, editor.ask.folder) });
+    }
     const v = next.verdict;
     if (was.state !== 'closed' && v?.kind === 'refused') console.warn('hoard: pages tree: refused', { op: was.ask.op, code: v.code, message: v.message });
     if (was.state !== 'closed' && v?.kind === 'same') {
@@ -462,7 +470,10 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
   input.addEventListener('blur', (e) => {
     // leaving for the form's own buttons is not leaving the field
     if (e.relatedTarget instanceof Node && form.contains(e.relatedTarget)) return;
-    dispatch({ type: 'blur' });
+    // Taking the form out of the page blurs the field from inside that change, and a
+    // dispatch then would draw into it. Judged once it is done, and not at all if the
+    // field has the focus back by then (the form moved to another row).
+    queueMicrotask(() => { if (document.activeElement !== input) dispatch({ type: 'blur' }); });
   });
   // NEO takes Esc in a side pane on the document's way down and goes back to the page, so
   // the field hears it first, from the window. While a request is in flight Esc cancels

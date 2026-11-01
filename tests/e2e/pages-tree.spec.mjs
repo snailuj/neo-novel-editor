@@ -623,3 +623,39 @@ test('typing in the field keeps the focus there, key after key', async () => {
     await fixture.close();
   }
 });
+
+// Rule: a new page's field never hangs on a folder that is gone: when the list read again
+// lacks its folder, the field moves to the nearest folder still there, keeps the title
+// typed, says so, and still makes the page.
+test('a new page whose folder is removed outside NEO moves up, title kept', async () => {
+  const { profile, library } = await libraryProfile();
+  const fixture = await launchProfile(profile);
+  try {
+    const { page } = fixture;
+    await page.waitForFunction(() => !!window.hoard);
+    await seedBook(page, '<p>A line of the book.</p>');
+    const pane = page.locator('.hoard-wiki-pane');
+    const tree = pane.locator('.hoard-tree');
+    await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
+    await paneSettled(page);
+    await tree.getByRole('button', { name: 'Pages' }).click();
+    await tree.locator('.hoard-tree-name[data-key="wiki/People"]').click();
+    await tree.getByRole('button', { name: 'New page' }).click();
+    await tree.getByLabel('Title of the new page in wiki/People').fill('Bea Lund');
+
+    // the list read again while the writer is in the field (a book opened, say)
+    await rm(path.join(library, 'wiki', 'People'), { recursive: true });
+    await page.evaluate(() => window.hoard.wiki.pane.tree.refresh());
+    const field = tree.getByLabel('Title of the new page in wiki', { exact: true });
+    await expect(field).toBeVisible();
+    await expect(field).toHaveValue('Bea Lund');
+    await expect(field).toBeFocused();
+    await expect(tree.locator('.hoard-tree-status')).toHaveText('The folder wiki/People is no longer there. It may have been moved or removed outside NEO. The new page will go in wiki.');
+    await expect(tree.locator('.hoard-tree-editor')).toHaveCount(1);
+    await field.press('Enter');
+    await expect(tree.locator('.hoard-tree-status')).toHaveText('Made the page “Bea Lund” in wiki.');
+    expect(existsSync(path.join(library, 'wiki', 'Bea Lund.html'))).toBe(true);
+  } finally {
+    await fixture.close();
+  }
+});

@@ -213,6 +213,27 @@ test('a field whose page is gone closes and hands the focus to its folder', () =
   assert.deepEqual(run([{ type: 'vanished' }]), { editor: CLOSED, effects: ['none'] });
 });
 
+// Rule: when the folder a new page's field is under is gone from the list read again, the
+// field moves to the nearest folder above it that is still there, in the same tree, with
+// the typed title kept; a field still waiting on the store, one whose folder is there, or
+// a rename or move field stays as it is.
+test('a new page whose folder is gone moves to the nearest folder still there', () => {
+  const typed = run([{ type: 'start', ask: { op: 'new', tree: 'wiki', folder: 'People/Family', value: '' } }, { type: 'input', value: 'Bea' }]).editor;
+  const listed = (...ids: string[]) => step(typed, { type: 'listed' }, ids.map(page));
+  assert.deepEqual(listed('wiki/People/Ada.html', 'wiki/Harbour.html'), {
+    editor: { state: 'open', ask: { op: 'new', tree: 'wiki', folder: 'People', value: 'Bea' }, initial: '', error: null }, effect: 'folder-gone',
+  });
+  assert.deepEqual(listed('wiki/Harbour.html').editor, { state: 'open', ask: { op: 'new', tree: 'wiki', folder: '', value: 'Bea' }, initial: '', error: null });
+  assert.deepEqual(listed('sources/People/Family/Note.html').effect, 'folder-gone');
+  assert.deepEqual(listed('wiki/People/Family/Deep/Note.html'), { editor: typed, effect: 'none' });
+  const sent = step(typed, { type: 'submit' }, LISTED).editor;
+  assert.equal(sent.state, 'pending');
+  assert.deepEqual(step(sent, { type: 'listed' }, []), { editor: sent, effect: 'none' });
+  const renaming = run([renameHarbour]).editor;
+  assert.deepEqual(step(renaming, { type: 'listed' }, []), { editor: renaming, effect: 'none' });
+  assert.deepEqual(step(CLOSED, { type: 'listed' }, []), { editor: CLOSED, effect: 'none' });
+});
+
 // Rule: a field is judged on submit and on leaving it once changed, never while a fresh
 // field is typed in; once it shows an error, each change judges it again; a submit that
 // changes nothing, or Esc, closes it and sends nothing.
