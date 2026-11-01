@@ -27,6 +27,7 @@ import { ATTRIBUTES } from './git/start.ts';
 import { MarkStore, targeted } from './marks/store.ts';
 import { startPages } from './pages/main.ts';
 import { startReview } from './review/main.ts';
+import { authorSaved } from './review/saved.ts';
 import { startRipple } from './ripple/main.ts';
 import { SearchClient, type WorkerProcess } from './search/client.ts';
 import { startWiki } from './wiki/start.ts';
@@ -148,12 +149,9 @@ export function activate(host: NeoMainHost): void {
   const layer = startHistory(host);
   const gate = startGate(host, layer);
   const pairs = startLibrarianPairs(host, layer);
-  // The one place the author's save of a page is heard: a held page is theirs again, and a
+  // The one place the author's save of a page or a chapter is heard: a held file is theirs again, and a
   // librarian pair waiting for the save is woken.
-  const authorSavedPage = (page: string): void => {
-    gate.saved(page);
-    pairs.landed({ page });
-  };
+  const authorSavedPage = authorSaved(gate, pairs);
   const marks = startMarks(host, layer);
   const wiki = startWiki(host, layer, marks);
   startSearch(host);

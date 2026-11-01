@@ -16,7 +16,7 @@ import type { HoardRenameV1 } from '../../generated/hoard-rename-v1.js';
 import { key } from '../../librarian/links.ts';
 import { booksWithOwnRepo } from '../git/commit.ts';
 import type { GitLayer } from '../git/layer.ts';
-import { fileAbove, linkProblem, writeWhole } from '../files.ts';
+import { fileAbove, folderLinkProblem, linkProblem, writeWhole } from '../files.ts';
 import { checkPath, idOf, marksOf, PageRefused, parseId, titleOf, TREES, type PageRef, type Tree } from './identity.ts';
 import { editsFor, rewriteHtml, type Retarget, type WindowEdit } from './rewrite.ts';
 import { Titles } from './titles.ts';
@@ -389,8 +389,13 @@ export class PageStore {
       throw new PageRefused('taken', `${newId} is already a file on disk`);
     }
     // what a deleted page left under its id would stop the move half way, every time it is retried
-    for (const [mine, theirs] of [[sidecarOf(id), sidecarOf(newId)], [marksOf(id), marksOf(newId)]] as const) {
+    for (const [folder, mine, theirs] of [['.neo/pages', sidecarOf(id), sidecarOf(newId)], ['.neo/marks', marksOf(id), marksOf(newId)]] as const) {
       const [here, there] = [path.join(this.o.library(), ...mine.split('/')), path.join(this.o.library(), ...theirs.split('/'))];
+      // #moveFile follows links, so a link in either path that leaves its folder would carry the file out of the library
+      for (const file of [here, there]) {
+        const problem = folderLinkProblem(path.join(this.o.library(), folder), file);
+        if (problem) throw new PageRefused('unsafe', `${path.relative(this.o.library(), file)} is not a sidecar path: ${problem === 'out' ? `a link in it leads out of ${folder}` : 'it goes through a link that leads nowhere'}`);
+      }
       if (existsSync(there) && !(existsSync(here) && sameFile(here, there))) throw new PageRefused('taken', `${theirs} is left over from an earlier page of that name`);
     }
     const plan: HoardRenameV1 = { version: 1, from: id, to: newId, files: [], at: new Date().toISOString() };
