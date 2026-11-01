@@ -6,11 +6,12 @@
 // - page marks never read or write through a link that leaves .neo/marks;
 // - reading never writes, and the main half, not the window, says when and by whom.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import type { Mark } from '../../src/generated/hoard-marks-v1.js';
 import { validateHoardMarksV1 } from '../../src/generated/validators.cjs';
+import { newMark } from '../../src/hoard/marks/model.ts';
 import { MarkFileError, MarkStore, pageSidecarPath, sidecarPath } from '../../src/hoard/marks/store.ts';
 import { PageRefused } from '../../src/hoard/pages/identity.ts';
 import { tempDir } from './git-support.ts';
@@ -268,3 +269,29 @@ test('page marks are not read or written through a link that leaves .neo/marks',
   await store.add({ page: 'wiki/Fine.html', kind: 'comment', anchor, body: 'ok' }, 'author');
   assert.equal((await store.list('wiki/Fine.html')).length, 1, 'and written');
 });
+
+const newMarkFor = (id = 'm-import1'): Mark => newMark({ id, kind: 'comment', anchor: { ...anchor, commit: null }, body: 'Imported.', who: 'author', at: '2026-10-15T21:00:00.000Z' });
+
+// Rule: a .neo/marks that is itself a link out of the library is refused for every request.
+for (const [what, link] of [['.neo/marks', ['.neo', 'marks']], ['.neo', ['.neo']]] as const) {
+  test(`page marks are refused, logged and nothing is written when ${what} is a link that leaves the library`, async (t) => {
+    const { library, store, lines } = storeFor(t);
+    pages(library, 'wiki/Fine.html');
+    const outside = tempDir(t, 'hoard-outside-');
+    mkdirSync(path.join(library, ...link.slice(0, -1)), { recursive: true });
+    symlinkSync(outside, path.join(library, ...link), 'junction');
+    assert.ok(statSync(path.join(library, '.neo')).isDirectory(), 'the fixture reached its state');
+    const unsafe = (e: unknown) => e instanceof PageRefused && e.code === 'unsafe';
+
+    await assert.rejects(store.list('wiki/Fine.html'), unsafe);
+    await assert.rejects(store.add({ page: 'wiki/Fine.html', kind: 'comment', anchor, body: 'x' }, 'author'), unsafe);
+    await assert.rejects(store.addAll('wiki/Fine.html', [newMarkFor()]), unsafe);
+    assert.deepEqual(readdirSync(outside), [], 'nothing was written where the link leads');
+    assert.ok(lines.some((l) => l.level === 'warn' && l.message === 'marks.refused'), JSON.stringify(lines));
+
+    rmSync(path.join(library, ...link));
+    mkdirSync(path.join(library, '.neo', 'marks'), { recursive: true });
+    await store.add({ page: 'wiki/Fine.html', kind: 'comment', anchor, body: 'ok' }, 'author');
+    assert.equal((await store.list('wiki/Fine.html')).length, 1, 'with a folder of its own the same request is written');
+  });
+}

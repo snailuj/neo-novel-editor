@@ -8,7 +8,7 @@
 // caller read (the rule wiki/write.ts keeps), so a change that arrived from another device
 // is never written over. Every refusal is logged; every request names its page by an id
 // that identity.ts has checked, so no path leaves its tree.
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import { opendir, readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { validateHoardRenameV1 } from '../../generated/validators.cjs';
@@ -16,7 +16,7 @@ import type { HoardRenameV1 } from '../../generated/hoard-rename-v1.js';
 import { key } from '../../librarian/links.ts';
 import { booksWithOwnRepo } from '../git/commit.ts';
 import type { GitLayer } from '../git/layer.ts';
-import { fileAbove, folderLinkProblem, linkProblem, writeWhole } from '../files.ts';
+import { fileAbove, folderLinkProblem, folderLinkText, writeWhole } from '../files.ts';
 import { checkPath, idOf, marksOf, PageRefused, parseId, titleOf, TREES, type PageRef, type Tree } from './identity.ts';
 import { editsFor, rewriteHtml, type Retarget, type WindowEdit } from './rewrite.ts';
 import { Titles } from './titles.ts';
@@ -111,15 +111,9 @@ export class PageStore {
    */
   protected inside(ref: PageRef): string {
     const file = this.file(ref);
-    let root: string;
-    try {
-      root = realpathSync(path.join(this.o.library(), ref.tree));
-    } catch {
-      return file; // no tree yet, so nothing in it can lead out
-    }
-    const problem = linkProblem(root, file);
-    if (problem) throw new PageRefused('unsafe', `${idOf(ref)} is not a page path: ${problem === 'out' ? 'a link in it leads out of its tree' : 'it goes through a link that leads nowhere'}`);
-    const blocker = fileAbove(root, ref.path);
+    const problem = folderLinkProblem(this.o.library(), ref.tree, file);
+    if (problem) throw new PageRefused('unsafe', `${idOf(ref)} is not a page path: ${folderLinkText(problem, ref.tree)}`);
+    const blocker = fileAbove(path.join(this.o.library(), ref.tree), ref.path);
     if (blocker) throw new PageRefused('unsafe', `${idOf(ref)} is not a page path: ${blocker} is a file, not a folder`);
     return file;
   }
@@ -136,7 +130,11 @@ export class PageStore {
 
   /** Every page, one at a time, in no set order. Reads no body. */
   async *entries(): AsyncGenerator<PageEntry> {
-    for (const tree of TREES) yield* this.#walk(tree, '');
+    for (const tree of TREES) {
+      const problem = folderLinkProblem(this.o.library(), tree, path.join(this.o.library(), tree));
+      if (problem === 'root') this.o.log('warn', `pages: ${folderLinkText(problem, tree)}, so its pages are left out`);
+      else yield* this.#walk(tree, '');
+    }
   }
 
   async *#walk(tree: Tree, rel: string): AsyncGenerator<PageEntry> {
@@ -446,8 +444,8 @@ export class PageStore {
 
   // Refuses a file whose path goes through a link that leaves `folder` (a path in the library).
   #contained(folder: string, file: string): void {
-    const problem = folderLinkProblem(path.join(this.o.library(), folder), file);
-    if (problem) throw new PageRefused('unsafe', `${path.relative(this.o.library(), file)} is not a path under ${folder}: ${problem === 'out' ? `a link in it leads out of ${folder}` : 'it goes through a link that leads nowhere'}`);
+    const problem = folderLinkProblem(this.o.library(), folder, file);
+    if (problem) throw new PageRefused('unsafe', `${path.relative(this.o.library(), file)} is not a path under ${folder}: ${folderLinkText(problem, folder)}`);
   }
 
   // The move follows links, so each end is checked against the folder the file belongs to right
