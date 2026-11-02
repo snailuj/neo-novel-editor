@@ -8,13 +8,12 @@
     "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "page": {
       "title": "RipplePage",
-      "description": "A page of the library: a chapter of a book, with the title it had then.",
+      "description": "A page of the library, by its id (<tree>/<path>, e.g. wiki/People/Name.html), with the title it had then.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["bookId", "chId", "title"],
+      "required": ["page", "title"],
       "properties": {
-        "bookId": { "type": "string", "minLength": 1 },
-        "chId": { "type": "string", "minLength": 1 },
+        "page": { "type": "string", "pattern": "^(wiki|sources)/.+\\.html$" },
         "title": { "type": "string" }
       }
     },
@@ -30,7 +29,7 @@
         "id": { "type": "string", "pattern": "^j-[0-9a-f]{12}$" },
         "at": { "$ref": "#/definitions/at" },
         "state": { "description": "open: no packet yet. packeted: waiting for the judge. judged: the judge's proposals are in the log. skipped: the author set it aside.", "enum": ["open", "packeted", "judged", "skipped"] },
-        "origin": { "description": "What made the job: an import, a change in git, the author's Ripple This Chapter, or an earlier ripple.", "enum": ["imported", "changed", "asked", "ripple"] },
+        "origin": { "description": "What made the job: an import, a change in git, the author's Ripple This Page, or an earlier ripple.", "enum": ["imported", "changed", "asked", "ripple"] },
         "source": { "$ref": "#/definitions/page" },
         "source_hash": { "$ref": "#/definitions/sha256" },
         "commit": { "description": "The library's HEAD when the job was made, where the quotes are checked.", "$ref": "#/definitions/commit" },

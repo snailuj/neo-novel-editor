@@ -14,7 +14,7 @@ import { cardKey, complete, fold, jobId, proposalId, repeatOf, Rulings, RulingsE
 import { tempDir } from './git-support.ts';
 
 const AT = '2026-10-16T12:00:00.000Z';
-const source = { bookId: 'book-wiki-1', chId: 'ch-a', title: 'Harbour' };
+const source = { page: 'wiki/Harbour.html', title: 'Harbour' };
 const job = (fields: Partial<RippleJob> = {}): RippleJob => ({
   version: 1, type: 'job', id: jobId(source, sha256('x'), 0), at: AT, state: 'open', origin: 'imported',
   source, source_hash: sha256('x'), commit: null, hop: 0, ...fields,
@@ -26,7 +26,7 @@ const proposal = (fields: Partial<RippleProposal> = {}): RippleProposal => ({
 const lines = (...records: unknown[]) => records.map((r) => JSON.stringify(r)).join('\n');
 
 test('the newest line for an id is its state', () => {
-  const other = job({ id: jobId({ ...source, chId: 'ch-b' }, sha256('y'), 0), source: { ...source, chId: 'ch-b' } });
+  const other = job({ id: jobId({ ...source, page: 'sources/Harbour.html' }, sha256('y'), 0), source: { ...source, page: 'sources/Harbour.html' } });
   const state = fold(lines(job(), other, job({ state: 'packeted' }), { version: 1, type: 'cursor', id: 'cursor', at: AT, commit: null, changes: 3 }));
   assert.equal(state.jobs.get(job().id)?.state, 'packeted');
   assert.deepEqual([...state.jobs.keys()], [other.id, job().id], 'a job moves to its newest line');
@@ -34,9 +34,10 @@ test('the newest line for an id is its state', () => {
   assert.equal(state.lines, 4);
 });
 
-test('ids come from what the job or proposal is', () => {
+test('ids come from what the job or proposal is, the source page included', () => {
   assert.equal(jobId(source, 'a'.repeat(64), 1, 'r-000000000000'), jobId(source, 'a'.repeat(64), 1, 'r-000000000000'));
   assert.notEqual(jobId(source, 'a'.repeat(64), 1), jobId(source, 'a'.repeat(64), 2));
+  assert.notEqual(jobId(source, 'a'.repeat(64), 1), jobId({ ...source, page: 'sources/Harbour.html' }, 'a'.repeat(64), 1), 'one title in two trees is two sources');
   assert.match(proposalId('j-1', 'claim', 'T', 'q'), /^r-[0-9a-f]{12}$/);
   assert.notEqual(proposalId('j-1', 'claim', 'T', 'q'), proposalId('j-1', 'claim', 'T', 'q2'));
 });
@@ -97,7 +98,7 @@ test('a card\'s key is what it changes, wording and job aside', () => {
   const differs = [
     proposal({ line: 'See [[Harbour]].' }),
     proposal({ line: 'See [[Harbour]] after the [[Long Storm]].', target: 'Lighthouse' }),
-    proposal({ line: 'See [[Harbour]] after the [[Long Storm]].', source: { ...source, chId: 'ch-b' } }),
+    proposal({ line: 'See [[Harbour]] after the [[Long Storm]].', source: { ...source, page: 'sources/Harbour.html' } }),
     { ...claim, kind: 'topic' as const },
   ];
   for (const p of differs) assert.notEqual(cardKey(p), cardKey(base), JSON.stringify(p));
@@ -117,4 +118,15 @@ test('a proposal repeats a card waiting or rejected, never one applied or a noth
   assert.equal(repeatOf(ruled('rejected', { kind: 'nothing', line: undefined, quote: undefined }), later({ kind: 'nothing', line: undefined, quote: undefined })), null, 'a nothing is not a card');
   assert.equal(repeatOf(ruled('rejected'), later({ line: 'Also [[Lighthouse]].' })), null, 'another change is not a repeat');
   assert.equal(repeatOf(ruled('rejected'), proposal()), null, 'a proposal does not repeat itself');
+});
+
+test('a card\'s key names the page its target resolves to, so a title and an id are one card', () => {
+  const resolve = (t: string) => (/^(wiki\/)?harbour(\.html)?$/i.test(t) ? 'wiki/Harbour.html' : null);
+  const byTitle = proposal({ kind: 'claim', target: 'Harbour', anchor: 'made of timber', text: 'x', line: undefined });
+  const byId = proposal({ kind: 'claim', target: 'wiki/Harbour.html', anchor: 'made of timber', text: 'x', line: undefined });
+  assert.notEqual(cardKey(byTitle), cardKey(byId), 'without a resolver they are only strings');
+  assert.equal(cardKey(byTitle, resolve), cardKey(byId, resolve));
+  assert.notEqual(cardKey(byTitle, resolve), cardKey({ ...byTitle, target: 'Lighthouse' }, resolve), 'another page is another card');
+  const state = fold(lines(proposal({ ...byTitle, status: 'rejected' })));
+  assert.equal(repeatOf(state, { ...byId, id: 'r-later0000000' }, undefined, resolve)?.id, byTitle.id);
 });

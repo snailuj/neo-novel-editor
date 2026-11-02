@@ -156,11 +156,11 @@ export function activate(host: NeoMainHost): void {
   // The page store starts after git opens; an import that writes pages before then has no index to refresh.
   const pageHolder: { store?: { list(): Promise<unknown> } } = {};
   const wiki = startWiki(host, layer, marks, { pagesWrote: async () => pageHolder.store?.list().catch((err: unknown) => host.log('warn', 'pages: the trees did not list after an import', String(err))) });
-  startRipple(host, layer, marks, wiki);
   startSearch(host);
   const opened = layer.open().catch((err: unknown) => host.log('error', 'git.open failed', String(err)));
   const { store: pages } = startPages(host, layer, opened, authorSavedPage);
   pageHolder.store = pages;
   startReview(host, marks, { layer, wiki, pages, authorSavedPage });
   startCompanion(host, layer, marks, wiki, pages);
+  startRipple(host, layer, pages, marks);
 }

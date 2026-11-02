@@ -19,7 +19,7 @@
     { "id": "stop-flagging", "title": "Stop Flagging This Page" },
     { "id": "flag-again", "title": "Flag This Page Again" },
     { "id": "run-ripple", "title": "Run Ripple" },
-    { "id": "ripple-chapter", "title": "Ripple This Chapter" }
+    { "id": "ripple-page", "title": "Ripple This Page" }
   ],
   "style": "style.css"
 }
