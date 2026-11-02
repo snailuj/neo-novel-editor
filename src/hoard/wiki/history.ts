@@ -1,4 +1,5 @@
-// The wiki pane's trail of pages, as a browser keeps one. Pure.
+// The wiki pane's trail of pages, as a browser keeps one. A stop is a Wiki book chapter id
+// or a stored page id (wiki/... or sources/...). Pure.
 export class PageHistory {
   #trail: string[] = [];
   #at = -1;
@@ -20,6 +21,20 @@ export class PageHistory {
     if (this.current === chId) return;
     this.#trail = [...this.#trail.slice(0, this.#at + 1), chId];
     this.#at = this.#trail.length - 1;
+  }
+
+  /** A page renamed: its stops name the new id, and stops side by side that now match are one. */
+  rename(oldId: string, newId: string): void {
+    if (!this.#trail.includes(oldId)) return;
+    const trail: string[] = [];
+    let at = -1;
+    this.#trail.forEach((id, i) => {
+      const now = id === oldId ? newId : id;
+      if (trail[trail.length - 1] !== now) trail.push(now);
+      if (i === this.#at) at = trail.length - 1;
+    });
+    this.#trail = trail;
+    this.#at = at;
   }
 
   back(): string | null {

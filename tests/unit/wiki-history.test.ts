@@ -29,3 +29,34 @@ test('the same page twice in a row is one stop', () => {
   h.visit('a');
   assert.equal(h.canBack, false);
 });
+
+// Rule: after a page is renamed, every stop of the trail that named it names the new id,
+// the place in the trail is kept, and two stops that now name one page side by side are one.
+test('a rename moves every stop of the old id to the new id, in place', () => {
+  const h = new PageHistory();
+  h.visit('wiki/Old.html');
+  h.visit('ch-1');
+  h.visit('wiki/Old.html');
+  h.visit('sources/Other.html');
+  h.back();
+  h.rename('wiki/Old.html', 'wiki/Folder/New.html');
+  assert.equal(h.current, 'wiki/Folder/New.html');
+  assert.equal(h.forward(), 'sources/Other.html');
+  assert.equal(h.back(), 'wiki/Folder/New.html');
+  assert.equal(h.back(), 'ch-1');
+  assert.equal(h.back(), 'wiki/Folder/New.html');
+  assert.equal(h.canBack, false);
+});
+
+test('a rename onto the stop beside it leaves one stop', () => {
+  const h = new PageHistory();
+  h.visit('wiki/A.html');
+  h.visit('wiki/B.html');
+  h.visit('ch-1');
+  h.rename('wiki/A.html', 'wiki/B.html');
+  assert.equal(h.current, 'ch-1');
+  assert.equal(h.back(), 'wiki/B.html');
+  assert.equal(h.canBack, false, 'A and B were one page after the rename');
+  h.rename('ch-9', 'ch-10');
+  assert.equal(h.current, 'wiki/B.html', 'a rename of an id not on the trail changes nothing');
+});
