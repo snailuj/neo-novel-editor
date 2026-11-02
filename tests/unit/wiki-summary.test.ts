@@ -1,10 +1,10 @@
 // Rule: before an import the writer is told, in words, what will come in and what will
-// not and why, naming the pages and the book they go into; a long list names the first
+// not and why, naming the pages and the tree they go into; a long list names the first
 // few and counts the rest.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { describeSort } from '../../src/hoard/wiki/summary.ts';
-import type { Verdict } from '../../src/hoard/wiki/store.ts';
+import type { PageVerdict as Verdict } from '../../src/hoard/wiki/page-import.ts';
 import { convertPage } from '../../src/hoard/wiki/convert.ts';
 
 const v = (kind: Verdict['kind'], name: string, extra: object = {}) => ({ kind, name, path: `/v/${name}.md`, ...extra }) as Verdict;
@@ -15,7 +15,7 @@ test('the summary counts what comes in and names what does not, with why', () =>
   const s = describeSort({ verdicts: [
     fresh('Harbour', 'The {++grey ++}gulls.\nA {==bay==}{>>Which?<<}.', { attachments: [{ target: 'Map.png', file: '/v/Map.png' }], missing: ['Gone.png'] }),
     fresh('Tide', 'x', { attachments: [{ target: 'map.png', file: '/v/Map.png' }] }),
-    v('update', 'Owl', { ...converted('y'), chId: 'ch-1' }), v('beside', 'Wren (source changed 2026-10-15)', { ...converted('z'), chId: 'ch-2' }),
+    v('update', 'Owl', { ...converted('y'), pageId: 'wiki/Owl.html' }), v('beside', 'Wren (source changed 2026-10-15)', { ...converted('z'), pageId: 'wiki/Wren.html' }),
     v('same', 'Fox'), v('through-hoard', 'Quay'), v('hoard-older', 'Bay'), v('clash', 'Hare'), v('unreadable', 'Bad', { why: 'malformed frontmatter: x' }),
   ] });
   assert.equal(s.count, 4);
@@ -38,8 +38,8 @@ test('the summary counts what comes in and names what does not, with why', () =>
 test('with nothing new the summary says so, and one page is one page', () => {
   assert.equal(describeSort({ verdicts: [v('same', 'Fox')] }).message, 'Every page picked is already in the wiki, or cannot come in.');
   assert.equal(describeSort({ verdicts: [fresh('One')] }).message, 'Import 1 page into the wiki?');
-  assert.equal(describeSort({ verdicts: [fresh('2025-12-15')] }, 'Morning Pages').message, 'Import 1 page into Morning Pages?');
-  assert.equal(describeSort({ verdicts: [v('same', 'Fox')] }, 'Morning Pages').detail, 'Already in Morning Pages: Fox.');
+  assert.equal(describeSort({ verdicts: [fresh('2025-12-15')] }, 'sources').message, 'Import 1 page into sources?');
+  assert.equal(describeSort({ verdicts: [v('same', 'Fox')] }, 'sources').detail, 'Already in sources: Fox.');
 });
 
 test('a long list names twelve and counts the rest', () => {

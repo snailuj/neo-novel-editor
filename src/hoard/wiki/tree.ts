@@ -156,7 +156,7 @@ export function foldersIn(roots: readonly Folder[], tree: Tree): string[] {
   return out;
 }
 
-// a block id as wiki import makes one (wiki/store.ts): six hex digits
+// a block id as the wiki import makes one: six hex digits
 const blockId = () => [...crypto.getRandomValues(new Uint8Array(3))].map((b) => b.toString(16).padStart(2, '0')).join('');
 
 /** A new page's HTML: wiki import's page for an empty file, one empty paragraph with a block id. */

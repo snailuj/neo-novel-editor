@@ -47,12 +47,12 @@ test('books are searched by title, each its own group, the open book left out', 
   book('book-zed-1', 'Zed', { c1: '<p>The harbour at night.</p>' });
   book('book-abe-1', 'Abe', { c1: '<p>No.</p>', c2: '<p>A <i>harbour</i> wall.</p>' }, { c2: 'Walls' });
   book('book-open-1', 'Open', { c1: '<p>harbour</p>' });
-  book('book-wiki-1', 'Wiki', { p1: '<p class="wiki-h1" data-block="a1">Harbour</p><p data-block="a2">Stone harbour.</p>' }, { p1: 'Harbour' });
+  book('book-atlas-1', 'Atlas', { p1: '<p data-block="a1">Harbour</p><p data-block="a2">Stone harbour.</p>' }, { p1: 'Harbour' });
   const index = new LibraryIndex();
   const found = await index.search(root, { text: 'harbour', scope: 'all', open: 'book-open-1', limit: 50, cap: 500 });
   assert.deepEqual(shape(found), [
     ['Abe', ['Walls:0:harbour']],
-    ['Wiki', ['Harbour:0:Harbour', 'Harbour:0:Harbour', 'Harbour:1:harbour']],
+    ['Atlas', ['Harbour:0:Harbour', 'Harbour:0:Harbour', 'Harbour:1:harbour']],
     ['Zed', ['Chapter 1:0:harbour']],
   ]);
   assert.deepEqual([found.total, found.capped], [5, false]);

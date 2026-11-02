@@ -12,9 +12,7 @@ import { launchProfile } from '../support/electron-profile.mjs';
 // the names it gives and with the sections it cuts out of a page; a source keeps its
 // vault folder; a page hoard already holds stays out, and the writer is told why; a
 // page's image is copied into its tree; a changed source updates a page nobody has
-// changed; and each import is committed. A list's `book:` line sends the pages after it
-// into a NEO book of that title (Morning Pages), opened from the result or from Open
-// Imported Book…; a line range takes those lines of a page.
+// changed; and each import is committed. A line range takes those lines of a page.
 
 const sha = (text) => createHash('sha256').update(text).digest('hex');
 const HUB = '---\ntype: project\n---\n# Tide\n## Overview\nThe era of tides.\n## Tasks\n- [ ] a task\n';
@@ -130,46 +128,6 @@ test('an import list brings pages from an old vault and from hoard into sources 
     expect(updated.detail).toContain('1 page was updated from a newer source.');
     expect(html('sources/20_Atoms/Quay-(place).html')).toContain('The quay, rebuilt:');
     expect(existsSync(path.join(library, 'sources', 'attachments', 'Quay Map (2).png'))).toBe(false);
-  } finally {
-    await fixture.close();
-  }
-});
-
-test('a book line sends the pages after it into a NEO book of their own', async () => {
-  const { profile, old } = await profileWithVaults();
-  await mkdir(path.join(old, 'Daily'), { recursive: true });
-  await writeFile(path.join(old, 'Daily', '2026-01-23.md'), '## Morning Pages\nWoke early.\n- [ ] a task\nThe sea again.\n## Habits\n- [x] walk\n');
-  const list = path.join(profile, 'pages.txt');
-  await writeFile(list, [
-    'old vault/20_Atoms/Quay.md -> Quay-(place)',
-    'book: Morning Pages',
-    'old vault/Daily/2026-01-23.md#L1-L2 -> 2026-01-23',
-    'old vault/Daily/2026-01-23.md#L4-L4 -> 2026-01-23',
-  ].join('\n'));
-  const fixture = await launchProfile(profile);
-  try {
-    const { app, page } = fixture;
-    await page.waitForFunction(() => !!window.hoard);
-    await answer(app, [list], 'Open Morning Pages');
-    await menu(app, 'Import List…');
-    await expect.poll(() => boxes(app).then((b) => b.length)).toBe(2);
-    const [asked, done] = await boxes(app);
-    expect(asked.message).toBe('Import 2 pages into sources and Morning Pages?');
-    expect(asked.detail).toContain('Into Morning Pages:\n\nComing in: 2026-01-23.');
-    expect(done.message).toBe('2 pages are in sources and Morning Pages.');
-    expect(done.buttons).toEqual(['Open Morning Pages', 'Close']);
-
-    await expect.poll(() => page.evaluate(() => book && book.title)).toBe('Morning Pages');
-    const pages = await page.evaluate(() => ({ titles: book.chapterOrder.map((id) => book.chapterTitles[id]), first: book.chapterOrder[0] }));
-    expect(pages.titles).toEqual(['2026-01-23']);
-    expect(await page.evaluate((id) => [...document.querySelectorAll(`.chapter[data-id="${id}"] .chapter-body p`)].map((p) => p.textContent), pages.first))
-      .toEqual(['Morning Pages', 'Woke early.', 'The sea again.']);
-
-    // it is on no shelf, so the plugin opens it again
-    await page.evaluate(() => backToShelf());
-    await expect.poll(() => page.evaluate(() => book && book.title)).toBe(null);
-    await menu(app, 'Open Imported Book…');
-    await expect.poll(() => page.evaluate(() => book && book.title)).toBe('Morning Pages');
   } finally {
     await fixture.close();
   }
