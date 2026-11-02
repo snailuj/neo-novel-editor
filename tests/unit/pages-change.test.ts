@@ -99,3 +99,12 @@ test('onChange returns an unsubscribe', async (t) => {
   await store.write('wiki/Tide.html', 'b', 'c');
   assert.deepEqual(heard, ['b']);
 });
+
+test('Change-Fires-Once-Per-Changed-Save: an announced import reaches the listeners in the queue, behind the save before it', async (t) => {
+  const { store, put, seen } = watched(t);
+  put('wiki/Tide.html', 'a');
+  const first = store.write('wiki/Tide.html', 'a', 'b');
+  await store.announce({ page: 'wiki/Moon.html', kind: 'import', who: 'librarian', before: '', after: '<p>m</p>' });
+  await first;
+  assert.deepEqual(seen.map((c) => [c.kind, c.page]), [['edit', 'wiki/Tide.html'], ['import', 'wiki/Moon.html']]);
+});

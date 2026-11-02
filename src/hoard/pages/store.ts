@@ -245,6 +245,14 @@ export class PageStore {
     return () => { this.#listeners.delete(fn); };
   }
 
+  /**
+   * Tells the listeners of a change made outside the store, such as an import's page
+   * files, once the queue has run what came before it.
+   */
+  announce(change: PageChange): Promise<void> {
+    return this.#serial(async () => { this.#emit(change); });
+  }
+
   #emit(change: PageChange): void {
     this.o.log('info', 'pages.change', { page: change.page, from: change.from, kind: change.kind, who: change.who, listeners: this.#listeners.size });
     for (const fn of [...this.#listeners]) {
