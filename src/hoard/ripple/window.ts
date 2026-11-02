@@ -160,7 +160,7 @@ export function startRipple(neo: NeoApiV4, o: {
     const book = neo.book();
     say('Ripple is running…');
     try {
-      const ran = await neo.invoke('ripple.run', { openBookId: book?.id ?? null, tell: !book }) as Ran;
+      const ran = await neo.invoke('ripple.run', { tell: !book }) as Ran;
       say(`${ran.said.message} ${ran.said.detail}`);
     } catch (err) {
       say(`Ripple stopped: ${err instanceof Error ? err.message : String(err)}`, true);
