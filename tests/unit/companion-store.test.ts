@@ -4,10 +4,9 @@
 //   answered;
 // - a wiki page wins over a source with the same title, and the pair is one entry;
 // - aliases and a pantsing draft status come from the page's sidecar;
-// - the wiki book while it exists, a library with no pages, and unchanged words give nothing;
+// - a library with no pages, and unchanged words, give nothing;
 // - a page the writer quieted, by its id, is left out until they ask for it again, across
-//   reloads; a quiet file that does not read is never taken for empty or written over,
-//   and a key that is not a page id is ignored and logged once;
+//   reloads; a quiet file that does not read is never taken for empty or written over;
 // - a marks file that does not read is never written over;
 // - two reads of one chapter at once flag a page once;
 // - read while the writer is still typing, a name the caret is in or just after is left
@@ -53,14 +52,13 @@ async function setup(t: T, seeded = true) {
     page('wiki/Whatif Dolphins.html', { draft_status: 'pantsing' });
     page('wiki/Harbour.html');
   }
-  let wikiBook: string | null = null;
-  const companion = new Companion({ library: () => library, marks, pages: store, wikiBook: () => wikiBook, now, newId: () => newId('m'), wrote: (name) => wrote.push(name), log });
+  const companion = new Companion({ library: () => library, marks, pages: store, now, newId: () => newId('m'), wrote: (name) => wrote.push(name), log });
   const marksOf = (chId: string) => {
     const data = JSON.parse(readFileSync(sidecarPath(library, 'book-a', chId), 'utf8'));
     assert.ok(validateHoardMarksV1(data));
     return data.marks;
   };
-  return { ...lib, library, companion, marks, marksOf, page, wrote, lines, wikiIs: (id: string | null) => { wikiBook = id; } };
+  return { ...lib, library, companion, marks, marksOf, page, wrote, lines };
 }
 
 const html = (...ps: string[]) => ps.map((p) => `<p>${p}</p>`).join('');
@@ -95,10 +93,8 @@ test('an alias from a page sidecar is matched, and a typed link is not a mention
   assert.deepEqual(marksOf('c1').map((m: { thread: { body: string }[] }) => m.thread[0]!.body.split(':')[0]), ['[[Kraken|the deep one]]']);
 });
 
-test('the wiki book while it exists, a library with no pages, and unchanged words give nothing', async (t) => {
-  const { companion, wikiIs, lines } = await setup(t);
-  wikiIs('book-wiki');
-  assert.deepEqual(await companion.read({ bookId: 'book-wiki', chId: 'c1', before: '', after: html('The Kraken.') }), { added: 0 });
+test('a library with no pages, and unchanged words, give nothing', async (t) => {
+  const { companion, lines } = await setup(t);
   assert.deepEqual(await companion.read({ bookId: 'book-a', chId: 'c1', before: html('The Kraken.'), after: html('The <b>Kraken</b>.') }), { added: 0 });
   const none = await setup(t, false);
   assert.deepEqual(await none.companion.read({ bookId: 'book-a', chId: 'c1', before: '', after: html('The Kraken.') }), { added: 0 });
@@ -146,7 +142,7 @@ test('quieting a page by id silences it across reloads', async (t) => {
   assert.ok(validateHoardCompanionV1(file));
   assert.deepEqual(file.quiet['wiki/Kraken.html'], { title: 'Kraken', at: '2026-10-15T23:00:00.000Z' });
   // a second companion over the same library: nothing is held in memory
-  const reloaded = new Companion({ library: () => library, marks, pages: store, wikiBook: () => null, log: (level, message) => { lines.push({ level, message }); }, wrote: (n) => wrote.push(n) });
+  const reloaded = new Companion({ library: () => library, marks, pages: store, log: (level, message) => { lines.push({ level, message }); }, wrote: (n) => wrote.push(n) });
   assert.deepEqual(reloaded.state(), { quiet: ['wiki/Kraken.html'] });
   assert.deepEqual(await reloaded.read({ bookId: 'book-a', chId: 'c1', before: '', after: html('The Kraken.') }), { added: 0 });
   assert.deepEqual(companion.quiet('wiki/Kraken.html', false), { quiet: [] });
@@ -154,16 +150,6 @@ test('quieting a page by id silences it across reloads', async (t) => {
   assert.equal(marksOf('c1').length, 1);
   assert.throws(() => companion.quiet('wiki/No Such Page.html', true), RangeError);
   assert.throws(() => companion.quiet('no-such-page', true), RangeError);
-});
-
-test('a quiet key that is not a page id is ignored and logged once', async (t) => {
-  const { companion, library, lines } = await setup(t);
-  mkdirSync(path.join(library, '.neo'), { recursive: true });
-  writeFileSync(path.join(library, '.neo', 'companion.json'), `${JSON.stringify({ version: 1, quiet: { 'ch-old': { title: 'Kraken', at: '2026-10-15T23:00:00.000Z' } } })}\n`);
-  assert.deepEqual(companion.state(), { quiet: [] });
-  assert.deepEqual(await companion.read({ bookId: 'book-a', chId: 'c1', before: '', after: html('The Kraken.') }), { added: 1 });
-  assert.equal(lines.filter((l) => l.message.includes('ch-old')).length, 1);
-  assert.deepEqual(companion.quiet('wiki/Harbour.html', true), { quiet: ['wiki/Harbour.html'] });
 });
 
 test('a quiet file that does not read is never taken for empty or written over', async (t) => {
@@ -235,7 +221,7 @@ function counted(setupResult: Awaited<ReturnType<typeof setup>>, clock: () => nu
   const { library, store, marks, wrote, lines } = setupResult;
   let lists = 0;
   const pages = { list: () => { lists++; return store.list(); } };
-  const companion = new Companion({ library: () => library, marks, pages, wikiBook: () => null, clock, wrote: (n) => wrote.push(n), log: (level, message) => { lines.push({ level, message }); } });
+  const companion = new Companion({ library: () => library, marks, pages, clock, wrote: (n) => wrote.push(n), log: (level, message) => { lines.push({ level, message }); } });
   return { companion, lists: () => lists };
 }
 

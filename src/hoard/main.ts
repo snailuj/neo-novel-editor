@@ -161,6 +161,6 @@ export function activate(host: NeoMainHost): void {
   const { store: pages } = startPages(host, layer, opened, authorSavedPage);
   pageHolder.store = pages;
   startReview(host, marks, { layer, wiki, pages, authorSavedPage });
-  startCompanion(host, layer, marks, wiki, pages);
+  startCompanion(host, layer, marks, pages);
   startRipple(host, layer, pages, marks);
 }
