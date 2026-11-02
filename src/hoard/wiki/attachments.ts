@@ -1,5 +1,5 @@
 // A wiki page's attachments: the images and PDFs a Markdown page embeds or links. Each
-// one is copied byte for byte into the wiki book's attachments folder, so nothing the
+// one is copied byte for byte into the attachments folder of a folder of the library (sources or wiki), so nothing the
 // page shows is left behind in the old vault. NEO draws no image in a chapter, so the
 // page keeps its embed as written until the wiki pane draws attachments.
 //
@@ -105,19 +105,19 @@ export class AttachmentFinder {
 }
 
 /**
- * Copies one attachment into the wiki book's attachments folder, byte for byte. A copy
+ * Copies one attachment into the attachments folder of a folder of the library (sources or wiki), byte for byte. A copy
  * with the same bytes already there is used again; a different file under a name
  * already taken gets a numbered name. `dest` is relative to the library.
  */
-export function copyAttachment(library: string, bookId: string, file: string): { dest: string; sha256: string; copied: boolean } {
-  const dir = path.join(library, oneName(bookId, 'bookId'), 'attachments');
+export function copyAttachment(library: string, folder: string, file: string): { dest: string; sha256: string; copied: boolean } {
+  const dir = path.join(library, oneName(folder, 'folder'), 'attachments');
   const bytes = readFileSync(file);
   const sha = sha256(bytes);
   const { name: stem, ext } = path.parse(oneName(path.basename(file), 'attachment'));
   for (let n = 1; ; n++) {
     const name = n === 1 ? `${stem}${ext}` : `${stem} (${n})${ext}`;
     const dest = path.join(dir, name);
-    const rel = `${bookId}/attachments/${name}`;
+    const rel = `${folder}/attachments/${name}`;
     if (!existsSync(dest)) {
       writeWhole(dest, bytes);
       return { dest: rel, sha256: sha, copied: true };

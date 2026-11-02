@@ -18,7 +18,7 @@ export interface Summary {
   detail: string;
 }
 
-/** `where` names where the pages go: the wiki, sources, or a book's title. */
+/** `where` names where the pages go: the wiki or sources. */
 export function describeSort(sorted: SortedOf<object>, where = 'the wiki'): Summary {
   const of = (kind: Verdict['kind']) => sorted.verdicts.filter((v) => v.kind === kind);
   const fresh = of('new');

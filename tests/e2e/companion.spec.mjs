@@ -12,23 +12,16 @@ import { launchProfile } from '../support/electron-profile.mjs';
 // same page named again in that chapter gets no second comment; a typed [[link]] is not a
 // forgotten reference; Stop Flagging This Page resolves the comment and quiets the page
 // in every chapter; and Flag This Page Again undoes both.
-// The pages are files under wiki/ and sources/ (stage 3 of pages as files). The Wiki book
-// is imported beside them only because the pane still opens a page through it until
-// stage 5; the librarian skips that book and reads the files.
+// The pages are files under wiki/ and sources/, written straight into the library.
 
 async function profileWithVault() {
   const profile = await mkdtemp(path.join(tmpdir(), 'neo-test-'));
   const library = path.join(profile, 'documents', 'NEO Library');
   await mkdir(library, { recursive: true });
-  await mkdir(path.join(profile, 'vault'), { recursive: true });
   await writeFile(path.join(library, 'library.json'), JSON.stringify({
     firstRunDone: true, authorName: 'Test author', penNames: [], pageTheme: 'night', outlineView: 'list',
     hintShown: true, shelves: [{ id: 'shelf-1', name: 'Synthetic shelf', bookIds: [] }],
   }));
-  const kraken = path.join(profile, 'vault', 'Kraken.md');
-  await writeFile(kraken, '---\naliases: [the Deep One]\n---\nIt lives below the harbour.\n');
-  const harbour = path.join(profile, 'vault', 'Harbour.md');
-  await writeFile(harbour, 'The old wall faces east.\n');
   // the pages as files: one in each tree, the first with an alias in its sidecar
   const sidecar = (name, frontmatter) => JSON.stringify({
     version: 1,
@@ -42,7 +35,7 @@ async function profileWithVault() {
   await writeFile(path.join(library, 'wiki', 'Kraken.html'), '<p>It lives below the harbour.</p>');
   await writeFile(path.join(library, '.neo', 'pages', 'wiki', 'Kraken.html.json'), sidecar('Kraken', { aliases: ['the Deep One'] }));
   await writeFile(path.join(library, 'sources', 'Harbour.html'), '<p>The old wall faces east.</p>');
-  return { profile, library, files: [kraken, harbour] };
+  return { profile, library };
 }
 
 async function menu(app, label) {
@@ -52,16 +45,6 @@ async function menu(app, label) {
     if (!item) throw new Error(`no ${label} in the menu`);
     item.click();
   }, label);
-}
-
-async function answer(app, files) {
-  await app.evaluate(({ dialog }, files) => {
-    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: files });
-    dialog.showMessageBox = async (...args) => {
-      const o = args.length > 1 ? args[1] : args[0];
-      return { response: o.buttons && o.buttons[0].startsWith('Import') ? 0 : 1, checkboxChecked: false };
-    };
-  }, files);
 }
 
 // A book of two chapters, opened.
@@ -83,14 +66,11 @@ async function twoChapters(page) {
 const drawn = (page, name) => page.evaluate((key) => [...(CSS.highlights.get(key) ?? [])].map((r) => r.toString()), `plugin-hoard-${name}`);
 
 test('a page named in new writing is flagged at the next save, once, hidden on request, not after Stop Flagging, and again after Flag Again', async () => {
-  const { profile, library, files } = await profileWithVault();
+  const { profile, library } = await profileWithVault();
   const fixture = await launchProfile(profile);
   try {
     const { app, page } = fixture;
     await page.waitForFunction(() => !!window.hoard);
-    await answer(app, files);
-    await menu(app, 'Import to Wiki…');
-    await expect.poll(() => page.evaluate(() => window.hoard.wiki.pages()?.pages.length ?? 0)).toBe(2);
     const bookId = await twoChapters(page);
     const chapter = (chId) => readFile(path.join(library, bookId, 'chapters', `${chId}.html`), 'utf8');
     const librarians = (chId) => page.evaluate((chId) => (window.hoard.marks.state().marks[chId] ?? [])

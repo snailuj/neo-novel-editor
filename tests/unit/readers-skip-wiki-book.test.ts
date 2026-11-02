@@ -3,7 +3,7 @@
 // the page store itself, and the marks store; none of them may name the Wiki book's
 // store, its manifest (.neo/wiki.json), its id, or the channels that served its chapters.
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -29,4 +29,34 @@ test('the check can fail: a reader that names the Wiki book is caught', () => {
   assert.ok(WIKI_BOOK.test("import { WikiStore } from '../wiki/store.ts';"));
   assert.ok(WIKI_BOOK.test("path.join(library, '.neo', 'wiki.json')"));
   assert.ok(!WIKI_BOOK.test("import { linksIn } from '../wiki/links.ts';"));
+});
+
+// Rule: the Wiki book is gone from src/hoard: no file names its store, its manifest, its
+// schemas or the channels that served its chapters. Pages come in only as page files.
+// The pane still asks the removed `wiki.page` channel until it moves onto pages; its files
+// are listed so the file tree work removes them from this list, not so the rule bends.
+const GONE = /WikiStore|wiki\/store|wiki\.json|wiki\.pages|wiki\.imported-book|['"`]wiki\.page['"`]|HoardWikiV1|HoardWikiPageV1|hoard-wiki-v1|hoard-wiki-page-v1|open-imported-book/;
+const PANE_STILL_ASKS = new Set(['wiki/pane.ts', 'marks/pane-marks.ts']);
+
+test('nothing in src/hoard names the Wiki book store, its file, its schemas or its channels', () => {
+  const files = sources('.');
+  assert.ok(files.length > 40, `src/hoard was found: ${files.length} files`);
+  const named = files
+    .map((file) => path.relative(hoard, file))
+    .filter((rel) => !PANE_STILL_ASKS.has(rel.split(path.sep).join('/')))
+    .filter((rel) => GONE.test(readFileSync(path.join(hoard, rel), 'utf8')));
+  assert.deepEqual(named, []);
+});
+
+test('the removed pieces are gone from disk', () => {
+  for (const gone of ['wiki/store.ts', '../../schemas/hoard-wiki-v1.json', '../../schemas/ipc/hoard-wiki-page-v1.json']) {
+    assert.equal(existsSync(path.join(hoard, gone)), false, gone);
+  }
+});
+
+test('the check can fail: a file naming a removed piece is caught', () => {
+  for (const text of ["host.handle('wiki.pages', f)", "neo.invoke('wiki.imported-book')", "validateHoardWikiV1(x)", "from './store.ts'; new WikiStore(o)"]) {
+    assert.ok(GONE.test(text), text);
+  }
+  assert.ok(!GONE.test("host.handle('wiki.import', f)"));
 });
