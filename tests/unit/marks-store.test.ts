@@ -3,14 +3,17 @@
 // - a sidecar that does not read as the schema says is never written over;
 // - each action reads the file afresh, so what another device wrote is kept;
 // - actions on one file run one at a time, so none is lost;
+// - page marks never read or write through a link that leaves .neo/marks;
 // - reading never writes, and the main half, not the window, says when and by whom.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import type { Mark } from '../../src/generated/hoard-marks-v1.js';
 import { validateHoardMarksV1 } from '../../src/generated/validators.cjs';
-import { MarkFileError, MarkStore, sidecarPath } from '../../src/hoard/marks/store.ts';
+import { newMark } from '../../src/hoard/marks/model.ts';
+import { MarkFileError, MarkStore, pageSidecarPath, sidecarPath } from '../../src/hoard/marks/store.ts';
+import { PageRefused } from '../../src/hoard/pages/identity.ts';
 import { tempDir } from './git-support.ts';
 
 const anchor = { exact: 'boats', prefix: 'counted the ', suffix: ' twice.', pIdx: 1, off: 17 };
@@ -58,7 +61,7 @@ test('a bad book or chapter name is refused before anything is written', async (
     assert.throws(() => sidecarPath(library, bad, 'c1'), TypeError, JSON.stringify(bad));
     assert.throws(() => sidecarPath(library, 'book-fox-1', bad), TypeError, JSON.stringify(bad));
     await assert.rejects(store.add({ bookId: bad, chId: 'c1', kind: 'comment', anchor, body: 'x' }, 'author'), TypeError);
-    await assert.rejects(store.list(bad), TypeError);
+    await assert.rejects(store.listBook(bad), TypeError);
   }
   assert.equal(existsSync(path.join(library, '.neo')), false);
 });
@@ -71,7 +74,7 @@ test('a sidecar that does not fit the schema is reported and never written over'
     writeFileSync(file, junk);
     await assert.rejects(store.add({ ...ids, kind: 'comment', anchor, body: 'Lost?' }, 'author'), MarkFileError);
     assert.equal(readFileSync(file, 'utf8'), junk, 'left exactly as it was');
-    const listed = await store.list('book-fox-1');
+    const listed = await store.listBook('book-fox-1');
     assert.deepEqual(listed.unreadable, ['c1']);
     assert.deepEqual(Object.keys(listed.chapters), ['c2'], 'the other chapter still reads');
   }
@@ -117,17 +120,205 @@ test('resolving and reopening are recorded; a move the mark cannot make changes 
 
 test('listing reads every chapter of a book and writes nothing', async (t) => {
   const { library, store, wrote, file } = storeFor(t);
-  assert.deepEqual(await store.list('book-fox-1'), { chapters: {}, unreadable: [] });
+  assert.deepEqual(await store.listBook('book-fox-1'), { chapters: {}, unreadable: [] });
   assert.equal(existsSync(path.join(library, '.neo')), false, 'a book with no marks makes no folder');
   await store.add({ ...ids, kind: 'comment', anchor, body: 'One.' }, 'author');
   await store.add({ bookId: 'book-fox-1', chId: 'c2', kind: 'highlight', anchor }, 'author');
   writeFileSync(file + '.tmp', '{"torn');
   const stamp = statSync(file).mtimeMs;
   wrote.length = 0;
-  const listed = await store.list('book-fox-1');
+  const listed = await store.listBook('book-fox-1');
   assert.deepEqual(Object.keys(listed.chapters).sort(), ['c1', 'c2']);
   assert.equal(listed.chapters.c2[0].kind, 'highlight');
   assert.deepEqual(listed.unreadable, []);
   assert.equal(statSync(file).mtimeMs, stamp);
   assert.deepEqual(wrote, []);
+});
+
+// Page marks: the same marks, on a page named by its id (<tree>/<path>) instead of a chapter.
+const pageId = 'wiki/People/Harbour.html';
+
+// A mark is added only to a page that is there, so the test makes its pages first.
+function pages(library: string, ...ids: string[]): void {
+  for (const id of ids) {
+    mkdirSync(path.dirname(path.join(library, id)), { recursive: true });
+    writeFileSync(path.join(library, id), '<p>The wall.</p>');
+  }
+}
+
+test('a page\'s marks live under .neo/marks/<tree>/<path>.json and survive a reload', async (t) => {
+  const { library, store } = storeFor(t);
+  pages(library, pageId, 'sources/Notes/Tides.html');
+  const made = await store.add({ page: pageId, kind: 'comment', anchor, body: 'Which harbour?' }, 'author');
+  const file = path.join(library, '.neo', 'marks', 'wiki', 'People', 'Harbour.html.json');
+  const saved = onDisk(file);
+  assert.ok(validateHoardMarksV1(saved), JSON.stringify(validateHoardMarksV1.errors));
+  assert.deepEqual(saved.marks, made.marks);
+  assert.equal(saved.marks[0].id, made.id);
+  assert.equal(pageSidecarPath(library, pageId), file);
+  // a second store over the same library, as after a restart, reads the same marks
+  const again = new MarkStore({ library: () => library, log: () => {} });
+  assert.deepEqual(await again.list(pageId), saved.marks);
+  const source = await store.add({ page: 'sources/Notes/Tides.html', kind: 'highlight', anchor }, 'author');
+  assert.deepEqual(onDisk(path.join(library, '.neo', 'marks', 'sources', 'Notes', 'Tides.html.json')).marks.map((m) => m.id), [source.id]);
+});
+
+test('listing a page with no marks gives none and writes nothing', async (t) => {
+  const { library, store, wrote } = storeFor(t);
+  assert.deepEqual(await store.list(pageId), []);
+  assert.equal(existsSync(path.join(library, '.neo')), false);
+  assert.deepEqual(wrote, []);
+});
+
+test('a page id that escapes the library or its tree is refused before anything is written', async (t) => {
+  const { library, store } = storeFor(t);
+  const bad = ['../x.html', 'wiki/../x.html', 'wiki/a/../../x.html', 'wiki//x.html', 'wiki/.hidden/x.html', 'wiki/x.md', 'wiki/', 'wiki', 'notes/x.html', '/wiki/x.html', 'wiki\\x.html', 'wiki/x\0.html', ''];
+  for (const page of bad) {
+    assert.throws(() => pageSidecarPath(library, page), PageRefused, JSON.stringify(page));
+    await assert.rejects(store.add({ page, kind: 'comment', anchor, body: 'x' }, 'author'), PageRefused, JSON.stringify(page));
+    await assert.rejects(store.list(page), PageRefused, JSON.stringify(page));
+    await assert.rejects(store.addAll(page, []), PageRefused, JSON.stringify(page));
+    await assert.rejects(store.reply({ page, markId: 'm-1', body: 'x' }, 'author'), PageRefused, JSON.stringify(page));
+    await assert.rejects(store.setState({ page, markId: 'm-1', state: 'resolved' }, 'author'), PageRefused, JSON.stringify(page));
+  }
+  assert.equal(existsSync(path.join(library, '.neo')), false);
+  assert.equal(existsSync(path.join(library, '..', 'x.html.json')), false);
+});
+
+test('a page\'s marks take replies, states, a review and imported marks like a chapter\'s', async (t) => {
+  const { library, store } = storeFor(t);
+  pages(library, pageId);
+  const file = pageSidecarPath(library, pageId);
+  const comment = await store.add({ page: pageId, kind: 'comment', anchor, body: 'Check.' }, 'author');
+  await store.reply({ page: pageId, markId: comment.id, body: 'Done.' }, 'librarian');
+  await store.setState({ page: pageId, markId: comment.id, state: 'resolved' }, 'author');
+  const suggestion = await store.add({ page: pageId, kind: 'substitution', anchor, proposed: 'vessels' }, 'librarian');
+  const reviewed = await store.review({ page: pageId, markId: suggestion.id, state: 'accepted' }, 'librarian', 'Applied.');
+  const marks = onDisk(file).marks;
+  assert.deepEqual(reviewed.marks, marks);
+  assert.deepEqual(marks.map((m) => m.id), [comment.id, suggestion.id]);
+  assert.deepEqual(marks[0].thread.map((e) => `${e.who}:${e.body}`), ['author:Check.', 'librarian:Done.']);
+  assert.equal(marks[0].history.at(-1)?.state, 'resolved');
+  assert.equal(marks[1].history.at(-1)?.state, 'accepted');
+  await assert.rejects(store.review({ page: pageId, markId: comment.id, state: 'accepted' }, 'librarian'), RangeError);
+  await assert.rejects(store.reply({ page: pageId, markId: 'm-nowhere', body: 'x' }, 'author'), RangeError);
+  await assert.rejects(store.reply({ page: 'wiki/Other.html', markId: comment.id, body: 'x' }, 'author'), RangeError);
+  // imported marks go after the page's own
+  const extra = { ...marks[0], id: 'm-import1', thread: [{ ...marks[0].thread[0], id: 'm-import1-0' }] };
+  await store.addAll(pageId, [extra]);
+  await store.addAll(pageId, []);
+  assert.deepEqual((await store.list(pageId)).map((m) => m.id), [comment.id, suggestion.id, 'm-import1']);
+  // many at once are all kept, in the order sent
+  await Promise.all(Array.from({ length: 6 }, (_, i) => store.reply({ page: pageId, markId: comment.id, body: `Reply ${i}.` }, 'author')));
+  assert.deepEqual(onDisk(file).marks[0].thread.slice(2).map((e) => e.body), Array.from({ length: 6 }, (_, i) => `Reply ${i}.`));
+});
+
+test('a book chapter\'s marks are untouched by page marks, and the reverse', async (t) => {
+  const { library, store, file } = storeFor(t);
+  pages(library, pageId, 'wiki/book-fox-1/chapters/c1.html');
+  await store.add({ ...ids, kind: 'comment', anchor, body: 'Chapter.' }, 'author');
+  const chapter = readFileSync(file, 'utf8');
+  await store.add({ page: pageId, kind: 'comment', anchor, body: 'Page.' }, 'author');
+  assert.equal(readFileSync(file, 'utf8'), chapter);
+  assert.deepEqual(Object.keys((await store.listBook('book-fox-1')).chapters), ['c1']);
+  assert.deepEqual((await store.list(pageId)).map((m) => m.thread[0].body), ['Page.']);
+  // a page folder named like a book changes nothing for that book
+  await store.add({ page: 'wiki/book-fox-1/chapters/c1.html', kind: 'comment', anchor, body: 'Look-alike.' }, 'author');
+  assert.equal(readFileSync(file, 'utf8'), chapter);
+  assert.equal(existsSync(path.join(library, '.neo', 'marks', 'wiki', 'book-fox-1', 'chapters', 'c1.html.json')), true);
+});
+
+test('a page sidecar that does not read is reported and never written over', async (t) => {
+  const { library, store, lines } = storeFor(t);
+  const file = pageSidecarPath(library, pageId);
+  mkdirSync(path.dirname(file), { recursive: true });
+  for (const junk of ['{"version": 1, "marks": [', '{"version": 2, "marks": []}']) {
+    writeFileSync(file, junk);
+    await assert.rejects(store.add({ page: pageId, kind: 'comment', anchor, body: 'Lost?' }, 'author'), MarkFileError);
+    await assert.rejects(store.list(pageId), MarkFileError);
+    await assert.rejects(store.addAll(pageId, [{} as Mark]), MarkFileError);
+    assert.equal(readFileSync(file, 'utf8'), junk);
+  }
+  assert.ok(lines.some((l) => l.level === 'error' && /Harbour\.html\.json/.test(String(l.message) + JSON.stringify(l.data))));
+});
+
+// Rule: page marks never read or write through a link that leaves .neo/marks.
+test('page marks are not read or written through a link that leaves .neo/marks', async (t) => {
+  const { library, store, lines } = storeFor(t);
+  pages(library, 'wiki/Fine.html');
+  const outside = path.join(library, 'outside');
+  mkdirSync(outside, { recursive: true });
+  mkdirSync(path.join(library, '.neo', 'marks', 'wiki'), { recursive: true });
+  const theirs = JSON.stringify({ version: 1, marks: [] });
+  writeFileSync(path.join(outside, 'Leak.html.json'), theirs);
+  symlinkSync(outside, path.join(library, '.neo', 'marks', 'wiki', 'link'), 'junction');
+  symlinkSync(path.join(outside, 'Nowhere.json'), path.join(library, '.neo', 'marks', 'wiki', 'Gone.html.json'));
+  assert.ok(existsSync(path.join(library, '.neo', 'marks', 'wiki', 'link', 'Leak.html.json')), 'the link leads out');
+  const unsafe = (e: unknown) => e instanceof PageRefused && e.code === 'unsafe';
+
+  await assert.rejects(store.list('wiki/link/Leak.html'), unsafe);
+  await assert.rejects(store.add({ page: 'wiki/link/Leak.html', kind: 'comment', anchor, body: 'x' }, 'author'), unsafe);
+  await assert.rejects(store.add({ page: 'wiki/link/deeper/New.html', kind: 'comment', anchor, body: 'x' }, 'author'), unsafe);
+  await assert.rejects(store.add({ page: 'wiki/Gone.html', kind: 'comment', anchor, body: 'x' }, 'author'), unsafe, 'a link that leads nowhere');
+  await assert.rejects(store.list('wiki/Gone.html'), unsafe);
+  assert.deepEqual(readdirSync(outside).sort(), ['Leak.html.json'], 'nothing was written outside');
+  assert.equal(readFileSync(path.join(outside, 'Leak.html.json'), 'utf8'), theirs);
+  assert.ok(lines.some((l) => l.level === 'warn' && /marks/.test(l.message)), JSON.stringify(lines));
+
+  assert.deepEqual(await store.list('wiki/Fine.html'), [], 'a page beside the links is read');
+  await store.add({ page: 'wiki/Fine.html', kind: 'comment', anchor, body: 'ok' }, 'author');
+  assert.equal((await store.list('wiki/Fine.html')).length, 1, 'and written');
+});
+
+const newMarkFor = (id = 'm-import1'): Mark => newMark({ id, kind: 'comment', anchor: { ...anchor, commit: null }, body: 'Imported.', who: 'author', at: '2026-10-15T21:00:00.000Z' });
+
+// Rule: a .neo/marks that is itself a link out of the library is refused for every request.
+for (const [what, link] of [['.neo/marks', ['.neo', 'marks']], ['.neo', ['.neo']]] as const) {
+  test(`page marks are refused, logged and nothing is written when ${what} is a link that leaves the library`, async (t) => {
+    const { library, store, lines } = storeFor(t);
+    pages(library, 'wiki/Fine.html');
+    const outside = tempDir(t, 'hoard-outside-');
+    mkdirSync(path.join(library, ...link.slice(0, -1)), { recursive: true });
+    symlinkSync(outside, path.join(library, ...link), 'junction');
+    assert.ok(statSync(path.join(library, '.neo')).isDirectory(), 'the fixture reached its state');
+    const unsafe = (e: unknown) => e instanceof PageRefused && e.code === 'unsafe';
+
+    await assert.rejects(store.list('wiki/Fine.html'), unsafe);
+    await assert.rejects(store.add({ page: 'wiki/Fine.html', kind: 'comment', anchor, body: 'x' }, 'author'), unsafe);
+    await assert.rejects(store.addAll('wiki/Fine.html', [newMarkFor()]), unsafe);
+    assert.deepEqual(readdirSync(outside), [], 'nothing was written where the link leads');
+    assert.ok(lines.some((l) => l.level === 'warn' && l.message === 'marks.refused'), JSON.stringify(lines));
+
+    rmSync(path.join(library, ...link));
+    mkdirSync(path.join(library, '.neo', 'marks'), { recursive: true });
+    await store.add({ page: 'wiki/Fine.html', kind: 'comment', anchor, body: 'ok' }, 'author');
+    assert.equal((await store.list('wiki/Fine.html')).length, 1, 'with a folder of its own the same request is written');
+  });
+}
+
+// Rule: addAll on a page that is gone writes nothing.
+test('addAll on a page that is gone, say renamed, writes nothing and never recreates the marks file at the old id', async (t) => {
+  const { library, store } = storeFor(t);
+  pages(library, pageId);
+  const file = pageSidecarPath(library, pageId);
+  const gone = (e: unknown) => e instanceof PageRefused && e.code === 'missing';
+  await store.addAll(pageId, [newMarkFor('m-before')]);
+  assert.deepEqual((await store.list(pageId)).map((m) => m.id), ['m-before'], 'with the page there the import is written');
+
+  // a page that was never there
+  await assert.rejects(store.addAll('wiki/Other.html', [newMarkFor()]), gone);
+  assert.equal(existsSync(pageSidecarPath(library, 'wiki/Other.html')), false);
+
+  // the page is renamed while an earlier write to its marks waits: the import behind it must not bring the old file back
+  let release = (): void => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const slow = new MarkStore({ library: () => library, head: async () => { await held; return null; }, log: () => {} });
+  const adding = slow.add({ page: pageId, kind: 'comment', anchor, body: 'Slow.' }, 'author');
+  const importing = slow.addAll(pageId, [newMarkFor('m-during')]);
+  rmSync(file);
+  rmSync(path.join(library, pageId));
+  release();
+  await assert.rejects(adding, gone);
+  await assert.rejects(importing, gone);
+  assert.equal(existsSync(file), false, 'no marks file at the old id');
 });

@@ -1,21 +1,25 @@
-// The pre-commit gate: the checks every commit runs over the files it stages. The wiki's
-// pages are HTML chapters with their frontmatter in sidecars, so of hoard's lint only the
-// frontmatter rules still have their input; the rest read Markdown lines, callouts and
-// wikilinks, and wait for the HTML citation format. Chapter prose is never judged: the
-// gate reads a chapter only for the ids its citations name.
+// The pre-commit gate: the checks every commit runs over the files it stages. A page
+// (wiki/**/*.html, sources/**/*.html, or a chapter of the Wiki book) is HTML with its
+// frontmatter in a sidecar, so of hoard's lint only the frontmatter rules still have their
+// input; the rest read Markdown lines and callouts. Prose is never judged: the gate reads
+// a page only for the block ids and the citations ([[Page#^id]]) it holds.
 //
 // What a finding does is the commit's business (commit.ts): a writer's commit logs it
 // and goes ahead, a librarian edit is refused.
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   validateHoardChangeV1, validateHoardMarksV1, validateHoardPageV1, validateHoardWikiV1,
 } from '../../generated/validators.cjs';
 import { checkNote } from '../../librarian/lint.ts';
 import { ManifestError, parseManifest } from '../../librarian/manifest.ts';
-import { HOARD_LAYOUT, type Layout, type Scheme, schemeFrom } from '../../librarian/scheme.ts';
+import { type Scheme, schemeFrom } from '../../librarian/scheme.ts';
+import { PageRefused, parseId, titleOf, TREES, type Tree } from '../pages/identity.ts';
+import { titleIndex, type Titled } from '../pages/titles.ts';
+import { blockIds, citationsIn } from './citations.ts';
+import { LIBRARY_LAYOUT, PAGE_PATH } from './layout.ts';
 
-export type GateRule = 'Sidecar-Fits-Its-Schema' | 'Frontmatter-Fits-The-Scheme' | 'Block-Ids-Citable';
+export type GateRule = 'Sidecar-Fits-Its-Schema' | 'Frontmatter-Fits-The-Scheme' | 'Block-Ids-Citable' | 'Citations-Resolve';
 
 export interface Finding {
   /** The file, relative to the library, with forward slashes. */
@@ -32,6 +36,13 @@ export interface StagedFile {
 export interface CheckContext {
   /** The library's .neo/scheme.json, or null when it has none; read only if a page is staged. */
   schemeText(): string | null;
+  /**
+   * Every page of the library, wiki and sources; called at most once, and only when a staged
+   * page holds a citation. Absent, no citation is judged.
+   */
+  pages?(): Titled[];
+  /** A page's html by id, or null when it is not there. */
+  pageHtml?(id: string): string | null;
 }
 
 export const SCHEME_FILE = '.neo/scheme.json';
@@ -42,8 +53,12 @@ const SIDECARS: { match: RegExp; validate: Validator }[] = [
   { match: /^\.neo\/wiki\.json$/, validate: validateHoardWikiV1 },
   { match: /^\.neo\/book-[^/]+\/pages\/[^/]+\.json$/, validate: validateHoardPageV1 },
   { match: /^\.neo\/book-[^/]+\/chapters\/[^/]+\.json$/, validate: validateHoardMarksV1 },
+  { match: /^\.neo\/pages\/(?:wiki|sources)\/(?:[^/.][^/]*\/)*[^/.][^/]*\.html\.json$/, validate: validateHoardPageV1 },
+  { match: /^\.neo\/marks\/(?:wiki|sources)\/(?:[^/.][^/]*\/)*[^/.][^/]*\.html\.json$/, validate: validateHoardMarksV1 },
 ];
-const PAGE = /^\.neo\/book-[^/]+\/pages\/[^/]+\.json$/;
+// A page's frontmatter lives in its sidecar: the Wiki book's, or the page store's. The
+// pattern leaves out the rename journal, .neo/pages/.rename.json.
+const PAGE = /^\.neo\/(?:book-[^/]+\/pages\/[^/]+|pages\/(?:wiki|sources)\/(?:[^/.][^/]*\/)*[^/.][^/]*\.html)\.json$/;
 const CHAPTER = /^book-[^/]+\/chapters\/[^/]+\.html$/;
 const BLOCK_ID = /\sdata-block="([^"]*)"/g;
 // What a citation's [[Page#^id]] can name, as wiki/convert.ts reads a page's own ^id.
@@ -51,21 +66,20 @@ const CITABLE = /^[A-Za-z0-9-]+$/;
 // FN1 and AT2 judge a page's path and a generator on an author body; neither applies to
 // a sidecar whose page path is made up here.
 const FRONTMATTER_RULE = /^(?:FM|PR)\d+ /;
-// Every page in the wiki zone, none librarian-authored, no capture or mark folders: so
-// checkNote runs its frontmatter rules and none of its body rules.
-const PAGE_PATH = 'wiki/page.md';
-const WIKI_LAYOUT: Layout = Object.freeze({
-  ...HOARD_LAYOUT,
-  librarianDirs: ['wiki/'],
-  asIsDirs: [],
-  skipDirs: [],
-  authorBodyDirs: [],
-  librarianAuthoredDirs: [],
-  captureDirs: [],
-  markDirs: [],
-}) as Layout;
 
-const why = (v: Validator) => (v.errors ?? []).map((e) => `${e.instancePath || '/'} ${e.message ?? 'is invalid'}`).join('; ');
+/** A page file of the library: a safe page id of wiki/ or sources/. */
+function isPageFile(rel: string): boolean {
+  if (!/^(?:wiki|sources)\//.test(rel)) return false;
+  try {
+    parseId(rel);
+    return true;
+  } catch (err) {
+    if (err instanceof PageRefused) return false;
+    throw err;
+  }
+}
+
+const why =(v: Validator) => (v.errors ?? []).map((e) => `${e.instancePath || '/'} ${e.message ?? 'is invalid'}`).join('; ');
 
 function parsed(text: string): { value: unknown } | { error: string } {
   try {
@@ -113,7 +127,7 @@ function uncitableIds(file: StagedFile): Finding[] {
 function frontmatterFindings(file: StagedFile, frontmatter: unknown, scheme: Scheme): Finding[] {
   const text = frontmatter === null ? '' : `---\n${JSON.stringify(frontmatter)}\n---\n`;
   const prefix = `${PAGE_PATH}: `;
-  return checkNote(PAGE_PATH, text, { scheme, layout: WIKI_LAYOUT })
+  return checkNote(PAGE_PATH, text, { scheme, layout: LIBRARY_LAYOUT })
     .map((f) => (f.startsWith(prefix) ? f.slice(prefix.length) : f))
     .filter((f) => FRONTMATTER_RULE.test(f))
     .map((message) => ({ path: file.path, rule: 'Frontmatter-Fits-The-Scheme' as const, message }));
@@ -141,9 +155,35 @@ export function checkFiles(files: readonly StagedFile[], context: CheckContext):
     return scheme;
   };
 
+  // The library is listed once, and only for a page that cites; a staged page counts as
+  // listed and is read from the commit, not the disk.
+  const staged = new Map(files.filter((f) => isPageFile(f.path)).map((f) => [f.path, f.text]));
+  let titles: ReturnType<typeof titleIndex<Titled>> | null | undefined;
+  const titlesOnce = () => {
+    if (titles !== undefined || !context.pages) return titles ?? null;
+    const listed = context.pages();
+    const known = new Set(listed.map((p) => p.id));
+    const extra = [...staged.keys()].filter((id) => !known.has(id))
+      .map((id) => ({ id, tree: id.slice(0, id.indexOf('/')) as Tree, title: titleOf(id) }));
+    titles = titleIndex([...listed, ...extra]);
+    return titles;
+  };
+  const htmlOf = (id: string) => staged.get(id) ?? context.pageHtml?.(id) ?? null;
+
   for (const file of files) {
     if (CHAPTER.test(file.path)) {
       findings.push(...uncitableIds(file));
+    } else if (staged.has(file.path)) {
+      findings.push(...uncitableIds(file));
+      const cites = citationsIn(file.text);
+      const index = cites.length ? titlesOnce() : null;
+      for (const c of cites) {
+        if (!index) break;
+        const target = index.resolve(c.target);
+        const message = !target ? `${c.link} names no page`
+          : blockIds(htmlOf(target.id) ?? '').has(c.id) ? null : `${c.link} names no block '${c.id}' in ${target.id}`;
+        if (message) findings.push({ path: file.path, rule: 'Citations-Resolve', message });
+      }
     } else if (file.path === '.neo/changes.jsonl') {
       sidecar(file.path, checkChanges(file.text));
     } else if (file.path === '.neo/manifest.jsonl') {
@@ -243,6 +283,12 @@ export class Gate {
     if (this.#held.delete(rel)) this.#o.log('info', 'git.gate: the writer saved a held file, so their next commit takes it', { path: rel });
   }
 
+  /** A refused edit's files were put back as they were: nothing of the librarian's is left in them, so they are the writer's again. */
+  release(paths: readonly string[]): void {
+    const freed = paths.filter((rel) => this.#held.delete(rel));
+    if (freed.length) this.#o.log('info', 'git.gate: a refused edit was put back, so its files are no longer held', { paths: freed });
+  }
+
   /**
    * Judges the staged files (deleted ones are skipped). A librarian edit with a finding
    * throws GateRefused and holds its files; any other commit logs what is new and goes on.
@@ -255,7 +301,11 @@ export class Gate {
       const text = readOrNull(path.join(library, rel));
       if (text !== null) files.push({ path: rel, text });
     }
-    const found = checkFiles(files, { schemeText: () => readOrNull(path.join(library, SCHEME_FILE)) });
+    const found = checkFiles(files, {
+      schemeText: () => readOrNull(path.join(library, SCHEME_FILE)),
+      pages: () => listPages(library, (message, data) => this.#o.log('warn', message, data)),
+      pageHtml: (id) => readOrNull(path.join(library, ...id.split('/'))),
+    });
     this.#o.log('debug', 'git.gate', { files: files.length, findings: found.length, blocking, ms: Math.round(performance.now() - start) });
     if (blocking && found.length) {
       for (const rel of staged) this.#held.add(rel);
@@ -273,6 +323,29 @@ export class Gate {
       else this.#findings.delete(rel);
     }
   }
+}
+
+/** Every page of both trees, listed from disk; a folder that will not list is logged and left out. */
+function listPages(library: string, warn: (message: string, data?: unknown) => void): Titled[] {
+  const pages: Titled[] = [];
+  const walk = (tree: Tree, rel: string) => {
+    const dir = path.join(library, tree, ...(rel ? rel.split('/') : []));
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') warn(`git.gate: ${dir} does not list, so its pages are left out of citations`, String(err));
+      return;
+    }
+    for (const d of entries) {
+      if (d.name.startsWith('.')) continue;
+      const at = rel ? `${rel}/${d.name}` : d.name;
+      if (d.isDirectory()) walk(tree, at);
+      else if (d.isFile() && d.name.endsWith('.html')) pages.push({ id: `${tree}/${at}`, tree, title: titleOf(at) });
+    }
+  };
+  for (const tree of TREES) walk(tree, '');
+  return pages;
 }
 
 function readOrNull(file: string): string | null {

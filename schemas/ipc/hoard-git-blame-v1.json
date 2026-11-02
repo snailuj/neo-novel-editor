@@ -1,10 +1,18 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "description": "A request for a chapter's blame, version 1: the book folder and chapter id, each one name inside the library.",
+  "description": "A request for blame, version 1: a chapter by its book folder and chapter id, each one name inside the library, or a page by its id.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["bookId", "chId"],
+  "oneOf": [
+    { "required": ["page"], "properties": { "page": true, "bookId": false, "chId": false } },
+    { "required": ["bookId", "chId"], "properties": { "bookId": true, "chId": true, "page": false } }
+  ],
   "properties": {
+    "page": {
+      "description": "A page's id, <tree>/<path>, in place of bookId and chId.",
+      "type": "string",
+      "pattern": "^(wiki|sources)/.+$"
+    },
     "bookId": { "type": "string", "minLength": 1 },
     "chId": { "type": "string", "minLength": 1 }
   }

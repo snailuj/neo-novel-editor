@@ -20,7 +20,7 @@
 import { key, maskCodeSpans, WIKILINK } from '../../librarian/links.ts';
 
 export interface WikiPage {
-  /** The page's chapter id in the wiki book. */
+  /** The page's id, `<tree>/<path>`. */
   id: string;
   title: string;
   aliases: string[];

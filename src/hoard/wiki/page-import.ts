@@ -32,7 +32,7 @@ import { writeWhole } from '../files.ts';
 import { anchorAt, anchorPoint } from '../marks/anchor.ts';
 import { newMark } from '../marks/model.ts';
 import { checkPath, idOf, parseId, titleOf, TREES, type Tree } from '../pages/identity.ts';
-import { ownerOf } from '../review/owner.ts';
+import { ownerFromFrontmatter } from '../review/owner.ts';
 import { copyAttachment } from './attachments.ts';
 import { pageHtml, type ConvertedPage } from './convert.ts';
 import { HoardIndex, hoardRoot, vaultRoot } from './hoard-manifest.ts';
@@ -274,7 +274,7 @@ export class PageImport {
     });
     // With history kept, a page first holds only the author's blocks (or all of it, when the
     // author owns it), committed before the librarian's are added.
-    const first = pages.map((page) => (this.#o.commit && ownerOf(page.page.frontmatter) !== 'author' ? pageHtml(page.page.blocks, 'author') : page.page.html));
+    const first = pages.map((page) => (this.#o.commit && ownerFromFrontmatter(page.page.frontmatter) !== 'author' ? pageHtml(page.page.blocks, 'author') : page.page.html));
     // Each sidecar is provisional until its page holds its final text: its source hash
     // matches no file, and `written` is the page as it is now, so an import that stops part
     // way is taken up again as an update rather than seen as already done.

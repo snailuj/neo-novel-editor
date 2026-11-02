@@ -50,3 +50,12 @@ test('the count stops at the cap and says so; only the first hits come back', ()
 test('an empty query finds nothing', () => {
   assert.deepEqual(searchChapters(chapters, '  ', { limit: 10, cap: 10 }), { hits: [], total: 0, capped: false });
 });
+
+test('a page is searched like a chapter, and its hits name the page id, not a book or chapter', () => {
+  const found = searchChapters(
+    [{ page: 'sources/Notes/Reef.html', title: 'Reef', paragraphs: ['Nothing.', 'The reef at low water.'] }],
+    'reef', { limit: 10, cap: 10 },
+  );
+  assert.deepEqual(found.hits.map((h) => [h.kind, h.page, h.title, h.pIdx, h.match]), [['title', 'sources/Notes/Reef.html', 'Reef', 0, 'Reef'], ['text', 'sources/Notes/Reef.html', 'Reef', 1, 'reef']]);
+  assert.ok(found.hits.every((h) => !('bookId' in h) && !('chId' in h)));
+});

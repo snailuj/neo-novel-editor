@@ -42,7 +42,7 @@ import { oneName, writeJson, writeWhole } from '../files.ts';
 import { anchorAt, anchorPoint } from '../marks/anchor.ts';
 import { newMark } from '../marks/model.ts';
 import type { MarkStore } from '../marks/store.ts';
-import { ownerOf } from '../review/owner.ts';
+import { ownerFromFrontmatter } from '../review/owner.ts';
 import { copyAttachment } from './attachments.ts';
 import { pageHtml, type Block, type ConvertedPage } from './convert.ts';
 import { HoardIndex, hoardRoot } from './hoard-manifest.ts';
@@ -297,12 +297,12 @@ export class WikiStore {
     const chapterFile = (chId: string) => path.join(this.#library, bookId!, 'chapters', `${oneName(chId, 'chId')}.html`);
     if (this.#o.commit) {
       pages.forEach((page, n) => {
-        const theirs = ownerOf(page.page.frontmatter) === 'author';
+        const theirs = ownerFromFrontmatter(page.page.frontmatter) === 'author';
         writeWhole(chapterFile(chIds[n]!), theirs ? page.page.html : pageHtml(page.page.blocks, 'author'));
       });
       await this.#o.commit('author');
     }
-    const existing = pages.some((p) => p.kind === 'update') ? (await this.#o.marks.list(bookId)).chapters : {};
+    const existing = pages.some((p) => p.kind === 'update') ? (await this.#o.marks.listBook(bookId)).chapters : {};
     const changes: HoardChangeV1[] = [];
     const missing = new Set<string>();
     const made: { chId: string; name: string; after: string | null }[] = [];

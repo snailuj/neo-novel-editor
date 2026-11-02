@@ -102,6 +102,18 @@ test('Refused-Edit-Held-Back: the writer\'s commits leave a refused file out unt
   assert.deepEqual(await changed(), []);
 });
 
+test('Refused-Edit-Held-Back: releasing paths frees exactly those, and the rest stay held', async (t) => {
+  const { library, git, write, gate } = await setup(t);
+  const other = 'book-fox-1/chapters/c2.html';
+  write(CHAPTER, BAD);
+  await assert.rejects(commitAll(git, library, { who: 'librarian', reason: 'librarian-after', librarian, gate, paths: [CHAPTER] }), GateRefused);
+  write(other, BAD);
+  await assert.rejects(commitAll(git, library, { who: 'librarian', reason: 'librarian-after', librarian, gate, paths: [other] }), GateRefused);
+  assert.deepEqual(gate.held(), [CHAPTER, other]);
+  gate.release([CHAPTER, 'book-fox-1/chapters/never-held.html']);
+  assert.deepEqual(gate.held(), [other]);
+});
+
 test('Refused-Edit-Held-Back: a later librarian commit of the file that passes lets it go', async (t) => {
   const { library, git, write, gate, changed } = await setup(t);
   write(CHAPTER, BAD);
@@ -113,4 +125,17 @@ test('Refused-Edit-Held-Back: a later librarian commit of the file that passes l
   assert.deepEqual(gate.held(), []);
   assert.deepEqual(await changed(), []);
   assert.deepEqual(await log(git, library, '%an'), ['Librarian', 'Ada Author']);
+});
+
+test('Librarian-Edit-Refused: a librarian edit of a wiki page citing a block of a sources page the library lacks is refused, and one citing a real block commits', async (t) => {
+  const { library, git, write, gate } = await setup(t);
+  write('sources/Log.html', '<p data-block="l1">The docks open at dawn.</p>');
+  await commitAll(git, library, { who: 'author', reason: 'idle', librarian, gate });
+  write('wiki/Harbour.html', '<p data-block="h1">[[Log#^l9]]</p>');
+  await assert.rejects(
+    commitAll(git, library, { who: 'librarian', reason: 'librarian-after', librarian, gate, paths: ['wiki/Harbour.html'] }),
+    (err: unknown) => err instanceof GateRefused && err.findings.map((f) => f.rule).join() === 'Citations-Resolve',
+  );
+  write('wiki/Harbour.html', '<p data-block="h1">[[Log#^l1]]</p>');
+  assert.ok(await commitAll(git, library, { who: 'librarian', reason: 'librarian-after', librarian, gate, paths: ['wiki/Harbour.html'] }));
 });

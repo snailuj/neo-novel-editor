@@ -1,14 +1,16 @@
-// Rules: a rename moves the page and its sidecar and rewrites the links that resolve to
+// Rules: renaming a page moves its marks to the new id; a rename interrupted after the page
+// moved still ends with the marks at the new id after recovery. A rename moves the page and its sidecar and rewrites the links that resolve to
 // it, in pages of both trees and in NEO chapters, as one commit credited to the author;
 // it never writes the open book's chapters, and hands their edits back; it refuses a
 // title the tree holds; and if it stops part way, running it again finishes it without
 // rewriting anything twice. Page names here are neutral words.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { GitLayer, resolveSettings } from '../../src/hoard/git/layer.ts';
+import { MarkStore } from '../../src/hoard/marks/store.ts';
 import { PageRefused } from '../../src/hoard/pages/identity.ts';
 import { PageStore } from '../../src/hoard/pages/store.ts';
 import { validateHoardPageV1 } from '../../src/generated/validators.cjs';
@@ -21,6 +23,7 @@ type T = { after(fn: () => void): void };
 const SIDECAR = JSON.stringify({
   version: 1, source: { path: '/vault/Harbour.md', name: 'Harbour', sha256: 'a'.repeat(64) }, frontmatter: null, imported: '2026-10-15T22:00:00.000Z',
 }, null, 2);
+const MARKS = '{"version":1,"marks":[]}\n';
 const INDEX = [
   '<p>[[Harbour]]</p>', '<p>[[Harbour|the port]]</p>', '<p>[[harbour#^b1]]</p>', '<p>[[Harbour#Docks]]</p>',
   '<p>[[Harbour Master]] [[Lantern]]</p>', '<p>`[[Harbour]]` kept</p>', '<p class="wiki-code">[[Harbour]]</p>',
@@ -35,6 +38,7 @@ const INDEX_AFTER = [
 const FILES: Record<string, string> = {
   'wiki/People/Harbour.html': '<p data-block="a1">The wall. See [[Harbour]] itself.</p>',
   '.neo/pages/wiki/People/Harbour.html.json': SIDECAR,
+  '.neo/marks/wiki/People/Harbour.html.json': MARKS,
   'wiki/Index.html': INDEX,
   'wiki/Lantern.html': '<p>No link to the page.</p>',
   'sources/Harbour.html': '<p>A source of the same title. [[Lantern]]</p>',
@@ -232,6 +236,29 @@ test('starting up finishes a rename that NEO stopped in the middle of', async (t
   assert.equal(await restarted.recover(null), null, 'nothing is left to finish');
 });
 
+test('renaming a page moves its marks to the new id', async (t) => {
+  const { store, get, has } = fixture(t);
+  assert.ok(has('.neo/marks/wiki/People/Harbour.html.json'), 'the fixture reached its state');
+  await store.rename(FROM, 'Places/Port.html', null);
+  assert.equal(has('.neo/marks/wiki/People/Harbour.html.json'), false, 'none is left at the old id');
+  assert.equal(get('.neo/marks/wiki/Places/Port.html.json'), MARKS, 'the marks moved byte for byte');
+});
+
+for (const stopAt of ['sidecar', 'marks', 'rewrite'] as const) {
+  test(`a rename interrupted at the ${stopAt} step still ends with the marks at the new id after recovery`, async (t) => {
+    let stopped = false;
+    const broken = fixture(t, { onStep: (step: string) => { if (step === stopAt && !stopped) { stopped = true; throw new Error('power cut'); } } });
+    await assert.rejects(broken.store.rename(FROM, 'Places/Port.html', null), /power cut/);
+    assert.ok(stopped, 'the rename reached the step it was stopped at');
+    assert.equal(broken.has('wiki/Places/Port.html'), true, 'the page had moved');
+    const restarted = new PageStore({ library: () => broken.library, log: broken.log });
+    await restarted.recover(null);
+    assert.equal(broken.has('.neo/marks/wiki/People/Harbour.html.json'), false, 'none is left at the old id');
+    assert.equal(broken.get('.neo/marks/wiki/Places/Port.html.json'), MARKS);
+    assert.equal(await restarted.recover(null), null, 'nothing is left to finish');
+  });
+}
+
 // A library kept in git, with the fixture committed, and a store whose history is that layer.
 async function tracked(t: T, extra = {}) {
   isolateGitConfig(t, { name: 'Ada', email: 'ada@example.com' });
@@ -269,6 +296,7 @@ test('a rename is one commit credited to the author, holding the move, the sidec
   const changed = stdout.split('\n').filter(Boolean).map((l) => l.replace(/\t/g, ' ')).sort();
   assert.deepEqual(changed, [
     'D .neo/pages/wiki/People/Harbour.html.json', 'A .neo/pages/wiki/Places/Port.html.json',
+    'D .neo/marks/wiki/People/Harbour.html.json', 'A .neo/marks/wiki/Places/Port.html.json',
     'D wiki/People/Harbour.html', 'A wiki/Places/Port.html',
     'M wiki/Index.html', 'M sources/Notes.html', 'M book-fox-1/chapters/c1.html', 'M book-owl-2/chapters/c1.html',
     'A .neo/pages/renames.json',
@@ -422,4 +450,134 @@ test('a rename of a page deleted since the titles were walked is refused as miss
   assert.equal(has('wiki/Places/Port.html'), false);
   assert.equal((await store.rename('wiki/Lantern.html', 'Lamp.html', null)).id, 'wiki/Lamp.html');
   assert.equal(await store.recover(null), null);
+});
+
+// Rule: a rename onto an id with a leftover sidecar or marks file is refused before anything moves.
+for (const [what, leftover] of [['sidecar', '.neo/pages/wiki/Places/Port.html.json'], ['marks file', '.neo/marks/wiki/Places/Port.html.json']] as const) {
+  test(`a rename onto an id with a leftover ${what} is refused before anything moves, and succeeds once it is gone`, async (t) => {
+    const { store, put, get, has, library } = fixture(t);
+    put(leftover, '{"left":"over"}');
+    const was = Object.fromEntries(Object.keys(FILES).map((rel) => [rel, get(rel)]));
+    await assert.rejects(store.rename(FROM, 'Places/Port.html', null), (e: PageRefused) => e.code === 'taken' && e.message.includes(leftover));
+    await assert.rejects(store.rename(FROM, 'Places/Port.html', null), (e: PageRefused) => e.code === 'taken', 'a retry is refused the same way, not stuck on a journal');
+    assert.equal(has('.neo/pages/.rename.json'), false, 'no note of a rename was written');
+    assert.equal(has('wiki/Places/Port.html'), false, 'the page did not move');
+    assert.equal(get(leftover), '{"left":"over"}', 'the leftover is untouched');
+    for (const [rel, text] of Object.entries(was)) assert.equal(get(rel), text, rel);
+    rmSync(path.join(library, leftover));
+    assert.equal((await store.rename(FROM, 'Places/Port.html', null)).id, 'wiki/Places/Port.html');
+  });
+}
+
+// Rule: a rename never moves a sidecar or marks file through a link that leaves its folder.
+for (const [what, folder] of [['marks file', '.neo/marks'], ['sidecar', '.neo/pages']] as const) {
+  for (const end of ['source', 'destination'] as const) {
+    test(`a rename is refused before anything moves when the ${what} ${end} is reached through a link that leaves ${folder}`, async (t) => {
+      const { store, library, get, has } = fixture(t);
+      const outside = tempDir(t, 'hoard-outside-');
+      const linkAt = path.join(library, `${folder}/wiki/${end === 'source' ? 'People' : 'Places'}`);
+      if (end === 'source') {
+        rmSync(outside, { recursive: true });
+        renameSync(linkAt, outside);
+      }
+      mkdirSync(path.dirname(linkAt), { recursive: true });
+      symlinkSync(outside, linkAt, 'junction');
+      const outsideBefore = readdirSync(outside).sort();
+      assert.deepEqual(outsideBefore, end === 'source' ? ['Harbour.html.json'] : [], 'the link leads out and the fixture reached its state');
+      const was = Object.fromEntries(['wiki/People/Harbour.html', 'wiki/Index.html'].map((rel) => [rel, get(rel)]));
+
+      await assert.rejects(store.rename(FROM, 'Places/Port.html', null), (e: PageRefused) => e.code === 'unsafe');
+      assert.equal(has('.neo/pages/.rename.json'), false, 'no note of a rename was written');
+      assert.equal(has('wiki/Places/Port.html'), false, 'the page did not move');
+      for (const [rel, text] of Object.entries(was)) assert.equal(get(rel), text, rel);
+      assert.deepEqual(readdirSync(outside).sort(), outsideBefore, 'nothing moved into or out of the folder the link leads to');
+    });
+  }
+}
+
+// Rule: a .neo/pages or .neo/marks that is itself a link out of the library is refused, and nothing moves.
+for (const folder of ['.neo/marks', '.neo/pages']) {
+  test(`a rename is refused before anything moves when ${folder} is a link that leaves the library`, async (t) => {
+    const { store, library, get, has } = fixture(t);
+    const outside = tempDir(t, 'hoard-outside-');
+    rmSync(outside, { recursive: true });
+    renameSync(path.join(library, folder), outside);
+    symlinkSync(outside, path.join(library, folder), 'junction');
+    const outsideBefore = readdirSync(outside).sort();
+    assert.ok(outsideBefore.length > 0, 'the folder is out and the fixture reached its state');
+    const was = Object.fromEntries(['wiki/People/Harbour.html', 'wiki/Index.html'].map((rel) => [rel, get(rel)]));
+
+    await assert.rejects(store.rename(FROM, 'Places/Port.html', null), (e: PageRefused) => e.code === 'unsafe');
+    assert.equal(has('wiki/Places/Port.html'), false, 'the page did not move');
+    for (const [rel, text] of Object.entries(was)) assert.equal(get(rel), text, rel);
+    assert.deepEqual(readdirSync(outside).sort(), outsideBefore, 'nothing was written where the link leads');
+    assert.equal(existsSync(path.join(outside, '.rename.json')), false, 'no note of the rename was written there');
+  });
+}
+
+// Rule: no page, sidecar or marks move, in a rename or its recovery, goes through a link that leaves its folder.
+// The link is swapped in at the step that comes right before the move, so the plan and the note have passed.
+const MOVES = [
+  ['page', 'move', 'wiki', 'wiki', 'Harbour.html'],
+  ['sidecar', 'sidecar', '.neo/pages', '.neo/pages/wiki', 'Harbour.html.json'],
+  ['marks file', 'marks', '.neo/marks', '.neo/marks/wiki', 'Harbour.html.json'],
+] as const;
+for (const [what, step, folder, parent, name] of MOVES) {
+  for (const end of ['source', 'destination'] as const) {
+    test(`a ${what} move is refused, the note kept and logged, and nothing leaves ${folder}, when its ${end} is reached through a link swapped in after the note`, async (t) => {
+      const outside = tempDir(t, 'hoard-outside-');
+      let swap = (): void => {};
+      let armed = true;
+      const { store, library, log, lines, get, has } = fixture(t, { onStep: (s: string) => { if (s === step && armed) { armed = false; swap(); } } });
+      const linkAt = path.join(library, parent, end === 'source' ? 'People' : 'Places');
+      if (end === 'source') {
+        swap = () => { rmSync(outside, { recursive: true }); renameSync(linkAt, outside); symlinkSync(outside, linkAt, 'junction'); };
+      } else {
+        swap = () => { mkdirSync(path.dirname(linkAt), { recursive: true }); symlinkSync(outside, linkAt, 'junction'); };
+      }
+      const unsafe = (e: unknown) => e instanceof PageRefused && e.code === 'unsafe';
+
+      await assert.rejects(store.rename(FROM, 'Places/Port.html', null), unsafe);
+      assert.equal(armed, false, 'the link was swapped in at the step before the move');
+      assert.ok(has('.neo/pages/.rename.json'), 'the note of the rename is kept');
+      const outsideAfter = readdirSync(outside).sort();
+      assert.deepEqual(outsideAfter, end === 'source' ? [name] : [], 'nothing moved into or out of the folder the link leads to');
+      assert.ok(lines.some((l) => l.level === 'error'), 'the refusal is logged at error');
+
+      const restarted = new PageStore({ library: () => library, log });
+      // the note's own page paths are judged when it is read, so a page link leaves it ignored, not refused
+      if (what === 'page') assert.equal(await restarted.recover(null), null, 'recovery ignores a note whose page path leaves its tree');
+      else await assert.rejects(restarted.recover(null), unsafe, 'recovery refuses the same way');
+      assert.ok(has('.neo/pages/.rename.json'), 'and keeps the note');
+      assert.deepEqual(readdirSync(outside).sort(), outsideAfter, 'and moves nothing');
+
+      // with the link taken away the same note is finished
+      rmSync(linkAt);
+      if (end === 'source') renameSync(outside, linkAt);
+      assert.equal((await restarted.recover(null))?.id, 'wiki/Places/Port.html');
+      assert.equal(has('.neo/pages/.rename.json'), false);
+      assert.equal(get('.neo/marks/wiki/Places/Port.html.json'), MARKS);
+      assert.equal(has('.neo/pages/wiki/Places/Port.html.json'), true);
+    });
+  }
+}
+
+// Rule: a mark added while its page is renamed never lands under the old id.
+test('a mark added to a page while it is renamed is refused, and never recreates the marks file at the old id', async (t) => {
+  const anchor = { exact: 'wall', prefix: 'The ', suffix: '. See', pIdx: 0, off: 4 };
+  const { store, library, get, has, log } = fixture(t);
+  let during: Promise<unknown> | null = null;
+  const marks = new MarkStore({ library: () => library, log, head: async () => { await during; return null; } });
+
+  // baseline: with no rename in flight the same add lands at the page's id
+  await marks.add({ page: FROM, kind: 'comment', anchor, body: 'Before.' }, 'author');
+  assert.equal(JSON.parse(get('.neo/marks/wiki/People/Harbour.html.json')).marks.length, 1, 'the baseline add reached the old id');
+  const moved = get('.neo/marks/wiki/People/Harbour.html.json');
+
+  during = store.rename(FROM, 'Places/Port.html', null);
+  await assert.rejects(marks.add({ page: FROM, kind: 'comment', anchor, body: 'During.' }, 'author'), (e: PageRefused) => e.code === 'missing');
+  await during;
+  assert.equal(has('wiki/Places/Port.html'), true, 'the rename finished');
+  assert.equal(has('.neo/marks/wiki/People/Harbour.html.json'), false, 'no marks file is left at the old id');
+  assert.equal(get('.neo/marks/wiki/Places/Port.html.json'), moved, 'the marks at the new id are those the page had');
 });

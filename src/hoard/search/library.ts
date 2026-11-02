@@ -9,33 +9,50 @@
 // no blocks, on a Mac) is never read, since a read can wait on iCloud for ever; it is
 // counted, as is a book.json that does not read.
 //
+// Pages (the HTML files under wiki/ and sources/, listed by the page store) are kept the
+// same way, one stamp each, so a search reads only the pages that changed. Pages keep
+// their folded text in memory as chapters do; a library of a hundred thousand words of
+// pages costs about what a book of that length does.
+//
 // The open book is left out: the window searches its paragraphs as they stand, which
 // can be ahead of its files.
 import { readdir, readFile, stat as statFile } from 'node:fs/promises';
 import path from 'node:path';
 import { paragraphTexts } from '../html.ts';
+import { PageStore, type PageEntry } from '../pages/store.ts';
+import type { Tree } from '../pages/identity.ts';
 import { fold, type Folded } from './fold.ts';
-import { searchChapters, type ChapterText, type Hit } from './scan.ts';
+import { searchChapters, type BookHit, type ChapterText, type PageHit, type PageText } from './scan.ts';
 
 type Stat = Awaited<ReturnType<typeof statFile>>;
 
 export interface LibraryQuery {
   text: string;
-  /** 'all': every book; 'wiki': the wiki only. */
-  scope: 'all' | 'wiki';
+  /** 'all': the pages and every book; 'pages': the pages of wiki/ and sources/ only. */
+  scope: 'all' | 'pages';
   /** The book open in the window, left out. */
   open: string | null;
   limit: number;
   cap: number;
 }
 
-export interface Group {
+export interface BookGroup {
   bookId: string;
   bookTitle: string;
-  wiki: boolean;
-  hits: Hit[];
+  hits: BookHit[];
   total: number;
 }
+
+/** One tree of pages: wiki/ or sources/. */
+export interface PageGroup {
+  tree: Tree;
+  /** 'Wiki' or 'Sources'. */
+  title: string;
+  hits: PageHit[];
+  total: number;
+}
+
+export type Group = BookGroup | PageGroup;
 
 export interface LibraryFound {
   groups: Group[];
@@ -48,6 +65,7 @@ export interface LibraryFound {
 
 export interface IndexStats {
   books: number;
+  pages: number;
   chapters: number;
   paragraphs: number;
   /** UTF-16 units of text held. */
@@ -63,6 +81,12 @@ interface Chapter extends ChapterText {
   folded: Folded[];
 }
 
+interface Page extends PageText {
+  tree: Tree;
+  stamp: string;
+  folded: Folded[];
+}
+
 interface Book {
   id: string;
   title: string;
@@ -72,6 +96,7 @@ interface Book {
   chapters: Map<string, Chapter>;
 }
 
+const TREE_TITLES: Record<Tree, string> = { wiki: 'Wiki', sources: 'Sources' };
 const ONE_NAME = /^[^/\\\0]+$/;
 const oneName = (name: unknown): name is string => typeof name === 'string' && ONE_NAME.test(name) && name !== '.' && name !== '..';
 const stampOf = (s: Stat) => `${s.mtimeMs}:${s.size}`;
@@ -81,7 +106,8 @@ export class LibraryIndex {
   readonly #stat: (file: string) => Promise<Stat>;
   #root = '';
   #books = new Map<string, Book>();
-  #wikiId: string | null = null;
+  #pages = new Map<string, Page>();
+  readonly #store: PageStore;
   #cloud = 0;
   #unreadable = 0;
   #read = 0;
@@ -89,9 +115,11 @@ export class LibraryIndex {
   #searchMs = 0;
   #looking: Promise<void> | null = null;
 
-  constructor(o: { platform?: NodeJS.Platform; stat?: (file: string) => Promise<Stat> } = {}) {
+  constructor(o: { platform?: NodeJS.Platform; stat?: (file: string) => Promise<Stat>; log?: (level: 'error' | 'warn' | 'info' | 'debug', message: string, data?: unknown) => void } = {}) {
     this.#platform = o.platform ?? process.platform;
     this.#stat = o.stat ?? ((file) => statFile(file));
+    // the store only lists and reads here; it takes its root from the look in progress
+    this.#store = new PageStore({ library: () => this.#root, log: o.log ?? (() => {}) });
   }
 
   // A placeholder iCloud has taken off this Mac: a size, but no blocks on disk.
@@ -102,22 +130,40 @@ export class LibraryIndex {
   async search(root: string, query: LibraryQuery): Promise<LibraryFound> {
     await this.look(root);
     const start = performance.now();
-    const books = [...this.#books.values()]
-      .filter((b) => b.id !== query.open && (query.scope === 'all' || b.id === this.#wikiId))
-      .sort((a, b) => Number(b.id === this.#wikiId) - Number(a.id === this.#wikiId) || a.title.localeCompare(b.title) || (a.id < b.id ? -1 : 1));
     const found: LibraryFound = { groups: [], total: 0, capped: false, cloud: this.#cloud, unreadable: this.#unreadable };
-    for (const book of books) {
-      const limit = Math.max(0, query.limit - found.groups.reduce((n, g) => n + g.hits.length, 0));
+    const shown = () => found.groups.reduce((n, g) => n + g.hits.length, 0);
+    const room = (): { limit: number; cap: number } | null => {
       const cap = query.cap - found.total;
       if (cap <= 0) {
         found.capped = true;
-        break;
+        return null;
       }
-      const chapters = book.order.map((chId) => book.chapters.get(chId)).filter((c): c is Chapter => !!c);
-      const one = searchChapters(chapters, query.text, { limit, cap, foldOf: (c, pIdx) => (c as Chapter).folded[pIdx]! });
-      if (one.total) found.groups.push({ bookId: book.id, bookTitle: book.title, wiki: book.id === this.#wikiId, hits: one.hits, total: one.total });
+      return { limit: Math.max(0, query.limit - shown()), cap };
+    };
+    const take = (one: { total: number; capped: boolean }, group: Group | null) => {
+      if (one.total && group) found.groups.push(group);
       found.total += one.total;
       if (one.capped) found.capped = true;
+    };
+
+    for (const tree of ['wiki', 'sources'] as const) {
+      const space = room();
+      if (!space) break;
+      const pages = [...this.#pages.values()].filter((p) => p.tree === tree).sort((a, b) => (a.page < b.page ? -1 : 1));
+      const one = searchChapters(pages, query.text, { ...space, foldOf: (p, pIdx) => p.folded[pIdx]! });
+      take(one, { tree, title: TREE_TITLES[tree], hits: one.hits, total: one.total });
+    }
+    const books = query.scope === 'all'
+      ? [...this.#books.values()]
+        .filter((b) => b.id !== query.open)
+        .sort((a, b) => a.title.localeCompare(b.title) || (a.id < b.id ? -1 : 1))
+      : [];
+    for (const book of books) {
+      const space = room();
+      if (!space) break;
+      const chapters = book.order.map((chId) => book.chapters.get(chId)).filter((c): c is Chapter => !!c);
+      const one = searchChapters(chapters, query.text, { ...space, foldOf: (c, pIdx) => c.folded[pIdx]! });
+      take(one, { bookId: book.id, bookTitle: book.title, hits: one.hits, total: one.total });
     }
     this.#searchMs = performance.now() - start;
     return found;
@@ -140,7 +186,11 @@ export class LibraryIndex {
         for (const p of chapter.paragraphs) units += p.length;
       }
     }
-    return { books: this.#books.size, chapters, paragraphs, units, read: this.#read, lookMs: Math.round(this.#lookMs), searchMs: Math.round(this.#searchMs) };
+    for (const page of this.#pages.values()) {
+      paragraphs += page.paragraphs.length;
+      for (const p of page.paragraphs) units += p.length;
+    }
+    return { books: this.#books.size, pages: this.#pages.size, chapters, paragraphs, units, read: this.#read, lookMs: Math.round(this.#lookMs), searchMs: Math.round(this.#searchMs) };
   }
 
   async #look(root: string): Promise<void> {
@@ -148,11 +198,11 @@ export class LibraryIndex {
     if (root !== this.#root) {
       this.#root = root;
       this.#books = new Map();
+      this.#pages = new Map();
     }
     this.#cloud = 0;
     this.#unreadable = 0;
     this.#read = 0;
-    this.#wikiId = await this.#readWikiId(root);
     let names: string[] = [];
     try {
       names = (await readdir(root, { withFileTypes: true })).filter((d) => d.isDirectory() && d.name.startsWith('book-')).map((d) => d.name);
@@ -164,16 +214,44 @@ export class LibraryIndex {
       if (await this.#lookAtBook(root, id)) seen.add(id);
     }));
     for (const id of [...this.#books.keys()]) if (!seen.has(id)) this.#books.delete(id);
+    await this.#lookAtPages();
     this.#lookMs = performance.now() - start;
   }
 
-  async #readWikiId(root: string): Promise<string | null> {
-    try {
-      const wiki = JSON.parse(await readFile(path.join(root, '.neo', 'wiki.json'), 'utf8')) as { bookId?: unknown };
-      return oneName(wiki.bookId) ? wiki.bookId : null;
-    } catch {
-      return null;
+  // The page store lists both trees without opening a body; only a page that is new or
+  // whose stamp moved is read, and one no longer listed is dropped.
+  async #lookAtPages(): Promise<void> {
+    const listed = new Set<string>();
+    for await (const entry of this.#store.entries()) {
+      listed.add(entry.id);
+      await this.#lookAtPage(entry);
     }
+    for (const id of [...this.#pages.keys()]) if (!listed.has(id)) this.#pages.delete(id);
+  }
+
+  async #lookAtPage(entry: PageEntry): Promise<void> {
+    const stamp = `${entry.mtime}:${entry.size}`;
+    const known = this.#pages.get(entry.id);
+    if (known && known.stamp === stamp) return;
+    let s: Stat;
+    try {
+      s = await this.#stat(path.join(this.#root, entry.tree, ...entry.path.split('/')));
+    } catch {
+      this.#pages.delete(entry.id);
+      return;
+    }
+    if (this.#inCloud(s)) {
+      this.#cloud++;
+      return;
+    }
+    const file = await this.#store.read(entry.id).catch(() => null);
+    if (!file) {
+      this.#pages.delete(entry.id);
+      return;
+    }
+    this.#read++;
+    const paragraphs = paragraphTexts(file.html);
+    this.#pages.set(entry.id, { page: entry.id, tree: entry.tree, title: entry.title, paragraphs, stamp, folded: paragraphs.map(fold) });
   }
 
   // true when the book is there to search

@@ -8,7 +8,9 @@
 // out at a time; saves meanwhile are folded into one more read when it answers.
 //
 // Stop Flagging This Page and Flag This Page Again act on the librarian's comment at the
-// caret, or the one picked in the Comments section.
+// caret, or the one picked in the Comments section, and name the page it links to by its
+// page id (`wiki/People/Name.html`). The comment's link opens its page through the marks
+// section's follow, not here.
 import type { Mark } from '../../generated/hoard-marks-v1.js';
 import { reported } from './finding.ts';
 import type { WikiPage } from './mentions.ts';
@@ -32,7 +34,10 @@ interface MarksView {
 
 export function startCompanion(neo: NeoApiV4, o: {
   marks: MarksView;
-  wiki: () => { bookId: string; pages: { chId: string; title: string }[] } | null;
+  /** The Wiki book's id while it exists; its chapters are pages already and are not handed over. */
+  wikiBook: () => string | null;
+  /** Every page of both trees, as the page store lists them. */
+  pages: () => Promise<{ id: string; tree: string; title: string }[]>;
 }) {
   const pending = new Map<string, Pending>();
   let here: string | null = null;
@@ -75,7 +80,7 @@ export function startCompanion(neo: NeoApiV4, o: {
   };
 
   neo.on('chapter-saved', ({ bookId, chId, html, previous }) => {
-    if (bookId === o.wiki()?.bookId) return;
+    if (bookId === o.wikiBook()) return;
     const k = `${bookId}/${chId}`;
     const known = pending.get(k);
     if (known) known.after = html;
@@ -99,26 +104,28 @@ export function startCompanion(neo: NeoApiV4, o: {
   });
 
   // The librarian's finding at the caret, or picked in the Comments section, and its page.
-  const finding = (): { bookId: string; chId: string; mark: Mark; page: { chId: string; title: string } } | null => {
+  // A title in both trees is the wiki page, as a link resolves it.
+  const finding = async (): Promise<{ bookId: string; chId: string; mark: Mark; page: { id: string; title: string } } | null> => {
     const { bookId, marks, active, here: at } = o.marks.state();
-    const wiki = o.wiki();
     const mark = active && at ? marks[at.chId]?.find((m) => m.id === active) : undefined;
-    if (!bookId || !at || !mark || !wiki) return null;
-    const pages: WikiPage[] = wiki.pages.map((p) => ({ id: p.chId, title: p.title, aliases: [], pantsing: false }));
+    if (!bookId || !at || !mark) return null;
+    const listed = await o.pages();
+    const pages: WikiPage[] = [...listed.filter((p) => p.tree === 'wiki'), ...listed.filter((p) => p.tree !== 'wiki')]
+      .map((p) => ({ id: p.id, title: p.title, aliases: [], pantsing: false }));
     const [id] = reported([mark], pages);
-    const page = id ? wiki.pages.find((p) => p.chId === id) : undefined;
-    return page ? { bookId, chId: at.chId, mark, page } : null;
+    const page = pages.find((p) => p.id === id);
+    return page ? { bookId, chId: at.chId, mark, page: { id: page.id, title: page.title } } : null;
   };
 
   const quiet = async (on: boolean) => {
-    const found = finding();
+    const found = await finding();
     if (!found) {
       say(`Put the caret in one of the librarian's comments on a page, or pick it in the Comments section, then choose ${on ? 'Stop Flagging This Page' : 'Flag This Page Again'}.`);
       return;
     }
     const { bookId, chId, mark, page } = found;
     try {
-      await neo.invoke('companion.quiet', { page: page.chId, quiet: on });
+      await neo.invoke('companion.quiet', { page: page.id, quiet: on });
       // Stop resolves the comment it was chosen on, and Flag Again, its undo, reopens it
       const turn = on ? (mark.state === 'open' ? 'resolved' : null) : (mark.state === 'resolved' ? 'open' : null);
       if (turn) {

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "description": "The librarian's watcher, version 1, kept at .neo/companion.json in the library: the wiki pages the writer asked it to stop flagging, by the page's chapter id, with the title it had then and when.",
+  "description": "The librarian's watcher, version 1, kept at .neo/companion.json in the library: the pages the writer asked it to stop flagging, by page id (the tree and the path inside it, such as wiki/People/Name.html), with the title each had then and when. A key that is not a page id, such as a chapter id kept by an earlier version, is ignored.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "quiet"],
