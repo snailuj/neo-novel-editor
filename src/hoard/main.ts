@@ -2,8 +2,8 @@
 // window half's health check (ping), and keeps the library's history in git: every
 // landed write feeds the checkpoints, the window asks for one on a chapter switch or a
 // book closing, and quitting makes one last commit. It keeps the writer's marks in
-// sidecars under .neo/, which the history commits with the chapters, brings hoard's
-// Markdown pages into the wiki book, searches the library's files, and reads each
+// sidecars under .neo/, which the history commits with the chapters, imports hoard's
+// Markdown pages as page files, searches the library's files, and reads each
 // chapter the writer leaves for wiki pages it names (companion/), and carries changes
 // through the wiki for a judge outside NEO, on the writer's word (ripple/). The library's
 // repository is looked at after activate returns, so NEO's start never waits on git.
