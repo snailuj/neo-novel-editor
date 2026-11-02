@@ -8,9 +8,9 @@
 // Each page goes to one of the library's two trees of pages, sources/ (the default) or
 // wiki/: a `to: wiki` line sends the entries after it to the wiki, and `to: sources`
 // back. A `book: Title` line sends the entries after it into the NEO book of that title
-// instead (Morning Pages, say), until the next `to:` or `book:` line; `book: Wiki` reads
-// as `to: wiki`. A .csv list is a keep/move list: the rows of its `path` column whose
-// `verdict` is Move, named by a `name` column, sent to a `to` column's tree or a `book`
+// instead (Morning Pages, say), until the next `to:` or `book:` line. The wiki is a tree,
+// not a book, so `book: Wiki` is refused. A .csv list is a keep/move list: the rows of
+// its `path` column whose `verdict` is Move, named by a `name` column, sent to a `to` column's tree or a `book`
 // column's book where it has them.
 //
 // Pure: the list's text is handed in, and nothing is read from the disk.
@@ -68,10 +68,11 @@ function oneTitle(line: number, what: string, title: string): string {
   return title;
 }
 
-// A book by its title; the wiki by its own name is the wiki tree, as is no title.
+// A book by its title. The wiki is a tree of pages, not a book.
 function bookOf(line: number, title: string): Dest {
   const t = title.trim();
-  return t === '' || t.toLowerCase() === 'wiki' ? { to: 'wiki', book: null } : { to: null, book: oneTitle(line, 'book after book:', t) };
+  if (t.toLowerCase() === 'wiki') throw new ListError(`line ${line}: the wiki is a tree, not a book: use to: wiki`);
+  return { to: null, book: oneTitle(line, 'book after book:', t) };
 }
 
 function treeOf(line: number, word: string): Dest {

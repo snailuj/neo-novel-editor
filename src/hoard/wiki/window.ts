@@ -5,7 +5,6 @@
 // book (pane.ts), so the writer keeps their place. Nothing here runs while the writer types
 // but a redraw of the links, once typing pauses.
 import { titleIndex } from '../pages/titles.ts';
-import type { Applied } from './store.ts';
 import { linkAt, linksIn } from './links.ts';
 import { startWikiPane } from './pane.ts';
 import type { Listed } from './tree.ts';
@@ -13,7 +12,7 @@ import type { Listed } from './tree.ts';
 const REDRAW_MS = 300;
 const STATUS_MS = 4_000;
 
-interface Imported { outcome: string; bookId?: string | null; imported?: Applied['imported']; openBookId?: string | null; message?: string }
+interface Imported { outcome: string; openBookId?: string | null; message?: string }
 
 export function startWiki(neo: NeoApiV5) {
   let importing = false;
