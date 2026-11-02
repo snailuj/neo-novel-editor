@@ -4,8 +4,8 @@
 // worked out, so a library of thousands of pages in closed folders draws a few rows.
 //
 // ---- State machine (ui-state-design) ------------------------------------------------------
-// Two regions, two tables. Fixed by the plan's rulings: stored pages are read-only in the
-// pane (Stored-Pages-Read-Only); a move stays inside the page's tree (Move-Within-Tree); the
+// Two regions, two tables. Fixed by the plan's rulings: a stored page's text is edited in
+// the pane (stage 6, wiki/pane-edit.ts), not from the tree; a move stays inside the page's tree (Move-Within-Tree); the
 // list is read when the tree unfolds, after each change and on Refresh (Tree-Refresh); there
 // is no folder rename, folder delete or page delete (Folder-Actions). Focus rule for every
 // cell: the tree moves the focus only when it is already in the pane; otherwise the writer
