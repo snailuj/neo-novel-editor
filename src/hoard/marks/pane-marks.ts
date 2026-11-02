@@ -15,7 +15,7 @@
 import type { Mark, MarkState } from '../../generated/hoard-marks-v1.js';
 import { claim, submitKey } from '../keys.ts';
 import { reviewFlow } from '../review/flow.ts';
-import { editPage, paragraphTexts, type Spot } from '../wiki/edit.ts';
+import { editPage, type Spot } from '../wiki/edit.ts';
 import { startPaneEdit } from '../wiki/pane-edit.ts';
 import { anchorAt, anchorPoint } from './anchor.ts';
 import { isSuggestion } from './model.ts';
@@ -305,24 +305,17 @@ export function startPaneMarks(neo: NeoApiV5, pane: Pane, o: { pages: () => Page
   // is now, if that paragraph still reads as it did, and the page is shown again once the
   // round of saves is done (settle).
   let readAgain = false;
-  async function saveTyped(chId: string, at: Spot, expected: string, text: string, was: string): Promise<string | null> {
+  async function saveTyped(chId: string, at: Spot, expected: string, text: string, _was: string): Promise<string | null> {
     const why = cannotWrite();
     if (why) return why;
     const shown = page!;
     if (shown.chId !== chId) return 'another page is shown';
-    let before = shown.html;
-    let after = editPage(before, at, expected, text);
+    const before = shown.html;
+    const after = editPage(before, at, expected, text);
     if (after === null) return REFUSED.words;
-    let written = await neo.invoke('wiki.edit', { chId, before, after, as: 'author' }) as Written;
-    if (!written.ok && written.reason === 'stale') {
-      readAgain = true;
-      const fresh = await neo.invoke('wiki.page', { chId }) as PageRead | null;
-      if (!fresh) return REFUSED.missing;
-      before = fresh.html;
-      after = paragraphTexts(before)[at.pIdx] === was ? editPage(before, at, expected, text) : null;
-      if (after === null) return 'the paragraph changed on another device meanwhile';
-      written = await neo.invoke('wiki.edit', { chId, before, after, as: 'author' }) as Written;
-    }
+    const written = await neo.invoke('wiki.edit', { chId, before, after, as: 'author' }) as Written;
+    // unhooked from the pane until stage 6 rebuilds it on page files; a stale page is not read again
+    if (!written.ok && written.reason === 'stale') readAgain = true;
     if (!written.ok) return written.reason === 'refused' ? `the library check refused it: ${written.findings.map((f) => f.message).join(' ')}` : REFUSED[written.reason] ?? written.reason;
     if (page === shown) shown.html = after;
     return null;

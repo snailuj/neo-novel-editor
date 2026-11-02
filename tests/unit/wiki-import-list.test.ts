@@ -6,8 +6,8 @@
 //   the file's hash after it;
 // - entries go to sources/ until a `to: wiki` line, and a `to: sources` line sends them
 //   back; ` -> Folder/Name` puts a page in that folder of its tree;
-// - a `book: Title` line sends the entries after it into that book, and `book: Wiki`
-//   reads as `to: wiki`;
+// - a `book: Title` line sends the entries after it into that book; `book: Wiki` is
+//   refused, as the wiki is a tree;
 // - a .csv list gives the `path` of each row whose `verdict` is Move, named by a `name`
 //   column, sent to a `to` column's tree or a `book` column's book, and lists the other rows it leaves out
 //   with the reason;
@@ -52,14 +52,14 @@ test('a name after an arrow and a heading after .md are kept apart from the path
   ]);
 });
 
-test('a line range keeps the hash it was read against, and book lines route the entries after them', () => {
+test('a line range keeps the hash it was read against, and book and to lines route the entries after them', () => {
   const list = readImportList(path.join(dir, 'move.txt'), [
     'lore/Harbour.md',
     'book: Morning Pages',
     'Daily/2025-12-15.md#Morning Pages -> 2025-12-15',
     'Daily/2026-01-23.md#L60-L66@ABCDEF0123 -> 2026-01-23',
     'Daily/2026-01-23.md#L68-L96 -> 2026-01-23',
-    'BOOK: wiki',
+    'TO: wiki',
     'Garuda.md#L3-L9 -> Garuda-Ideas',
   ].join('\n'));
   assert.deepEqual(list.entries.map((e) => [rel(e.path), e.section, e.name, e.to, e.book, e.sha]), [
@@ -98,7 +98,7 @@ test('a csv list\'s name, to and book columns name the page and where it goes', 
     'path,verdict,name,to,book',
     'Daily/a.md,Move,2025-12-15,,Morning Pages',
     'lore/b.md,Move,,,',
-    'lore/c.md,Move,Sea-(place),,Wiki',
+    'lore/c.md,Move,Sea-(place),wiki,',
     'lore/d.md,Move,Places/Quay,Wiki,',
     'lore/e.md,Move,,sources,',
   ].join('\n');
@@ -121,7 +121,7 @@ test('to lines send the entries after them to sources or the wiki, and a folder 
     'Daily/a.md -> 2025-12-15',
     'to: Sources',
     'notes/Ebb.md -> Ebb notes',
-    'book: Wiki',
+    'to: wiki',
     'lore/Sea.md -> Places / Deep / Sea',
   ].join('\n'));
   assert.deepEqual(list.entries.map((e) => [rel(e.path), e.name, e.folder, e.to, e.book]), [
@@ -139,6 +139,7 @@ test('to lines send the entries after them to sources or the wiki, and a folder 
     ['a.md -> a//b\n', /folder/],
     ['a.md -> a\\b\n', /slash/],
     ['book: Morning Pages\na.md -> Week/Monday\n', /book/],
+    ['book: Wiki\na.md\n', /to: wiki/],
   ] as const) {
     assert.throws(() => readImportList(path.join(dir, 'l.txt'), text), (err: unknown) =>
       err instanceof ListError && /line \d/.test(err.message) && why.test(err.message), text);

@@ -1,14 +1,14 @@
-// The wiki's main half: Import to Wiki asks for Markdown files, Import List for an import
-// list naming them (import-list.ts), and both say what would come in and import on the
-// writer's word; the window asks for the pages to follow links and for one page to show
+// The wiki's main half: Import to Wiki asks for Markdown files and brings them into the
+// wiki's page files, Import List asks for an import list naming them (import-list.ts), and
+// both say what would come in and import on the writer's word; the window asks for the pages to follow links and for one page to show
 // in the wiki pane. The questions are OS message boxes, never while the writer types: the
 // writer chose the command.
 //
 // A list sends each page where its line says: to the page files of sources/ (the default)
 // or wiki/ (page-import.ts), or, after a `book:` line, into a NEO book (Morning Pages,
 // say), each filled by a store of its own; Open Imported Book… asks which book to open,
-// since none is on a shelf. Import to Wiki still fills the Wiki book, which the readers
-// that have not moved to page files yet (search, marks, Ripple, the pane) still read.
+// since none is on a shelf. Nothing is imported into the Wiki book any more; its store is
+// kept only for the readers that still serve it, until it goes.
 import { BrowserWindow, dialog } from 'electron';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -20,7 +20,7 @@ import { oneName } from '../files.ts';
 import type { MarkStore } from '../marks/store.ts';
 import type { Tree } from '../pages/identity.ts';
 import { ListError, readImportList, type ImportList } from './import-list.ts';
-import { PageImport, type PageMarks } from './page-import.ts';
+import { PageImport } from './page-import.ts';
 import type { Pick, SortedOf } from './picks.ts';
 import { WikiStore } from './store.ts';
 import { describeSort } from './summary.ts';
@@ -48,7 +48,7 @@ async function choose(from: 'pages' | 'list', host: NeoMainHost): Promise<{ pick
       title: 'Import to Wiki', buttonLabel: 'Import',
       properties: ['openFile', 'multiSelections'], filters: [{ name: 'Markdown', extensions: ['md'] }],
     });
-    return pick.canceled || pick.filePaths.length === 0 ? null : { picks: pick.filePaths.map((path) => ({ path, to: null, book: null })), left: [] };
+    return pick.canceled || pick.filePaths.length === 0 ? null : { picks: pick.filePaths.map((path) => ({ path, to: 'wiki' as Tree, book: null })), left: [] };
   }
   const pick = await openDialog({
     title: 'Import List', buttonLabel: 'Import',
@@ -71,7 +71,7 @@ async function choose(from: 'pages' | 'list', host: NeoMainHost): Promise<{ pick
   }
 }
 
-// A pick and where it goes: a tree of page files, a NEO book by title, or (both null) the Wiki book.
+// A pick and where it goes: a tree of page files, or else a NEO book by title.
 type DestPick = Pick & { to: Tree | null; book: string | null };
 
 /** One place an import fills, whatever it is: a tree of page files, or a NEO book. */
@@ -91,23 +91,21 @@ interface Done {
   imported: number;
   updated: number;
   marks: number;
-  marksLeft: number;
   keptAsText: number;
   attachments: number;
   missing: string[];
 }
 
 function bookTarget(store: WikiStore): Target {
-  const wiki = store.title === 'Wiki';
   return {
-    where: wiki ? 'the wiki' : store.title,
+    where: store.title,
     sort: (picks) => store.sort(picks),
     apply: async (sorted, openBookId) => {
       const a = await store.apply(sorted as ReturnType<WikiStore['sort']>, openBookId);
-      return { bookId: a.bookId, imported: a.imported.length, updated: a.updated.length, marks: a.marks, marksLeft: 0, keptAsText: a.keptAsText, attachments: a.attachments, missing: a.missing };
+      return { bookId: a.bookId, imported: a.imported.length, updated: a.updated.length, marks: a.marks, keptAsText: a.keptAsText, attachments: a.attachments, missing: a.missing };
     },
     bookId: () => store.wikiId(),
-    button: wiki ? 'Open Wiki Book' : `Open ${store.title}`,
+    button: `Open ${store.title}`,
   };
 }
 
@@ -118,7 +116,7 @@ function treeTarget(into: PageImport, wrote: () => Promise<unknown>): Target {
     apply: async (sorted) => {
       const a = await into.apply(sorted as ReturnType<PageImport['sort']>);
       await wrote();
-      return { bookId: null, imported: a.imported.length, updated: a.updated.length, marks: a.marks, marksLeft: a.marksLeft, keptAsText: a.keptAsText, attachments: a.attachments, missing: a.missing };
+      return { bookId: null, imported: a.imported.length, updated: a.updated.length, marks: a.marks, keptAsText: a.keptAsText, attachments: a.attachments, missing: a.missing };
     },
     bookId: () => null,
     button: null,
@@ -129,10 +127,10 @@ function treeTarget(into: PageImport, wrote: () => Promise<unknown>): Target {
 function byDest(picks: DestPick[], targets: Targets): { target: Target; picks: Pick[] }[] {
   const groups = new Map<string, { rank: number; target: Target; picks: Pick[] }>();
   for (const { to, book, ...pick } of picks) {
-    const k = to ? `tree:${to}` : book ? `book:${key(book)}` : 'wiki-book';
+    const k = to ? `tree:${to}` : `book:${key(book ?? '')}`;
     let group = groups.get(k);
     if (!group) {
-      const rank = to === 'sources' ? 0 : to === 'wiki' ? 1 : book ? 3 + groups.size : 2;
+      const rank = to === 'sources' ? 0 : to === 'wiki' ? 1 : 2 + groups.size;
       groups.set(k, group = { rank, target: targets.for(to, book), picks: [] });
     }
     group.picks.push(pick);
@@ -190,7 +188,6 @@ async function runImport(host: NeoMainHost, targets: Targets, from: 'pages' | 'l
   const sum = (f: (a: Done) => number) => done.reduce((n, d) => n + f(d.applied), 0);
   const updated = sum((a) => a.updated);
   const marks = sum((a) => a.marks);
-  const marksLeft = sum((a) => a.marksLeft);
   const keptAsText = sum((a) => a.keptAsText);
   const attachments = sum((a) => a.attachments);
   const missing = done.flatMap((d) => d.applied.missing);
@@ -200,11 +197,10 @@ async function runImport(host: NeoMainHost, targets: Targets, from: 'pages' | 'l
   const said = [
     updated ? `${updated} ${plural(updated, 'page was', 'pages were')} updated from a newer source.` : '',
     marks ? `${marks} ${plural(marks, 'mark', 'marks')} came with them.` : '',
-    marksLeft ? `${marksLeft} CriticMarkup ${plural(marksLeft, 'mark was', 'marks were')} left out, because page files cannot hold marks yet.` : '',
     keptAsText ? `${keptAsText} CriticMarkup ${plural(keptAsText, 'mark stays', 'marks stay')} in the text as written, because ${plural(keptAsText, 'it', 'they')} cannot be a mark here.` : '',
     attachments ? `${attachments} ${plural(attachments, 'image or PDF was', 'images or PDFs were')} copied into ${copiedInto}.` : '',
     missing.length ? `Not found, so not copied: ${missing.slice(0, 12).join(', ')}${missing.length > 12 ? ` and ${missing.length - 12} more` : ''}.` : '',
-    done.some((d) => d.target.button && d.target.button !== 'Open Wiki Book') ? 'A book an import list fills is on no shelf: Plugins > Open Imported Book… opens it.' : '',
+    done.some((d) => d.target.button) ? 'A book an import list fills is on no shelf: Plugins > Open Imported Book… opens it.' : '',
   ].filter(Boolean);
   const openable = done.filter((d) => d.target.button);
   const answer = await messageBox({
@@ -212,33 +208,23 @@ async function runImport(host: NeoMainHost, targets: Targets, from: 'pages' | 'l
     buttons: [...openable.map((d) => d.target.button!), 'Close'],
     defaultId: 0, cancelId: openable.length, noLink: true,
   });
-  const chosenBook = openable[answer.response];
-  const wikiBook = chosenBook?.target.button === 'Open Wiki Book';
-  return {
-    outcome: 'imported',
-    bookId: done[0]!.applied.bookId,
-    open: wikiBook,
-    openBookId: chosenBook && !wikiBook ? chosenBook.applied.bookId : null,
-  };
+  return { outcome: 'imported', openBookId: openable[answer.response]?.applied.bookId ?? null };
 }
 
-// The Wiki book's store, the two trees, and a store for each other book an import list
-// names, made when first asked for.
+// The two trees, and a store for each book an import list names, made when first asked for.
 class Targets {
-  readonly wiki: WikiStore;
   readonly #books = new Map<string, Target>();
   readonly #trees: Record<Tree, Target>;
-  readonly #make: (book?: string) => WikiStore;
+  readonly #make: (book: string) => WikiStore;
 
-  constructor(make: (book?: string) => WikiStore, tree: (tree: Tree) => PageImport, wrote: () => Promise<unknown>) {
+  constructor(make: (book: string) => WikiStore, tree: (tree: Tree) => PageImport, wrote: () => Promise<unknown>) {
     this.#make = make;
-    this.wiki = make();
     this.#trees = { sources: treeTarget(tree('sources'), wrote), wiki: treeTarget(tree('wiki'), wrote) };
   }
 
   for(to: Tree | null, book: string | null): Target {
     if (to) return this.#trees[to];
-    if (book === null) return bookTarget(this.wiki);
+    if (book === null) throw new Error('a pick goes to a tree or a book');
     let target = this.#books.get(key(book));
     if (!target) this.#books.set(key(book), target = bookTarget(this.#make(book)));
     return target;
@@ -283,12 +269,12 @@ async function pickImportedBook(host: NeoMainHost): Promise<{ bookId: string | n
 }
 
 /**
- * `pageMarks` holds the marks of imported pages; `pagesWrote` is told when an import has
- * written page files, so the page store reads its trees again (pages/store.ts).
+ * `marks` holds the marks of imported pages and books; `pagesWrote` is told when an import
+ * has written page files, so the page store reads its trees again (pages/store.ts).
  */
-export function startWiki(host: NeoMainHost, layer: GitLayer, marks: MarkStore, o: { pageMarks?: PageMarks; pagesWrote?: () => Promise<unknown> } = {}): WikiStore {
-  const { pageMarks, pagesWrote = () => Promise.resolve() } = o;
-  const targets = new Targets((book) => new WikiStore({
+export function startWiki(host: NeoMainHost, layer: GitLayer, marks: MarkStore, o: { pagesWrote?: () => Promise<unknown> } = {}): WikiStore {
+  const { pagesWrote = () => Promise.resolve() } = o;
+  const store = (book?: string) => new WikiStore({
     library: () => host.paths.library(),
     marks,
     head: () => layer.head(),
@@ -296,16 +282,18 @@ export function startWiki(host: NeoMainHost, layer: GitLayer, marks: MarkStore, 
     commit: (part) => layer.commitNow(part === 'author' ? 'import-author' : 'import'),
     log: host.log.bind(host),
     ...(book === undefined ? {} : { book }),
-  }), (tree) => new PageImport({
+  });
+  const targets = new Targets((book) => store(book), (tree) => new PageImport({
     library: () => host.paths.library(),
     tree,
-    ...(pageMarks ? { marks: pageMarks } : {}),
+    marks,
     head: () => layer.head(),
     wrote: (name) => layer.wrote(name),
     commit: (part) => layer.commitNow(part === 'author' ? 'import-author' : 'import'),
     log: host.log.bind(host),
   }), pagesWrote);
-  const wiki = targets.wiki;
+  // The Wiki book, for the readers that still serve it; nothing imports into it.
+  const wiki = store();
   host.handle('wiki.pages', () => wiki.pages());
   host.handle('wiki.page', (payload) => wiki.page(checked('wiki.page', validateHoardWikiPageV1, payload).chId));
   host.handle('wiki.import', (payload) => {
