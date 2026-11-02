@@ -79,7 +79,8 @@ async function caretIn(page, words, into = 2) {
   await page.waitForTimeout(100);
 }
 
-test('picked pages come into the wiki and open in NEO', async () => {
+// the Wiki book goes with WikiStore (PR #28), and this import into it with it
+test.fixme('picked pages come into the wiki and open in NEO', async () => {
   const { profile, library, files } = await trackedProfile();
   const fixture = await launchProfile(profile);
   try {

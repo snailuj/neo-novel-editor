@@ -1,29 +1,21 @@
-// The wiki in the window. Import to Wiki and Import List ask the main half, which runs the file picker
-// and the questions. [[links]] are drawn on the page of any book and followed with
-// Ctrl+click (Cmd+click on a Mac) or Follow Link: the stored page the link's title names
-// shows in the wiki pane beside the book (pane.ts), so the writer keeps their place. Edit
-// Wiki as a Book opens the wiki book itself. Nothing here runs while the writer types but
-// a redraw of the links, once typing pauses.
-//
-// While the wiki is open the body carries data-hoard-wiki, so the plugin's stylesheet
-// can set its pages flush left: they are Markdown, not prose. It also carries NEO's own
-// no-dropcap for as long, because a drop cap can only be stopped by its rule no longer
-// matching, and it is put back as it was when the wiki closes. A change to the drop cap
-// setting made while the wiki is open takes effect on the wiki's pages until it is
-// opened again.
+// The wiki in the window. Import to Wiki and Import List ask the main half, which runs the
+// file picker and the questions. [[links]] are drawn on the page of any book, as links when
+// a stored page has their title and as missing when none does, and followed with
+// Ctrl+click (Cmd+click on a Mac) or Follow Link: the page shows in the wiki pane beside the
+// book (pane.ts), so the writer keeps their place. Nothing here runs while the writer types
+// but a redraw of the links, once typing pauses.
 import { titleIndex } from '../pages/titles.ts';
-import type { Applied, WikiPages } from './store.ts';
-import { linkAt, linksIn, pageIndex } from './links.ts';
+import type { Applied } from './store.ts';
+import { linkAt, linksIn } from './links.ts';
 import { startWikiPane } from './pane.ts';
 import type { Listed } from './tree.ts';
 
 const REDRAW_MS = 300;
 const STATUS_MS = 4_000;
 
-interface Imported { outcome: string; bookId?: string | null; imported?: Applied['imported']; open?: boolean; openBookId?: string | null; message?: string }
+interface Imported { outcome: string; bookId?: string | null; imported?: Applied['imported']; openBookId?: string | null; message?: string }
 
 export function startWiki(neo: NeoApiV5) {
-  let wiki: WikiPages | null = null;
   let importing = false;
   let redrawTimer: ReturnType<typeof setTimeout> | undefined;
   let statusTimer: ReturnType<typeof setTimeout> | undefined;
@@ -34,31 +26,10 @@ export function startWiki(neo: NeoApiV5) {
     statusTimer = setTimeout(() => neo.status(''), STATUS_MS);
   };
 
-  const refresh = async () => {
-    wiki = (await neo.invoke('wiki.pages')) as WikiPages | null;
-    return wiki;
-  };
-
   // the stored pages by title, which a [[link]] in a book is drawn against
   let titles = titleIndex<Listed>([]);
   const readPages = async () => {
     titles = titleIndex((await neo.invoke('pages.list')) as Listed[]);
-  };
-
-  const wikiOpen = () => {
-    const book = neo.book();
-    return !!book && !!wiki && book.id === wiki.bookId;
-  };
-
-  // The wiki's pages by title: the open book's own titles while it is the wiki, as the
-  // writer may have renamed a page since the main half last read them.
-  const index = () => {
-    const book = neo.book();
-    if (book && wiki && book.id === wiki.bookId) {
-      const titles = (book['chapterTitles'] ?? {}) as Record<string, string>;
-      return pageIndex(book.chapterOrder.map((chId) => ({ chId, title: titles[chId] ?? '' })));
-    }
-    return pageIndex(wiki?.pages ?? []);
   };
 
   const drawLinks = () => {
@@ -82,32 +53,6 @@ export function startWiki(neo: NeoApiV5) {
   const redrawSoon = () => {
     clearTimeout(redrawTimer);
     redrawTimer = setTimeout(drawLinks, REDRAW_MS);
-  };
-
-  let dropcapWasOff: boolean | null = null;
-  const showsWiki = () => {
-    const on = wikiOpen();
-    document.body.toggleAttribute('data-hoard-wiki', on);
-    if (on && dropcapWasOff === null) {
-      dropcapWasOff = document.body.classList.contains('no-dropcap');
-      document.body.classList.add('no-dropcap');
-    }
-  };
-  const leavesWiki = () => {
-    document.body.removeAttribute('data-hoard-wiki');
-    if (dropcapWasOff === false) document.body.classList.remove('no-dropcap');
-    dropcapWasOff = null;
-  };
-
-  const openWiki = async (): Promise<boolean> => {
-    if (!(await refresh())) {
-      say('There is no wiki yet: Plugins > Import to Wiki… brings pages in.');
-      return false;
-    }
-    if (wikiOpen()) return true;
-    const opened = await neo.open(wiki!.bookId);
-    if (!opened) say('The wiki could not be opened.');
-    return opened;
   };
 
   // A book an import list filled beside the wiki (Morning Pages, say); it is on no shelf.
@@ -144,11 +89,9 @@ export function startWiki(neo: NeoApiV5) {
     importing = true;
     try {
       const answer = (await neo.invoke('wiki.import', { openBookId: neo.book()?.id ?? null, from })) as Imported;
-      await refresh();
       await readPages();
       drawLinks();
-      if (answer.outcome === 'imported' && answer.open) await openWiki();
-      else if (answer.outcome === 'imported' && answer.openBookId) await openImported(answer.openBookId);
+      if (answer.outcome === 'imported' && answer.openBookId) await openImported(answer.openBookId);
       else if (pane.currentPage()) await pane.reload();
     } finally {
       importing = false;
@@ -156,7 +99,6 @@ export function startWiki(neo: NeoApiV5) {
   };
   neo.addCommand('import-wiki', () => runImport('pages'));
   neo.addCommand('import-wiki-list', () => runImport('list'));
-  neo.addCommand('open-wiki', async () => { await openWiki(); });
   neo.addCommand('open-imported-book', async () => {
     const { bookId } = (await neo.invoke('wiki.imported-book')) as { bookId: string | null };
     if (bookId) await openImported(bookId);
@@ -180,14 +122,10 @@ export function startWiki(neo: NeoApiV5) {
   });
 
   neo.on('book-open', async () => {
-    showsWiki();
     await readPages();
     drawLinks();
   });
-  neo.on('book-close', () => {
-    clearTimeout(redrawTimer);
-    leavesWiki();
-  });
+  neo.on('book-close', () => { clearTimeout(redrawTimer); });
   neo.on('chapter-change', redrawSoon);
 
   // Reads the page list again and draws the links by it, after a page was made or renamed
@@ -197,5 +135,12 @@ export function startWiki(neo: NeoApiV5) {
     drawLinks();
   }
 
-  return { openWiki, follow, pages: () => wiki, index, drawLinks, pane, reindex };
+  return {
+    follow,
+    /** The stored page a [[link]] target reaches, by the titles last read. */
+    links: () => ({ get: (target: string) => titles.resolve(target)?.id }),
+    drawLinks,
+    pane,
+    reindex,
+  };
 }
