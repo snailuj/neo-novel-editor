@@ -23,7 +23,7 @@ import { oneName, writeWhole } from '../files.ts';
 import { paragraphTexts } from '../html.ts';
 import { anchorAt } from '../marks/anchor.ts';
 import { newMark } from '../marks/model.ts';
-import { MarkFileError, type MarkStore, sidecarPath } from '../marks/store.ts';
+import { MarkFileError, type MarkStore, pageSidecarPath, sidecarPath } from '../marks/store.ts';
 import { parseId, titleOf, TREES, type Tree } from '../pages/identity.ts';
 import { newParagraphs } from './delta.ts';
 import { findingWords, reported } from './finding.ts';
@@ -51,14 +51,13 @@ export interface PageSource {
   list(): Promise<{ id: string; tree: Tree; title: string }[]>;
 }
 
-export interface ReadRequest {
-  bookId: string;
-  chId: string;
+/** What the writer left: a chapter of a book, or a stored page by its id. */
+export type ReadRequest = ({ bookId: string; chId: string; page?: never } | { page: string; bookId?: never; chId?: never }) & {
   before: string;
   after: string;
   /** Where the caret is, when the writer is still in the chapter: a name it is in or just after is left alone. */
   caret?: { pIdx: number; off: number } | null;
-}
+};
 
 export class CompanionFileError extends Error {
   constructor(file: string, why: string) {
@@ -114,12 +113,18 @@ export class Companion {
     return path.join(this.#o.library(), '.neo', 'companion.json');
   }
 
-  /** Reads a chapter the writer has left and comments on the pages its new words name. */
+  /** Reads a chapter or a stored page the writer has left and comments on the pages its new words name. */
   async read(req: ReadRequest): Promise<{ added: number }> {
-    oneName(req.bookId, 'bookId');
-    oneName(req.chId, 'chId');
-    // one chapter at a time, so two reads never flag one page twice
-    const name = `${req.bookId}/${req.chId}`;
+    let name: string;
+    if (req.page !== undefined) {
+      parseId(req.page);
+      name = req.page;
+    } else {
+      oneName(req.bookId, 'bookId');
+      oneName(req.chId, 'chId');
+      name = `${req.bookId}/${req.chId}`;
+    }
+    // one chapter or page at a time, so two reads never flag one page twice
     const before = this.#queues.get(name) ?? Promise.resolve();
     const next = before.then(() => this.#read(req), () => this.#read(req));
     const settled = next.catch(() => {});
@@ -128,30 +133,34 @@ export class Companion {
     return next;
   }
 
-  async #read({ bookId, chId, before, after, caret }: ReadRequest): Promise<{ added: number }> {
+  async #read(req: ReadRequest): Promise<{ added: number }> {
+    const { before, after, caret } = req;
     const started = Date.now();
-    if (bookId === this.#o.wikiBook()) return { added: 0 };
+    // the Wiki book's chapters are pages already, and are read as pages
+    if (req.page === undefined && req.bookId === this.#o.wikiBook()) return { added: 0 };
+    const [subject, sidecar] = req.page !== undefined
+      ? [{ page: req.page }, pageSidecarPath(this.#o.library(), req.page)]
+      : [{ bookId: req.bookId, chId: req.chId }, sidecarPath(this.#o.library(), req.bookId, req.chId)];
     const paragraphs = paragraphTexts(after);
     const fresh = newParagraphs(paragraphTexts(before), paragraphs);
     if (fresh.length === 0) return { added: 0 };
     const pages = await this.#pages();
     const quiet = this.#quiet().quiet;
-    const found = mentionsIn(paragraphs, fresh, pages.filter((p) => !Object.hasOwn(quiet, p.id)), (title) => {
+    const found = mentionsIn(paragraphs, fresh, pages.filter((p) => !Object.hasOwn(quiet, p.id) && p.id !== req.page), (title) => {
       if (this.#skipped.has(title)) return;
       this.#skipped.add(title);
       this.#o.log('warn', `companion: the page "${title}" starts or ends with a hyphen or space, so it cannot be found by name`);
     }).filter((m) => !caret || m.pIdx !== caret.pIdx || caret.off < m.off || caret.off > m.off + m.len);
     if (found.length === 0) return { added: 0 };
-    const sidecar = sidecarPath(this.#o.library(), bookId, chId);
     if (this.#broken.has(sidecar) && this.#broken.get(sidecar) === stampOf(sidecar)) return { added: 0 };
     let existing: Mark[];
     try {
-      existing = await this.#o.marks.chapter(bookId, chId);
+      existing = req.page !== undefined ? await this.#o.marks.list(req.page) : await this.#o.marks.chapter(req.bookId, req.chId);
       this.#broken.delete(sidecar);
     } catch (err) {
       if (!(err instanceof MarkFileError)) throw err;
       this.#broken.set(sidecar, stampOf(sidecar));
-      this.#o.log('warn', 'companion: the chapter\'s marks file does not read, so no finding is added until it changes', { bookId, chId });
+      this.#o.log('warn', 'companion: the marks file does not read, so no finding is added until it changes', subject);
       return { added: 0 };
     }
     const told = reported(existing, pages);
@@ -165,9 +174,10 @@ export class Companion {
       who: 'librarian',
       at,
     }));
-    await this.#o.marks.addAll(bookId, chId, made);
+    if (req.page !== undefined) await this.#o.marks.addAll(req.page, made);
+    else await this.#o.marks.addAll(req.bookId, req.chId, made);
     this.#o.log('info', 'companion.read', {
-      bookId, chId, paragraphs: fresh.length, mentions: found.length, added: made.length, ms: Date.now() - started,
+      ...subject, paragraphs: fresh.length, mentions: found.length, added: made.length, ms: Date.now() - started,
     });
     return { added: made.length };
   }

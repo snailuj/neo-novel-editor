@@ -1,11 +1,32 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "description": "A chapter for the librarian to read, version 1: the chapter's HTML when the writer came to it (empty for a new chapter) and as last saved. caret is where the caret is while the writer is still in the chapter, or null once they have left; a name it is in or just after is left for a later read.",
+  "description": "A chapter, or a stored page, for the librarian to read, version 1: its HTML when the writer came to it (empty when new) and as last saved. A chapter is named by bookId and chId, a page by its id, <tree>/<path>. caret is where the caret is while the writer is still in it, or null once they have left; a name it is in or just after is left for a later read.",
   "type": "object",
   "additionalProperties": false,
+  "oneOf": [
+    {
+      "required": [
+        "bookId",
+        "chId"
+      ],
+      "properties": {
+        "bookId": true,
+        "chId": true,
+        "page": false
+      }
+    },
+    {
+      "required": [
+        "page"
+      ],
+      "properties": {
+        "page": true,
+        "bookId": false,
+        "chId": false
+      }
+    }
+  ],
   "required": [
-    "bookId",
-    "chId",
     "before",
     "after"
   ],
@@ -17,6 +38,11 @@
     "chId": {
       "type": "string",
       "minLength": 1
+    },
+    "page": {
+      "description": "A page's id, <tree>/<path>, in place of bookId and chId.",
+      "type": "string",
+      "pattern": "^(wiki|sources)/.+$"
     },
     "before": {
       "type": "string",
