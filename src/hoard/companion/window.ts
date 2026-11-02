@@ -34,8 +34,6 @@ interface MarksView {
 
 export function startCompanion(neo: NeoApiV4, o: {
   marks: MarksView;
-  /** The Wiki book's id while it exists; its chapters are pages already and are not handed over. */
-  wikiBook: () => string | null;
   /** Every page of both trees, as the page store lists them. */
   pages: () => Promise<{ id: string; tree: string; title: string }[]>;
 }) {
@@ -80,7 +78,6 @@ export function startCompanion(neo: NeoApiV4, o: {
   };
 
   neo.on('chapter-saved', ({ bookId, chId, html, previous }) => {
-    if (bookId === o.wikiBook()) return;
     const k = `${bookId}/${chId}`;
     const known = pending.get(k);
     if (known) known.after = html;
