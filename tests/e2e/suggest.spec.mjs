@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { launchProfile, seedBook } from '../support/electron-profile.mjs';
+import { pageBeside, paneSettled, readMarks as readPageMarks, selectIn } from '../support/pane-page.mjs';
 
 // Suggest-And-Review. Rules: a page the librarian owns opens held, and the writer's edits
 // there become suggestions, a keystroke included; the librarian applies a clean one as
@@ -157,6 +158,51 @@ test('the librarian\'s page takes suggestions, which the librarian accepts or fl
     await expect.poll(() => chapterFile(library, bookId), { timeout: 10_000 }).toContain('dawn. Typed.');
     await reopen(page, bookId);
     await expect(page.locator(`.chapter[data-id="${LORE}"][data-held]`)).toHaveCount(1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+
+// Rule: the Wiki pane shows a stored page's comments on its lines and under it, and a
+// comment made there on selected words is kept in the page's own marks sidecar,
+// .neo/marks/<tree>/<path>.json.
+test('a comment made in the Wiki pane is drawn there and kept in the page\'s marks sidecar', async () => {
+  const { fixture, page, library } = await pageBeside(TEXT.replace('<p>', '<p data-block="b1">').replace('<p>', '<p data-block="b2">'));
+  try {
+    expect(readPageMarks(library)).toEqual([]);
+    // Esc in the composer stops composing, and the book stays open
+    await selectIn(page, 'west');
+    await page.locator('.hoard-pane-add').click({ force: true });
+    await page.locator('#hoard-pane-compose-text').press('Escape');
+    await expect(page.locator('#hoard-pane-compose-text')).toBeHidden();
+    await expect(page.locator('#editor-view')).toBeVisible();
+
+    await paneSettled(page);
+    await selectIn(page, 'west');
+    await watchCtrlEnter(page);
+    await page.locator('.hoard-pane-add').click({ force: true });
+    await page.locator('#hoard-pane-compose-text').fill('Why west?');
+    await page.locator('#hoard-pane-compose-text').press('Control+Enter');
+    await expect.poll(() => readPageMarks(library).map((m) => [m.kind, m.anchor.exact, m.thread[0]?.body])).toEqual([['comment', 'west', 'Why west?']]);
+    await expect.poll(() => page.evaluate(() => [...(CSS.highlights.get('hoard-pane-comment') ?? [])].map((r) => r.toString()))).toEqual(['west']);
+    // the manuscript beside it was never touched
+    await expect(page.locator('.chapter-body p').nth(0)).toHaveText('See [[Vell]] today.');
+
+    const [made] = readPageMarks(library);
+    const cardIn = page.locator(`.hoard-pane-marks .hoard-mark[data-mark="${made.id}"]`);
+    await cardIn.locator('textarea').fill('Because of the sunset.');
+    await cardIn.locator('textarea').press('Control+Enter');
+    await expect.poll(() => readPageMarks(library)[0].thread.map((e) => e.body)).toEqual(['Why west?', 'Because of the sunset.']);
+    expect(await ctrlEnterReached(page)).toBe(0);
+    await paneSettled(page);
+    await page.locator(`.hoard-pane-marks .hoard-mark[data-mark="${made.id}"] button[data-action="Resolve"]`).click({ force: true });
+    await expect.poll(() => readPageMarks(library)[0].state).toBe('resolved');
+    await expect.poll(() => page.evaluate(() => CSS.highlights.has('hoard-pane-comment'))).toBe(false);
+
+    // shown again, the page reads its comments from the sidecar
+    await page.evaluate(() => window.hoard.wiki.pane.reload());
+    await expect(page.locator(`.hoard-pane-marks .hoard-mark[data-mark="${made.id}"]`)).toContainText('resolved');
   } finally {
     await fixture.close();
   }

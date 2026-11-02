@@ -11,12 +11,15 @@
 // The writer's comments are drawn on the page and listed in a Comments section beside
 // the manuscript (marks/window.ts), which needs API 3's side sections. The wiki
 // (wiki/window.ts) imports pages, opens the wiki book and follows links into it, which
-// needs API 4's open; its pane shows stored pages read-only. Search (search/window.ts) looks through every book and the wiki
+// needs API 4's open. Its pane edits the stored page shown in place (wiki/pane-edit.ts),
+// with API 5's wider pane while the writer types there, and carries the page's marks
+// (marks/pane-marks.ts). Search (search/window.ts) looks through every book and the wiki
 // from a Search section beside the book. The librarian reads each chapter the writer
 // leaves and comments on the wiki pages its new words name (companion/window.ts). Ripple
 // (ripple/window.ts) lists what waits for its judge and the judge's proposals to rule on.
 import { startCompanion } from './companion/window.ts';
 import { startLibrarian } from './git/librarian.ts';
+import { startPaneMarks } from './marks/pane-marks.ts';
 import { startMarks } from './marks/window.ts';
 import { startReview } from './review/window.ts';
 import { startRipple } from './ripple/window.ts';
@@ -56,10 +59,13 @@ NeoPlugins.register({
     const wiki = startWiki(neo);
     const librarian = startLibrarian(neo);
     const review = startReview(neo, marks, { pages: wiki.links, librarian });
-    // stage 6 reattaches the pane's marks and editing (marks/pane-marks.ts, wiki/pane-edit.ts) on page files
     const search = startSearch(neo, { open: (id, at) => wiki.pane.open(id, at) });
     const companion = startCompanion(neo, { marks, wikiBook: () => null, pages: () => neo.invoke('pages.list') as Promise<{ id: string; tree: string; title: string }[]> });
+    const paneMarks = startPaneMarks(neo, wiki.pane, {
+      pages: wiki.links,
+      saved: (change) => companion.pageSaved(change, () => { paneMarks.reload(); }),
+    });
     const ripple = startRipple(neo, { currentPage: () => wiki.pane.currentPage() });
-    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, librarian, review, search, companion, ripple }) });
+    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, librarian, review, paneMarks, search, companion, ripple }) });
   },
 });
