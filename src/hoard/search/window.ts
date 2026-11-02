@@ -1,18 +1,19 @@
 // The Search section beside the book. Plugins > Search Library… opens it with the focus
 // in its field, holding the words selected on the page if there are some. A search runs
 // once typing pauses, from two letters: the open book here, on its paragraphs as they
-// stand (which can be ahead of its file), and every other book through the main half's
-// worker, from their files. Results come in groups: the wiki first, then the open book,
-// then the others by title, titles that hold the phrase first in each.
+// stand (which can be ahead of its file), and every page and other book through the main
+// half's worker, from their files. Results come in groups: the Wiki pages, then the
+// Sources pages, then the open book, then the other books by title, titles that hold the
+// phrase first in each.
 //
-// A result goes where it says. In the open book it selects the words. A wiki page, while
-// another book is open, shows in the Wiki section beside it, at the words, so the writer
-// keeps their place. Another book is opened at the words.
+// A result goes where it says. In the open book it selects the words. A page shows in the
+// Wiki section beside the book, at the words, so the writer keeps their place. Another
+// book is opened at the words.
 //
 // Nothing here runs while the writer types in the manuscript.
 import { fold, type Folded } from './fold.ts';
 import { searchChapters, type ChapterText, type Hit } from './scan.ts';
-import type { Group, LibraryFound } from './library.ts';
+import type { BookGroup, Group, LibraryFound } from './library.ts';
 
 const WAIT_MS = 250;
 const MIN_LETTERS = 2;
@@ -20,13 +21,11 @@ const LIMIT = 200;
 const CAP = 1000;
 const MAX_FOLDS = 50_000;
 
-type Scope = 'all' | 'wiki' | 'book';
+type Scope = 'all' | 'pages' | 'book';
 
 interface WikiSide {
-  /** The wiki's book id, once known. */
-  bookId(): string | null;
-  /** A wiki page shown in the Wiki section, at a place on it. */
-  show(chId: string, at: { pIdx: number; off: number; len: number } | null): Promise<void>;
+  /** A page, by its id (`<tree>/<path>`), shown in the Wiki section, at a place on it. */
+  open(id: string, at?: { pIdx: number; off: number; len: number }): Promise<unknown>;
 }
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] => {
@@ -40,6 +39,10 @@ const frames = (n: number) => new Promise<void>((resolve) => {
   const next = (left: number) => (left === 0 ? resolve() : requestAnimationFrame(() => next(left - 1)));
   next(n);
 });
+
+/** What a failed library search left unsearched, by scope. The book scope never asks the main half. */
+export const notSearched = (s: 'all' | 'pages' | 'book', why: string) =>
+  `The wiki and sources pages${s === 'all' ? ' and other books' : ''} were not searched: ${why}`;
 
 const count = (n: number) => n.toLocaleString('en');
 
@@ -71,7 +74,7 @@ export function startSearch(neo: NeoApiV4, wiki: WikiSide) {
   field.spellcheck = false;
   const scope = el('select', 'hoard-search-scope');
   scope.setAttribute('aria-label', 'Where to search');
-  for (const [value, text] of [['all', 'All Books'], ['wiki', 'Wiki'], ['book', 'This Book']] as const) {
+  for (const [value, text] of [['all', 'Everything'], ['pages', 'Pages'], ['book', 'This Book']] as const) {
     const option = el('option', '', text);
     option.value = value;
     scope.append(option);
@@ -100,7 +103,7 @@ export function startSearch(neo: NeoApiV4, wiki: WikiSide) {
   };
 
   // The open book's group, from its paragraphs as they stand.
-  const openGroup = (text: string): Group | null => {
+  const openGroup = (text: string): BookGroup | null => {
     const book = neo.book();
     if (!book) return null;
     const titles = (book['chapterTitles'] ?? {}) as Record<string, string>;
@@ -112,19 +115,19 @@ export function startSearch(neo: NeoApiV4, wiki: WikiSide) {
       chapters.push({ bookId: book.id, chId, title, label: title || `Chapter ${n + 1}`, paragraphs: chapter.paragraphs });
     });
     const found = searchChapters(chapters, text, { limit: LIMIT, cap: CAP, foldOf });
-    return found.total ? { bookId: book.id, bookTitle: book.title || 'This book', wiki: book.id === wiki.bookId(), hits: found.hits, total: found.total } : null;
+    return found.total ? { bookId: book.id, bookTitle: book.title || 'This book', hits: found.hits, total: found.total } : null;
   };
 
   const go = async (hit: Hit) => {
     const at = hit.kind === 'title' ? { pIdx: 0, off: 0, len: 0 } : { pIdx: hit.pIdx, off: hit.off, len: hit.len };
+    if ('page' in hit) {
+      await wiki.open(hit.page, hit.kind === 'title' ? undefined : at);
+      return;
+    }
     const place = { chId: hit.chId, ...at };
     const book = neo.book();
     if (book && book.id === hit.bookId) {
       if (!neo.go(place)) status.textContent = 'Those words have changed since the search. Search again to find them.';
-      return;
-    }
-    if (hit.bookId === wiki.bookId()) {
-      await wiki.show(hit.chId, hit.kind === 'title' ? null : at);
       return;
     }
     if (!(await neo.open(hit.bookId))) {
@@ -139,7 +142,8 @@ export function startSearch(neo: NeoApiV4, wiki: WikiSide) {
   const hitButton = (hit: Hit) => {
     const b = el('button', 'hoard-search-hit');
     b.type = 'button';
-    b.append(el('span', 'hoard-search-where', hit.kind === 'title' ? `${hit.chapter} (title)` : hit.chapter));
+    const where = 'page' in hit ? hit.title : hit.chapter;
+    b.append(el('span', 'hoard-search-where', hit.kind === 'title' ? `${where} (title)` : where));
     const words = el('span', 'hoard-search-words');
     words.append(
       document.createTextNode(hit.before && hit.before.length < hit.off ? `…${hit.before}` : hit.before),
@@ -155,8 +159,8 @@ export function startSearch(neo: NeoApiV4, wiki: WikiSide) {
     first = null;
     results.replaceChildren(...groups.map((group) => {
       const section = el('section', 'hoard-search-group');
-      const open = neo.book()?.id === group.bookId;
-      section.append(el('h4', 'hoard-search-book', `${group.bookTitle}${open ? ' (open)' : ''} · ${count(group.total)}`));
+      const name = 'tree' in group ? group.title : `${group.bookTitle}${neo.book()?.id === group.bookId ? ' (open)' : ''}`;
+      section.append(el('h4', 'hoard-search-book', `${name} · ${count(group.total)}`));
       const list = el('ul', 'hoard-search-list');
       for (const hit of group.hits) {
         const item = el('li');
@@ -170,7 +174,7 @@ export function startSearch(neo: NeoApiV4, wiki: WikiSide) {
     }));
   };
 
-  const where = (s: Scope) => (s === 'all' ? 'any book' : s === 'wiki' ? 'the wiki' : 'this book');
+  const whereIs = (s: Scope) => (s === 'all' ? 'the library' : s === 'pages' ? 'the wiki and sources' : 'this book');
 
   const run = async (): Promise<void> => {
     clearTimeout(timer);
@@ -179,7 +183,7 @@ export function startSearch(neo: NeoApiV4, wiki: WikiSide) {
     const mine = ++asked;
     if ([...text].length < MIN_LETTERS) {
       draw([]);
-      status.textContent = text ? 'Type two letters or more.' : 'Type words to find them in your books and the wiki.';
+      status.textContent = text ? 'Type two letters or more.' : 'Type words to find them in your books and pages.';
       return;
     }
     const book = neo.book();
@@ -188,8 +192,7 @@ export function startSearch(neo: NeoApiV4, wiki: WikiSide) {
       status.textContent = 'Open a book to search.';
       return;
     }
-    const openIsWiki = book.id === wiki.bookId();
-    const live = s === 'book' || s === 'all' || (s === 'wiki' && openIsWiki) ? openGroup(text) : null;
+    const live = s === 'book' || s === 'all' ? openGroup(text) : null;
     let found: LibraryFound | null = null;
     let failed = '';
     if (s !== 'book') {
@@ -204,20 +207,20 @@ export function startSearch(neo: NeoApiV4, wiki: WikiSide) {
     }
     if (mine !== asked) return;
     const others = found?.groups ?? [];
-    const groups = [...others.filter((g) => g.wiki), ...(live ? [live] : []), ...others.filter((g) => !g.wiki)];
+    const groups = [...others.filter((g) => 'tree' in g), ...(live ? [live] : []), ...others.filter((g) => 'bookId' in g)];
     draw(groups);
     const total = groups.reduce((n, g) => n + g.total, 0);
     const shown = groups.reduce((n, g) => n + g.hits.length, 0);
     const capped = (found?.capped ?? false) || total >= CAP;
     const lines: string[] = [];
-    if (total === 0) lines.push(`Nothing in ${where(s)} has “${text}”.`);
+    if (total === 0) lines.push(`Nothing in ${whereIs(s)} has “${text}”.`);
     else {
-      lines.push(`${capped ? `${count(CAP)} or more` : count(total)} match${total === 1 ? '' : 'es'} in ${groups.length} book${groups.length === 1 ? '' : 's'}.`);
+      lines.push(`${capped ? `${count(CAP)} or more` : count(total)} match${total === 1 ? '' : 'es'} in ${groups.length} group${groups.length === 1 ? '' : 's'}.`);
       if (shown < total) lines.push(`The first ${count(shown)} are shown.`);
     }
     if (found?.cloud) lines.push(`${count(found.cloud)} file${found.cloud === 1 ? ' is' : 's are'} in iCloud and not on this computer yet, so not searched.`);
     if (found?.unreadable) lines.push(`${count(found.unreadable)} book${found.unreadable === 1 ? '' : 's'} could not be read.`);
-    if (failed) lines.push(`Other books were not searched: ${failed}`);
+    if (failed) lines.push(notSearched(s, failed));
     status.textContent = lines.join(' ');
   };
 
@@ -238,7 +241,7 @@ export function startSearch(neo: NeoApiV4, wiki: WikiSide) {
     e.preventDefault();
     b.focus();
   });
-  status.textContent = 'Type words to find them in your books and the wiki.';
+  status.textContent = 'Type words to find them in your books and pages.';
 
   const open = (preset = '') => {
     if (!pane.show()) return false;

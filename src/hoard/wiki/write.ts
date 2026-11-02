@@ -4,16 +4,14 @@
 // meanwhile is never written over. The open book's window owns its chapter files, so the
 // window never asks while the wiki book is open.
 //
-// The librarian's change sits between two commits (GitLayer.around): what the writer had
-// pending is committed as theirs, then the page as the librarian's. When the pre-commit
-// gate refuses that commit, the page is put back as it was, so the change is in neither
-// the history nor the file. The writer's own change is left to the next checkpoint, as
-// their typing is.
+// The librarian's change sits between two commits and a gate refusal puts the page back
+// (asLibrarian, review/edit.ts, which pages.edit shares). The writer's own change is left
+// to the next checkpoint, as their typing is.
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { GateRefused, type Finding } from '../git/gate.ts';
 import type { GitLayer } from '../git/layer.ts';
 import { oneName, writeWhole } from '../files.ts';
+import { asLibrarian, type Written } from '../review/edit.ts';
 
 export type Who = 'librarian' | 'author';
 
@@ -26,17 +24,16 @@ export interface PageWrite {
   as: Who;
 }
 
-export type PageWritten =
-  | { ok: true }
-  | { ok: false; reason: 'missing' | 'stale' }
-  | { ok: false; reason: 'refused'; findings: Finding[] };
+export type PageWritten = Written;
 
 export interface PageWriterOptions {
   library(): string;
   /** The wiki book's id and whether it lists the page, or null when there is no wiki. */
   listed(chId: string): { bookId: string } | null;
-  layer: Pick<GitLayer, 'around' | 'wrote'>;
+  layer: Pick<GitLayer, 'around' | 'wrote' | 'release' | 'held'>;
   log(level: 'error' | 'warn' | 'info' | 'debug', message: string, data?: unknown): void;
+  /** Told the book and chapter ids once the author's edit is written; never for the librarian's. */
+  saved?: (bookId: string, chId: string) => void;
 }
 
 export async function writePage(o: PageWriterOptions, ask: PageWrite): Promise<PageWritten> {
@@ -59,18 +56,17 @@ export async function writePage(o: PageWriterOptions, ask: PageWrite): Promise<P
     if (refused) return { ok: false, reason: refused };
     o.layer.wrote(bookId);
     o.log('info', 'wiki.edit', { chId, as: 'author' });
+    o.saved?.(bookId, chId);
     return { ok: true };
   }
 
-  try {
-    const { result: refused, after } = await o.layer.around([rel], swap);
-    if (refused) return { ok: false, reason: refused };
-    o.log('info', 'wiki.edit', { chId, as: 'librarian', commit: after });
-    return { ok: true };
-  } catch (err) {
-    if (!(err instanceof GateRefused)) throw err;
-    writeWhole(file, ask.before);
-    o.log('warn', 'wiki.edit: the library check refused the librarian\'s change, so the page is as it was', { chId, findings: err.findings });
-    return { ok: false, reason: 'refused', findings: err.findings };
-  }
+  const restore = async (): Promise<void> => {
+    const now = await readFile(file, 'utf8').catch(() => null);
+    if (now === ask.after) return writeWhole(file, ask.before);
+    // The page is no longer what the swap wrote, so the refused text may still be on disk: it stays held.
+    const reason = now === null ? 'missing' : 'stale';
+    o.log('error', 'wiki.edit: the refused librarian change could not be put back, so the page stays held', { chId, reason });
+    throw new Error(`wiki.edit: could not put ${rel} back after the library check refused the change (${reason})`);
+  };
+  return asLibrarian(o, 'wiki.edit', { chId }, [rel], swap, restore);
 }

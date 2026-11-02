@@ -1,10 +1,11 @@
-// Applying a reviewed sheet. Rules: only included rows are written; each wiki page holds
-// its blocks in source order with where they came from; the Morning Pages file reads
+// Applying a reviewed sheet. Rules: only included rows are listed; each page of the
+// library is cut from its one vault page by lines, in source order, under the headings it
+// had, and the list reads as Import List… reads it; the Morning Pages file reads
 // through NEO's own import as one chapter per day with every word kept; a block that
 // changed since review is never written; a re-run replaces what the last run wrote.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -15,6 +16,8 @@ import { applySheet, blockPicks, bookText } from '../../../src/librarian/blocks/
 import type { Judged } from '../../../src/librarian/blocks/judge.ts';
 import { type Row, rowsFor } from '../../../src/librarian/blocks/sheet.ts';
 import { splitBlocks } from '../../../src/librarian/blocks/split.ts';
+import { readImportList } from '../../../src/hoard/wiki/import-list.ts';
+import { convertPick, picked } from '../../../src/hoard/wiki/picks.ts';
 
 const temps: string[] = [];
 after(() => {
@@ -67,29 +70,61 @@ function sheet(): Row[] {
   ];
 }
 
-test('included writing becomes wiki pages with their sources; nothing else does', () => {
+const LIST_SHA = (dir: string, page: string) => createHash('sha256').update(readFileSync(path.join(dir, page))).digest('hex').slice(0, 16);
+
+test('included writing becomes import list lines that cut each block from its vault page; nothing else does', () => {
   const dir = vault();
   const out = tempDir();
-  const result = applySheet(dir, sheet(), out, { pathPrefix: 'E:\\Out' });
+  const result = applySheet(dir, sheet(), out, { vaultPrefix: 'E:\\Vault\\' });
   assert.deepEqual(result.missing, []);
-  const pages = readdirSync(path.join(out, 'wiki')).sort();
-  assert.deepEqual(pages, ['2026-01-01-Notes-(snippets).md', '2026-01-02-Later-(snippets).md']);
-  const later = readFileSync(path.join(out, 'wiki', '2026-01-02-Later-(snippets).md'), 'utf8');
-  assert.match(later, /^---\nsources:\n {2}- "Daily\/2026-01-02 Week 1\.md lines 13-13 \^[0-9a-f]{10}"\n---\n\nAn idea: the otter keeps a ledger of debts\.\n$/);
-  const list = readFileSync(path.join(out, 'import-list.txt'), 'utf8');
-  assert.equal(list, 'E:\\Out\\wiki\\2026-01-01-Notes-(snippets).md\nE:\\Out\\wiki\\2026-01-02-Later-(snippets).md\n');
+  assert.deepEqual(result.written.sort(), ['Morning Pages.md', 'import-list.txt']);
+  const [d1, d2] = [LIST_SHA(dir, 'Daily/2026-01-02 Week 1.md'), LIST_SHA(dir, 'Daily/2026-01-01 Week 1.md')];
+  assert.equal(readFileSync(path.join(out, 'import-list.txt'), 'utf8'), [
+    '# Written by blocks apply from the review sheet: each page is cut from its vault page by lines.',
+    '',
+    'to: sources',
+    `E:\\Vault\\Daily\\2026-01-01 Week 1.md#L5-L5@${d2} -> 2026-01-01-Notes-(snippets)`,
+    `E:\\Vault\\Daily\\2026-01-02 Week 1.md#L13-L13@${d1} -> 2026-01-02-Later-(snippets)`,
+    '',
+  ].join('\n'));
 });
 
-test('rows of several sections joined in one dest keep their order under their headings', () => {
+test('a row whose dest is wiki is listed under to: wiki, after the sources', () => {
   const rows = sheet();
-  for (const r of rows) if (r.label === 'writing') r.wiki_page = 'Otter-Ideas';
+  rows.find((r) => r.preview.startsWith('The heron'))!.dest = 'wiki';
   const out = tempDir();
   applySheet(vault(), rows, out, {});
-  const text = readFileSync(path.join(out, 'wiki', 'Otter-Ideas.md'), 'utf8');
-  const body = text.slice(text.indexOf('---\n\n') + 5);
-  assert.equal(body, '## Morning Pages > Later\n\nAn idea: the otter keeps a ledger of debts.\n\n## Notes\n\nThe heron never lands.\n');
+  const list = readFileSync(path.join(out, 'import-list.txt'), 'utf8');
+  assert.match(list, /\nto: sources\n[^\n]*2026-01-02-Later-\(snippets\)\n\nto: wiki\n[^\n]*-> 2026-01-01-Notes-\(snippets\)\n$/);
 });
 
+test('the list reads as an import list, and the blocks of one page under several headings come in with their headings', () => {
+  const dir = vault();
+  const rows = sheet();
+  for (const r of rows) {
+    if (r.page.includes('01-02') && (r.preview.startsWith('I woke') || r.preview.startsWith('An idea'))) {
+      r.dest = 'sources';
+      r.dest_page = 'Otter-Ideas';
+    }
+  }
+  const out = tempDir();
+  applySheet(dir, rows.filter((r) => r.page.includes('01-02')), out, {});
+  const listFile = path.join(out, 'import-list.txt');
+  const list = readImportList(listFile, readFileSync(listFile, 'utf8'));
+  const otter = list.entries.filter((e) => e.name === 'Otter-Ideas');
+  assert.deepEqual(otter.map((e) => [e.section, e.to, e.folder]), [['L4-L4', 'sources', null], ['L7-L7', 'sources', null], ['L12-L12', 'sources', null], ['L13-L13', 'sources', null]]);
+  const [page] = picked(otter.map((e) => ({ path: e.path, name: e.name, section: e.section, sha: e.sha })));
+  let n = 0;
+  const made = convertPick(page!, readFileSync(page!.path), new Map(), () => `b${++n}`);
+  assert.ok(!('why' in made), JSON.stringify(made));
+  assert.deepEqual(made.page.blocks.map((b) => b.text), ['Morning Pages', 'I woke early and the [[Harbour|harbour]] was grey. %% aside %%', 'Later', 'An idea: the otter keeps a ledger of debts.']);
+});
+
+test('one dest_page fed from two vault pages is refused, since a page is cut from one', () => {
+  const rows = sheet();
+  for (const r of rows) if (r.label === 'writing') r.dest_page = 'Otter-Ideas';
+  assert.throws(() => applySheet(vault(), rows, tempDir(), {}), /Otter-Ideas.*takes blocks from Daily\/2026-01-02 Week 1\.md and Daily\/2026-01-01 Week 1\.md/);
+});
 test('the Morning Pages file reads through NEO\'s import as one chapter per day, in date order, every word kept', async () => {
   const out = tempDir();
   applySheet(vault(), sheet(), out, {});
@@ -115,35 +150,40 @@ test('a block that changed since review is not written, and is named', () => {
   const dir = vault();
   const rows = sheet();
   writeFileSync(path.join(dir, 'Daily', '2026-01-01 Week 1.md'), DAY2.replace('never lands', 'lands at last'));
-  const result = applySheet(dir, rows, tempDir(), {});
+  const out2 = tempDir();
+  const result = applySheet(dir, rows, out2, {});
   assert.deepEqual(result.missing.map((m) => [m.page, m.lines]), [['Daily/2026-01-01 Week 1.md', '5-5']], 'only the changed block');
   assert.ok(result.written.includes('Morning Pages.md'), 'the unchanged block of that page still is');
-  assert.equal(result.written.some((f) => f.includes('Notes')), false);
+  assert.doesNotMatch(readFileSync(path.join(out2, 'import-list.txt'), 'utf8'), /Notes/);
 });
 
 test('rows to check are not written, and are counted', () => {
   const rows = sheet();
   const idea = rows.find((r) => r.preview.startsWith('An idea'))!;
-  idea.wiki = 'check';
+  idea.dest = 'check';
   const out = tempDir();
   const result = applySheet(vault(), rows, out, {});
   assert.equal(result.unresolved, 1);
-  assert.equal(existsSync(path.join(out, 'wiki', '2026-01-02-Later-(snippets).md')), false);
+  assert.doesNotMatch(readFileSync(path.join(out, 'import-list.txt'), 'utf8'), /Later/);
 });
 
-test('a re-run removes the pages the last run wrote and this one does not', () => {
+test('a re-run removes the files the last run wrote and this one does not', () => {
   const out = tempDir();
   const rows = sheet();
   applySheet(vault(), rows, out, {});
-  for (const r of rows) if (r.preview.startsWith('The heron')) r.wiki = 'no';
+  for (const r of rows) if (r.label === 'writing') r.dest = 'out';
   applySheet(vault(), rows, out, {});
-  assert.deepEqual(readdirSync(path.join(out, 'wiki')), ['2026-01-02-Later-(snippets).md']);
+  assert.deepEqual(readdirSync(out).sort(), ['.blocks-apply.json', 'Morning Pages.md']);
 });
 
-test('a wiki_page that is not one path segment is refused', () => {
+test('a dest_page that is not one path segment, or a dest that is not one of the four, is refused', () => {
   const rows = sheet();
-  for (const r of rows) if (r.label === 'writing') r.wiki_page = '../escape';
-  assert.throws(() => applySheet(vault(), rows, tempDir(), {}), /wiki_page/);
+  for (const r of rows) if (r.label === 'writing') r.dest_page = '../escape';
+  assert.throws(() => applySheet(vault(), rows, tempDir(), {}), /dest_page/);
+  const yes = sheet();
+  yes[0]!.dest = 'yes';
+  assert.throws(() => applySheet(vault(), yes, tempDir(), {}), /dest 'yes' .* is not one of sources, wiki, out, check/);
+  assert.throws(() => blockPicks(vault(), yes), /dest 'yes'/);
 });
 
 test('picks name each included block by lines under the whole file\'s hash, once per home', () => {
@@ -153,12 +193,12 @@ test('picks name each included block by lines under the whole file\'s hash, once
   const sha = createHash('sha256').update(readFileSync(path.join(dir, 'Daily', '2026-01-02 Week 1.md'))).digest('hex');
   const day1 = picks.filter((p) => p.path === 'Daily/2026-01-02 Week 1.md');
   assert.ok(day1.every((p) => p.src_sha256 === sha));
-  assert.deepEqual(day1.map((p) => [p.start, p.end, p.kind, p.target]), [
-    [7, 7, 'morning-pages', '2026-01-02'],
-    [9, 10, 'morning-pages', '2026-01-02'],
-    [13, 13, 'writing', '2026-01-02-Later-(snippets)'],
-    [13, 13, 'morning-pages', '2026-01-02'],
-    [15, 17, 'morning-pages', '2026-01-02'],
+  assert.deepEqual(day1.map((p) => [p.start, p.end, p.kind, p.target, p.dest]), [
+    [7, 7, 'morning-pages', '2026-01-02', undefined],
+    [9, 10, 'morning-pages', '2026-01-02', undefined],
+    [13, 13, 'writing', '2026-01-02-Later-(snippets)', 'sources'],
+    [13, 13, 'morning-pages', '2026-01-02', undefined],
+    [15, 17, 'morning-pages', '2026-01-02', undefined],
   ]);
   assert.ok(day1.every((p) => p.why.length > 0));
 });

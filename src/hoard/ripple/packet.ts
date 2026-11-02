@@ -1,6 +1,6 @@
 // A ripple packet: what the judge reads for one job. It names the brief and never holds
 // it, so the preflight's echo proves the brief was read; it holds the source, the output
-// contract, and a shortlist of candidate pages in place of hoard's whole roster.
+// contract, and a shortlist of candidate pages from both trees in place of hoard's whole roster.
 //
 // The shortlist (ruling Shortlist-Fused-From-Merged-Chunks, 24 Oct, scored on 173 ticks):
 // the roster's first 30 (pages the source names, then pages near it in the link graph),
@@ -10,7 +10,7 @@
 // says the model is missing. Pure, but for the embedder it is handed.
 import type { RippleJob } from './rulings.ts';
 import { entry, embeddingRank, fuse, lexicalRank, rosterRank, withExtras, type Corpus, type Embed, type Ranked, type Source } from './shortlist.ts';
-import type { WikiPage } from './pages.ts';
+import type { RipplePage } from './library.ts';
 
 export const ROSTER_ENTRIES = 30;
 export const LEXICAL_EXTRAS = 10;
@@ -25,7 +25,7 @@ export interface PacketInput {
   /** The source as a corpus path, so it is never its own candidate. */
   sourcePath: string;
   corpus: Corpus;
-  byPath: Map<string, WikiPage>;
+  byPath: Map<string, RipplePage>;
   /** Absolute paths, as the judge opens them. */
   briefFile: string;
   inboxFile: string;
@@ -56,7 +56,7 @@ Then one line for each page you rule on:
     {"kind": "topic", "target": "<page title>", "line": "<a line to add to the page, usually naming the source as a [[link]]>", "reason": "<why>", "quote": "<the source's words>"}
     {"kind": "mint", "title": "<a new page's title>", "text": "<its first passage; a blank line parts paragraphs>", "reason": "<why>", "quote": "<the source's words>"}
 
-- A target is a page title as an entry gives it, or a page you found in the wiki.
+- A target is a page title as an entry gives it, or a page you found in either tree. Where two pages share a title, the wiki's page has it; name the other by its file.
 - A quote is the source's own words, 12 characters or more. [Brackets] may hold your own words and ... may mark a gap.
 - An anchor and its text stay inside one paragraph, with no line break.
 - Say nothing of a page you leave alone. A "nothing" line is for a page you looked at and decided against, so the decision is kept.
@@ -87,14 +87,14 @@ export async function buildPacket(input: PacketInput): Promise<Packet> {
     if (!doc || !page) continue;
     candidates.push(page.title);
     const lines = entry({ ...doc, name: page.title }, { ...r, why: why(r) }).split('\n');
-    lines.splice(1, 0, `  file: ${page.rel}${page.owner === 'author' ? ' (the author\'s page: a claim on it becomes a suggestion)' : ''}`);
+    lines.splice(1, 0, `  tree: ${page.tree}`, `  file: ${page.id}${page.owner === 'author' ? ' (the author\'s page: a claim on it becomes a suggestion)' : ''}`);
     entries.push(lines.join('\n'));
   }
   const at = job.commit ? `, commit ${job.commit.slice(0, 12)}` : '';
   const text = [
     `# Ripple packet ${job.id}`,
     '',
-    `One change came into the library: the page below. Decide what it means for the wiki's other pages: which need a change, which should name it, and whether a page is missing.`,
+    `One change came into the library: the page below. Decide what it means for the library's other pages, in the wiki and in the sources: which need a change, which should name it, and whether a page is missing.`,
     '',
     `- Source: [[${job.source.title}]], hop ${job.hop}${at}`,
     `- Brief: ${input.briefFile}. Read it before anything else; it is not in this packet.`,

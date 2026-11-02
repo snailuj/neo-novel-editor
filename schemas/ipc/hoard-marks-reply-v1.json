@@ -3,8 +3,17 @@
   "description": "The writer's reply to a mark's thread, version 1.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["bookId", "chId", "markId", "body"],
+  "oneOf": [
+    { "required": ["page"], "properties": { "page": true, "bookId": false, "chId": false } },
+    { "required": ["bookId", "chId"], "properties": { "bookId": true, "chId": true, "page": false } }
+  ],
+  "required": ["markId", "body"],
   "properties": {
+    "page": {
+      "description": "A page's id, <tree>/<path>, in place of bookId and chId.",
+      "type": "string",
+      "pattern": "^(wiki|sources)/.+$"
+    },
     "bookId": { "type": "string", "minLength": 1 },
     "chId": { "type": "string", "minLength": 1 },
     "markId": { "type": "string", "minLength": 1 },

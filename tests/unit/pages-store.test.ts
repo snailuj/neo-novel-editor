@@ -2,11 +2,12 @@
 // lands only while the file still holds what the caller read; a title is taken once per
 // tree; and every refusal is logged. Pages are files: the file name is the title.
 import assert from 'node:assert/strict';
-import { mkdirSync, statSync, symlinkSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { PageRefused } from '../../src/hoard/pages/identity.ts';
 import { PageStore, type PageEntry } from '../../src/hoard/pages/store.ts';
+import { tempDir } from './git-support.ts';
 import { pagesLibrary } from './pages-support.ts';
 
 test('list returns both trees\' .html files with their facts, and no body', async (t) => {
@@ -221,4 +222,48 @@ test('a list that walked the trees before a change does not put back titles from
   release();
   assert.deepEqual((await listing).map((p) => p.id), ['wiki/Harbour.html'], 'the list itself is from before the create');
   await assert.rejects(store.create('wiki', 'Docks/quay.html', '<p>x</p>'), (e: PageRefused) => e.code === 'taken');
+});
+
+// Rule: a page tree that is itself a link out of the library is refused for every request and not listed.
+for (const tree of ['wiki', 'sources'] as const) {
+  test(`${tree}/ is refused for every request, logged and not listed, when the folder is a link that leaves the library`, async (t) => {
+    const { store, library, put, has, logged, lines } = pagesLibrary(t);
+    const outside = tempDir(t, 'hoard-outside-');
+    writeFileSync(path.join(outside, 'Leak.html'), '<p>secret</p>');
+    symlinkSync(outside, path.join(library, tree), 'junction');
+    assert.ok(has(`${tree}/Leak.html`), 'the folder leads out and the fixture reached its state');
+    const unsafe = (e: PageRefused) => e.code === 'unsafe';
+
+    await assert.rejects(store.read(`${tree}/Leak.html`), unsafe);
+    await assert.rejects(store.write(`${tree}/Leak.html`, '<p>secret</p>', '<p>changed</p>'), unsafe);
+    await assert.rejects(store.create(tree, 'New.html', '<p>n</p>'), unsafe);
+    await assert.rejects(store.rename(`${tree}/Leak.html`, 'Moved.html', null), unsafe);
+    assert.deepEqual(readdirSync(outside), ['Leak.html'], 'nothing was written where the link leads');
+    assert.equal(readFileSync(path.join(outside, 'Leak.html'), 'utf8'), '<p>secret</p>');
+    assert.equal(logged('pages.refused').length, 4);
+    // the other tree is still served
+    const other = tree === 'wiki' ? 'sources' : 'wiki';
+    put(`${other}/Moon.html`, '<p>m</p>');
+    assert.equal((await store.read(`${other}/Moon.html`))?.html, '<p>m</p>');
+    assert.deepEqual((await store.list()).map((p) => p.id), [`${other}/Moon.html`], 'what the link leads to is not listed');
+    assert.ok(lines.some((l) => l.level === 'warn' && l.message.includes(`${tree} is a link that leads out of the library`)), 'and the listing says why');
+  });
+}
+
+// Rule: a page id whose parent segment is a file gets a clean refusal, not a raw error.
+test('a page id below a page file is refused for every request, and nothing is made', async (t) => {
+  const { store, put, has, get, logged } = pagesLibrary(t);
+  put('wiki/Foo.html', '<p>foo</p>');
+  put('wiki/Deep/Bar.html', '<p>bar</p>');
+  put('wiki/Deep/Baz.html', '<p>baz</p>');
+  const unsafe = (e: PageRefused) => e.code === 'unsafe' && /Foo\.html is a file/.test(e.message);
+  await assert.rejects(store.read('wiki/Foo.html/Bar.html'), unsafe);
+  await assert.rejects(store.write('wiki/Foo.html/Bar.html', 'a', 'b'), unsafe);
+  await assert.rejects(store.create('wiki', 'Foo.html/Bar.html', '<p>n</p>'), unsafe);
+  await assert.rejects(store.create('wiki', 'Deep/Baz.html/Qux.html', '<p>n</p>'), (e: PageRefused) => e.code === 'unsafe' && /Deep\/Baz\.html is a file/.test(e.message));
+  await assert.rejects(store.rename('wiki/Foo.html/Bar.html', 'Z.html', null), unsafe);
+  await assert.rejects(store.rename('wiki/Deep/Bar.html', 'Foo.html/Z.html', null), unsafe);
+  assert.equal(get('wiki/Foo.html'), '<p>foo</p>');
+  assert.equal(has('wiki/Deep/Bar.html'), true);
+  assert.equal(logged('pages.refused').length, 6);
 });

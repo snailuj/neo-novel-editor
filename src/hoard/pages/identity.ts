@@ -43,6 +43,11 @@ export function idOf(ref: PageRef): string {
   return `${ref.tree}/${ref.path}`;
 }
 
+/** Where a page's marks are kept, relative to the library: the one place marks/store.ts and a rename agree on. */
+export function marksOf(id: string): string {
+  return `.neo/marks/${idOf(parseId(id))}.json`;
+}
+
 export function parseId(id: unknown): PageRef {
   if (typeof id !== 'string') throw new PageRefused('unsafe', `${JSON.stringify(id)} is not a page id`);
   const slash = id.indexOf('/');

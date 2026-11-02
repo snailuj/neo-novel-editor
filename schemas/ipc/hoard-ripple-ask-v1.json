@@ -1,12 +1,10 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "description": "Ripple This Chapter, version 1: a job for one chapter of the open book, as its file holds it.",
+  "description": "Ripple This Page, version 1: a job for one page of the library, by its id (<tree>/<path>).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["bookId", "chId", "title"],
+  "required": ["page"],
   "properties": {
-    "bookId": { "type": "string", "minLength": 1 },
-    "chId": { "type": "string", "minLength": 1 },
-    "title": { "type": "string" }
+    "page": { "type": "string", "pattern": "^(wiki|sources)/.+\\.html$" }
   }
 }

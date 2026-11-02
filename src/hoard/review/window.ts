@@ -49,6 +49,7 @@ const REFUSED: Record<string, string> = {
   hidden: 'the manuscript was not showing',
   missing: 'the words were not on the page',
   stale: 'the words had changed',
+  held: 'the library check still holds the page from an earlier refusal',
   unsaved: 'your last words on the page had not been saved yet',
   blocked: 'the editor would not make the change',
 };

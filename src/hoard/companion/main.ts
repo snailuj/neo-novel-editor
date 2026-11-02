@@ -4,7 +4,7 @@ import { validateHoardCompanionQuietV1, validateHoardCompanionReadV1 } from '../
 import type { GitLayer } from '../git/layer.ts';
 import type { MarkStore } from '../marks/store.ts';
 import type { WikiStore } from '../wiki/store.ts';
-import { Companion } from './store.ts';
+import { Companion, type PageSource } from './store.ts';
 
 type Validator<T> = { (data: unknown): data is T; errors?: { instancePath: string; message?: string }[] | null };
 
@@ -16,11 +16,12 @@ function checked<T>(name: string, validate: Validator<T>, payload: unknown): T {
   return payload;
 }
 
-export function startCompanion(host: NeoMainHost, layer: GitLayer, marks: MarkStore, wiki: WikiStore): Companion {
+export function startCompanion(host: NeoMainHost, layer: GitLayer, marks: MarkStore, wiki: WikiStore, pages: PageSource): Companion {
   const companion = new Companion({
     library: () => host.paths.library(),
     marks,
-    wiki: () => wiki.pages(),
+    pages,
+    wikiBook: () => wiki.pages()?.bookId ?? null,
     head: () => layer.head(),
     wrote: (name) => layer.wrote(name),
     log: host.log.bind(host),
