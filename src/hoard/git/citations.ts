@@ -17,6 +17,8 @@ export interface Citation {
 const PARAGRAPH = /<p(\s[^>]*)?>([\s\S]*?)<\/p>/gi;
 const CODE_CLASS = /\bclass\s*=\s*(?:"[^"]*\bwiki-code\b[^"]*"|'[^']*\bwiki-code\b[^']*')/i;
 const BLOCK = /\sdata-block="([^"]*)"/g;
+// A block joined into the one above leaves its id here, on the survivor (Join-Keeps-Both-Ids).
+const ALIAS = /\sdata-alias="([^"]*)"/g;
 
 /** Every citation in the page, in order; a link to a page or a heading is not one. */
 export function citationsIn(html: string): Citation[] {
@@ -34,7 +36,9 @@ export function citationsIn(html: string): Citation[] {
   return found;
 }
 
-/** The ids the page's blocks carry. */
+/** The ids the page's blocks carry, their aliases included. */
 export function blockIds(html: string): Set<string> {
-  return new Set([...html.matchAll(BLOCK)].map((m) => m[1]!));
+  const ids = new Set([...html.matchAll(BLOCK)].map((m) => m[1]!));
+  for (const m of html.matchAll(ALIAS)) for (const id of m[1]!.split(/\s+/)) if (id) ids.add(id);
+  return ids;
 }

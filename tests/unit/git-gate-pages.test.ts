@@ -151,3 +151,17 @@ test('Frontmatter-Fits-The-Scheme: a page sidecar in either tree is judged again
     ".neo/pages/sources/Log.html.json|FM10 'setting' required on lore (or the page is a 'subject')",
   ]);
 });
+
+// Join-Keeps-Both-Ids: a block joined into the one above leaves its id in the survivor's
+// data-alias (a space-separated list), and a citation of that id still resolves.
+test('Citations-Resolve: an id in a block\'s data-alias is a block id of the page', () => {
+  const lib = library({ 'wiki/Harbour.html': '<p data-block="b1" data-alias="b2 b3">Docks. Quay.</p><p data-alias="" data-block="b4">Mill.</p>' });
+  const cite = (link: string) => checkFiles([{ path: 'wiki/Mill.html', text: `<p data-block="m1">${link}</p>` }], lib).map((f) => f.message);
+  // the baseline: the survivor's own id resolves, and an id on no block does not
+  assert.deepEqual(cite('[[Harbour#^b1]]'), []);
+  assert.deepEqual(cite('[[Harbour#^b9]]'), ["[[Harbour#^b9]] names no block 'b9' in wiki/Harbour.html"]);
+  assert.deepEqual(cite('[[Harbour#^b2]]'), []);
+  assert.deepEqual(cite('[[Harbour#^b3]]'), []);
+  // an empty alias list names no block
+  assert.deepEqual(cite('[[Harbour#^]]').length, 1);
+});
