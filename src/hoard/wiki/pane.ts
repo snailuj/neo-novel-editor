@@ -74,6 +74,11 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
   const shownListeners: ((page: ShownPage | null) => void)[] = [];
   const leaving: (() => Promise<void>)[] = [];
   const beforeLeaving = async () => { for (const fn of leaving) await fn(); };
+  const renamedListeners: ((from: string, to: string) => void)[] = [];
+  // while the tree renames or moves a page, saves wait (held), so none goes to an id that
+  // is gone; released once everything that knows the page by id has its new one
+  let held: Promise<void> = Promise.resolve();
+  let release: (() => void) | null = null;
 
   const root = pane.element;
   root.classList.add('hoard-wiki-pane');
@@ -91,9 +96,16 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
   const empty = el('p', 'hoard-wiki-empty', 'Ctrl+click a [[link]] in your writing, or put the caret in one and choose Plugins > Follow Link, to look its page up here. Or open Pages above and pick one.');
   const tree = startPagesTree(neo, {
     open: (id) => open(id),
+    hold: async () => {
+      await beforeLeaving();
+      held = new Promise<void>((done) => { release = () => { release = null; done(); }; });
+      return () => release?.();
+    },
     renamed: async (from, to) => {
       history.rename(from, to);
       if (stored?.id === from) stored = { ...stored, id: to };
+      for (const fn of renamedListeners) fn(from, to);
+      release?.();
       // the page shown may be the one renamed, or hold a link to it
       if (history.current) await showCurrent();
     },
@@ -343,6 +355,10 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
     onShown(fn: (page: ShownPage | null) => void) { shownListeners.push(fn); },
     /** Waited for before the pane shows a page, this one again too. */
     beforeLeave(fn: () => Promise<void>) { leaving.push(fn); },
+    /** Told when the tree renames or moves a page, before the pane reads it again. */
+    onRenamed(fn: (from: string, to: string) => void) { renamedListeners.push(fn); },
+    /** Resolves once no rename or move is under way; a save waits for it. */
+    held: () => held,
     /** A wider right-hand pane while on (host API 5). */
     wide: (on: boolean) => pane.wide(on),
   };

@@ -30,6 +30,8 @@ interface Pane {
   reload(): Promise<void>;
   onShown(fn: (page: ShownPage | null) => void): void;
   beforeLeave(fn: () => Promise<void>): void;
+  onRenamed(fn: (from: string, to: string) => void): void;
+  held(): Promise<void>;
   wide(on: boolean): void;
 }
 interface Pages { get(target: string): string | undefined }
@@ -540,6 +542,13 @@ export function startPaneMarks(neo: NeoApiV5, pane: Pane, o: { pages: () => Page
     reload: () => pane.reload(),
     tell: (text) => { status.textContent = text; },
     warn: (text) => { alert.textContent = text; },
+  });
+
+  // The tree renamed or moved a page: the one shown keeps its marks and typing under its new id.
+  pane.onRenamed((from, to) => {
+    if (librarians.delete(from)) librarians.add(to);
+    editing.renamed(from, to);
+    if (page?.id === from) page.id = to;
   });
 
   pane.onShown((shown) => {

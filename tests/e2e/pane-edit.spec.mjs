@@ -334,3 +334,50 @@ test('a comment made in the Wiki pane is drawn there and kept in the page\'s mar
     await fixture.close();
   }
 });
+
+// Rule: what was typed in the page shown is saved before the Pages tree renames or moves
+// that page, so it lands in the page under its new id and nothing typed is lost.
+test('typing not yet saved goes with the page shown when the tree renames or moves it', async () => {
+  const { fixture, page, library } = await pageBeside(TEXT);
+  try {
+    const tree = page.locator('.hoard-wiki-pane .hoard-tree');
+    const row = (name) => tree.locator('.hoard-tree-name', { hasText: new RegExp(`^${name}`) }).first();
+    await tree.getByRole('button', { name: 'Pages' }).click();
+    await expect(row('Vell')).toBeVisible();
+
+    // rename, straight after typing
+    await caretAt(page, 'west');
+    await page.keyboard.type(' bay');
+    expect(await page.evaluate(() => window.hoard.paneMarks.state().editing.pending)).toBe(true);
+    await page.evaluate(() => document.querySelector('.hoard-tree button[aria-label="Rename Vell"]').click());
+    const field = tree.getByLabel('New title for “Vell”');
+    await field.fill('Port');
+    await field.press('Enter');
+    await expect(tree.locator('.hoard-tree-status')).toHaveText(/^Renamed “Vell” to “Port”\./);
+    expect(pageFile(library, 'wiki/Port.html')).toBe('<p data-block="b1">The harbour of Vell faces west bay.</p><p data-block="b2">Its keeper rows at dawn.</p>');
+    await expect(page.locator(LINES).nth(0)).toHaveText('The harbour of Vell faces west bay.');
+    expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('wiki/Port.html');
+    await expect(page.locator(paneAlert)).toHaveText('');
+
+    // move, and type in the page while the move is under way
+    await page.evaluate(() => document.querySelector('.hoard-tree button[aria-label="Move Port"]').click());
+    const folder = tree.getByLabel(/^Folder in wiki to move/);
+    await folder.fill('Places');
+    await folder.press('Enter');
+    await caretAt(page, 'keeper');
+    await page.keyboard.type(' old');
+    // saved at once, as a blur would, while the move may still be under way
+    await page.evaluate(() => { window.hoard.paneMarks.flush(); });
+    await expect(tree.locator('.hoard-tree-status')).toHaveText(/^Moved “Port”/);
+    await expect.poll(() => pageFile(library, 'wiki/Places/Port.html')).toBe('<p data-block="b1">The harbour of Vell faces west bay.</p><p data-block="b2">Its keeper old rows at dawn.</p>');
+    expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('wiki/Places/Port.html');
+    await expect(page.locator(paneAlert)).toHaveText('');
+
+    // typing after the move is saved under the new id
+    await caretAt(page, 'dawn');
+    await page.keyboard.type(' and dusk');
+    await expect.poll(() => pageFile(library, 'wiki/Places/Port.html')).toBe('<p data-block="b1">The harbour of Vell faces west bay.</p><p data-block="b2">Its keeper old rows at dawn and dusk.</p>');
+  } finally {
+    await fixture.close();
+  }
+});

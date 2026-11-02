@@ -28,6 +28,7 @@ interface Pane {
   root: HTMLDivElement;
   body: HTMLDivElement;
   beforeLeave(fn: () => Promise<void>): void;
+  held(): Promise<void>;
   wide(on: boolean): void;
 }
 
@@ -289,6 +290,8 @@ export function startPaneEdit(neo: Pick<NeoApiV5, 'on'>, pane: Pane, o: PaneEdit
 
   // ---- saving -------------------------------------------------------------------------
   async function saveRound() {
+    // a rename or move under way gives the page its new id first
+    await pane.held();
     const page = o.page();
     if (!page) return;
     const ls = lines();
@@ -500,9 +503,17 @@ export function startPaneEdit(neo: Pick<NeoApiV5, 'on'>, pane: Pane, o: PaneEdit
     return done;
   });
 
+  /** The page renamed or moved: what the pane keeps by its id follows it. */
+  function renamed(from: string, to: string) {
+    if (direct.delete(from)) direct.add(to);
+    const ids = used.get(from);
+    if (ids) { used.delete(from); used.set(to, ids); }
+  }
+
   return {
     shown,
     refresh,
+    renamed,
     flush,
     /** For tests and the console. */
     state: () => ({ editable: editable(), suggesting: suggesting(), direct: [...direct], pending: !!timer }),
