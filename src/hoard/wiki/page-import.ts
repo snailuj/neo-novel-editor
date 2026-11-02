@@ -32,6 +32,7 @@ import { writeWhole } from '../files.ts';
 import { anchorAt, anchorPoint } from '../marks/anchor.ts';
 import { newMark } from '../marks/model.ts';
 import { checkPath, idOf, parseId, titleOf, TREES, type Tree } from '../pages/identity.ts';
+import type { PageChange } from '../pages/store.ts';
 import { ownerFromFrontmatter } from '../review/owner.ts';
 import { copyAttachment } from './attachments.ts';
 import { pageHtml, type ConvertedPage } from './convert.ts';
@@ -57,6 +58,11 @@ export interface PageImportOptions {
   head?: () => Promise<string | null>;
   /** Told after the writes, so the library's history takes them. */
   wrote?: (name: string) => void;
+  /**
+   * Told of each page the import wrote, once, with the page as it was and as the import
+   * leaves it. `who` is the librarian only for a wiki page its sidecar makes the librarian's.
+   */
+  imported?: (change: PageChange) => void | Promise<void>;
   /** Commits the library as it stands, as the author's or the librarian's; resolves once it has landed. */
   commit?: (part: 'author' | 'librarian') => Promise<void>;
   log: (level: Level, message: string, data?: unknown) => void;
@@ -247,6 +253,14 @@ export class PageImport {
       const dir = parseId(p.pageId).path.split('/').slice(0, -1).join('/');
       return idOf({ tree, path: checkPath(dir ? `${dir}/${p.name}.html` : `${p.name}.html`) });
     });
+    // what each page holds now, so an update is announced as a change from it
+    const was = ids.map((id) => {
+      try {
+        return readFileSync(this.#abs(id), 'utf8');
+      } catch {
+        return '';
+      }
+    });
     const sidecars = pages.map((page): HoardPageV1 => {
       const sidecar: HoardPageV1 = {
         version: 1,
@@ -295,6 +309,7 @@ export class PageImport {
     for (const [n, page] of pages.entries()) {
       const id = ids[n]!;
       writeWhole(this.#abs(id), page.page.html);
+      await this.#announce(id, was[n]!, page.page.html, ownerFromFrontmatter(page.page.frontmatter));
       // still provisional, now naming the page as it stands, until the logs are written too
       writeWhole(this.#abs(this.#sidecarOf(id)), `${JSON.stringify({ ...sidecars[n]!, source: { ...sidecars[n]!.source, sha256: UNFINISHED } }, null, 2)}\n`);
       const made = this.#marks(page.page, base, at);
@@ -346,6 +361,18 @@ export class PageImport {
     this.#o.wrote?.('.neo');
     await this.#o.commit?.('librarian');
     return applied;
+  }
+
+  // A callback that fails is logged: the page is written, and the import goes on.
+  async #announce(id: string, before: string, after: string, owner: 'author' | 'librarian'): Promise<void> {
+    if (!this.#o.imported || before === after) return;
+    const who = this.#o.tree === 'wiki' && owner === 'librarian' ? 'librarian' : 'author';
+    try {
+      await this.#o.imported({ page: id, kind: 'import', who, before, after });
+      this.#o.log('debug', 'pages.import.announced', { page: id, who });
+    } catch (err) {
+      this.#o.log('error', 'pages.import: announcing the page failed, so the page is written without it', { page: id, why: String(err) });
+    }
   }
 
   #marks(page: ConvertedPage, commit: string | null, at: string): Mark[] {

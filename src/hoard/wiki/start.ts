@@ -20,7 +20,7 @@ import { oneName } from '../files.ts';
 import type { MarkStore } from '../marks/store.ts';
 import type { Tree } from '../pages/identity.ts';
 import { ListError, readImportList, type ImportList } from './import-list.ts';
-import { PageImport, type PageMarks } from './page-import.ts';
+import { PageImport, type PageImportOptions, type PageMarks } from './page-import.ts';
 import type { Pick, SortedOf } from './picks.ts';
 import { WikiStore } from './store.ts';
 import { describeSort } from './summary.ts';
@@ -284,10 +284,11 @@ async function pickImportedBook(host: NeoMainHost): Promise<{ bookId: string | n
 
 /**
  * `pageMarks` holds the marks of imported pages; `pagesWrote` is told when an import has
- * written page files, so the page store reads its trees again (pages/store.ts).
+ * written page files, so the page store reads its trees again (pages/store.ts);
+ * `pageImported` is told of each page file an import wrote (page-import.ts).
  */
-export function startWiki(host: NeoMainHost, layer: GitLayer, marks: MarkStore, o: { pageMarks?: PageMarks; pagesWrote?: () => Promise<unknown> } = {}): WikiStore {
-  const { pageMarks, pagesWrote = () => Promise.resolve() } = o;
+export function startWiki(host: NeoMainHost, layer: GitLayer, marks: MarkStore, o: { pageMarks?: PageMarks; pagesWrote?: () => Promise<unknown>; pageImported?: PageImportOptions['imported'] } = {}): WikiStore {
+  const { pageMarks, pagesWrote = () => Promise.resolve(), pageImported } = o;
   const targets = new Targets((book) => new WikiStore({
     library: () => host.paths.library(),
     marks,
@@ -300,6 +301,7 @@ export function startWiki(host: NeoMainHost, layer: GitLayer, marks: MarkStore, 
     library: () => host.paths.library(),
     tree,
     ...(pageMarks ? { marks: pageMarks } : {}),
+    ...(pageImported ? { imported: pageImported } : {}),
     head: () => layer.head(),
     wrote: (name) => layer.wrote(name),
     commit: (part) => layer.commitNow(part === 'author' ? 'import-author' : 'import'),

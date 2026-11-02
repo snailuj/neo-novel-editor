@@ -27,6 +27,7 @@ import { ATTRIBUTES } from './git/start.ts';
 import { MarkStore, targeted } from './marks/store.ts';
 import { startPages } from './pages/main.ts';
 import { signalPageChanges } from './pages/signals.ts';
+import type { PageStore } from './pages/store.ts';
 import { startReview } from './review/main.ts';
 import { startRipple } from './ripple/main.ts';
 import { SearchClient, type WorkerProcess } from './search/client.ts';
@@ -157,8 +158,8 @@ export function activate(host: NeoMainHost): void {
   };
   const marks = startMarks(host, layer);
   // The page store starts after git opens; an import that writes pages before then has no index to refresh.
-  const pageHolder: { store?: { list(): Promise<unknown> } } = {};
-  const wiki = startWiki(host, layer, marks, { pagesWrote: async () => pageHolder.store?.list().catch((err: unknown) => host.log('warn', 'pages: the trees did not list after an import', String(err))) });
+  const pageHolder: { store?: { list(): Promise<unknown>; announce: PageStore['announce'] } } = {};
+  const wiki = startWiki(host, layer, marks, { pageImported: (change) => pageHolder.store?.announce(change), pagesWrote: async () => pageHolder.store?.list().catch((err: unknown) => host.log('warn', 'pages: the trees did not list after an import', String(err))) });
   startSearch(host);
   const opened = layer.open().catch((err: unknown) => host.log('error', 'git.open failed', String(err)));
   const { store: pages } = startPages(host, layer, opened);
