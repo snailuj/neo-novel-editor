@@ -9,14 +9,12 @@
 //
 // The writer's comments are drawn on the page and listed in a Comments section beside
 // the manuscript (marks/window.ts), which needs API 3's side sections. The wiki
-// (wiki/window.ts) imports pages, opens the wiki book and follows links into it, which
-// needs API 4's open. Its pane edits the page shown in place (wiki/pane-edit.ts), with
-// API 5's wider pane while the writer types there. Search (search/window.ts) looks through every book and the wiki
+// (wiki/window.ts) imports pages and follows links into its pane, which shows stored
+// pages. Search (search/window.ts) looks through every book and the wiki
 // from a Search section beside the book. The librarian reads each chapter the writer
 // leaves and comments on the wiki pages its new words name (companion/window.ts). Ripple
 // (ripple/window.ts) lists what waits for its judge and the judge's proposals to rule on.
 import { startCompanion } from './companion/window.ts';
-import { startPaneMarks } from './marks/pane-marks.ts';
 import { startMarks } from './marks/window.ts';
 import { startRipple } from './ripple/window.ts';
 import { startSearch } from './search/window.ts';
@@ -53,12 +51,10 @@ NeoPlugins.register({
     const gitStatus = () => neo.invoke('git.status');
     const marks = startMarks(neo, { follow: (target) => { wiki.follow(target); } });
     const wiki = startWiki(neo);
-    const paneMarks = startPaneMarks(neo, wiki.pane, { pages: wiki.index });
+    // stage 6 reattaches the pane's marks and editing (marks/pane-marks.ts, wiki/pane-edit.ts) on page files
     const search = startSearch(neo, { open: (id, at) => wiki.pane.open(id, at) });
     const companion = startCompanion(neo, { marks, pages: () => neo.invoke('pages.list') as Promise<{ id: string; tree: string; title: string }[]> });
-    // the pane's currentPage() arrives with the file tree (stage 5); until then no page is open
-    const paneNow = (wiki.pane as { currentPage?: () => string | null } | undefined)?.currentPage;
-    const ripple = startRipple(neo, { currentPage: () => paneNow?.call(wiki.pane) ?? null });
-    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, paneMarks, search, companion, ripple }) });
+    const ripple = startRipple(neo, { currentPage: () => wiki.pane.currentPage() });
+    Object.defineProperty(window, 'hoard', { value: Object.freeze({ ping, blame, gitStatus, marks, wiki, search, companion, ripple }) });
   },
 });
