@@ -11,9 +11,11 @@
 // matching, and it is put back as it was when the wiki closes. A change to the drop cap
 // setting made while the wiki is open takes effect on the wiki's pages until it is
 // opened again.
+import { titleIndex } from '../pages/titles.ts';
 import type { Applied, WikiPages } from './store.ts';
 import { linkAt, linksIn, pageIndex } from './links.ts';
 import { startWikiPane } from './pane.ts';
+import type { Listed } from './tree.ts';
 
 const REDRAW_MS = 300;
 const STATUS_MS = 4_000;
@@ -37,6 +39,12 @@ export function startWiki(neo: NeoApiV5) {
     return wiki;
   };
 
+  // the stored pages by title, which a [[link]] in a book is drawn against
+  let titles = titleIndex<Listed>([]);
+  const readPages = async () => {
+    titles = titleIndex((await neo.invoke('pages.list')) as Listed[]);
+  };
+
   const wikiOpen = () => {
     const book = neo.book();
     return !!book && !!wiki && book.id === wiki.bookId;
@@ -58,13 +66,12 @@ export function startWiki(neo: NeoApiV5) {
     const found: NeoPlace[] = [];
     const missing: NeoPlace[] = [];
     if (book) {
-      const pages = index();
       for (const chId of book.chapterOrder) {
         const chapter = neo.chapter(chId);
         if (!chapter) continue;
         for (const link of linksIn(chapter.paragraphs)) {
           const place = { chId, pIdx: link.pIdx, off: link.off, len: link.len };
-          (pages.get(link.target) ? found : missing).push(place);
+          (titles.resolve(link.target) ? found : missing).push(place);
         }
       }
     }
@@ -109,7 +116,9 @@ export function startWiki(neo: NeoApiV5) {
     if (!(await neo.open(bookId))) say('The book could not be opened.');
   };
 
-  const pane = startWikiPane(neo);
+  const pane = startWikiPane(neo, {
+    changed: () => { reindex().catch((err: unknown) => console.warn('hoard: wiki: the links were not drawn again', err)); },
+  });
 
   // The stored page a link names, by title, shown in the pane beside the book.
   const follow = async (target: string) => {
@@ -136,6 +145,7 @@ export function startWiki(neo: NeoApiV5) {
     try {
       const answer = (await neo.invoke('wiki.import', { openBookId: neo.book()?.id ?? null, from })) as Imported;
       await refresh();
+      await readPages();
       drawLinks();
       if (answer.outcome === 'imported' && answer.open) await openWiki();
       else if (answer.outcome === 'imported' && answer.openBookId) await openImported(answer.openBookId);
@@ -170,8 +180,8 @@ export function startWiki(neo: NeoApiV5) {
   });
 
   neo.on('book-open', async () => {
-    await refresh();
     showsWiki();
+    await readPages();
     drawLinks();
   });
   neo.on('book-close', () => {
@@ -180,11 +190,12 @@ export function startWiki(neo: NeoApiV5) {
   });
   neo.on('chapter-change', redrawSoon);
 
-  // Reads the page list again, after another part of hoard (ripple) made a page.
-  const reindex = async () => {
-    await refresh();
+  // Reads the page list again and draws the links by it, after a page was made or renamed
+  // elsewhere in hoard (the Pages tree, ripple).
+  async function reindex() {
+    await readPages();
     drawLinks();
-  };
+  }
 
   return { openWiki, follow, pages: () => wiki, index, drawLinks, pane, reindex };
 }

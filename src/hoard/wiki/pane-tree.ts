@@ -22,6 +22,8 @@ export interface TreeHost {
   open(id: string): Promise<void>;
   /** A page renamed or moved: the trail follows it and the page shown is read again. */
   renamed(from: string, to: string): Promise<void>;
+  /** A page made, renamed or moved: whatever draws links by the pages' titles reads them again. */
+  changed(): void;
   /** How many times the writer has gone to a page in the pane: one made opens only if none since. */
   moves(): number;
   /** The pane's section: the tree takes the focus only from inside it. */
@@ -331,6 +333,7 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
     active = to;
     // a read that started before the change would miss it
     await reads.fresh();
+    host.changed();
     // after the list, so the page read again resolves its links by the new title
     if (renamed) await host.renamed(renamed.from, renamed.to);
     status.textContent = said;

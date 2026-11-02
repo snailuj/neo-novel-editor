@@ -59,14 +59,11 @@ async function caretInBook(page) {
   await expect.poll(() => inManuscript(page)).toBe(true);
 }
 
-async function menu(app, label) {
-  await app.evaluate(({ Menu }, label) => {
-    const find = (items) => items.flatMap((item) => [item, ...(item.submenu ? find(item.submenu.items) : [])]);
-    const item = find(Menu.getApplicationMenu().items).find((i) => i.label === label);
-    if (!item) throw new Error(`no ${label} in the menu`);
-    item.click();
-  }, label);
-}
+// The words of the manuscript drawn with one of hoard's highlights.
+const drawnText = (page, name) => page.evaluate((key) => [...(CSS.highlights.get(key) ?? [])].map((r) => r.toString()), `plugin-hoard-${name}`);
+
+// Follow Link, as its Plugins menu item runs it.
+const followLink = (page) => page.evaluate(() => NeoPlugins.runCommand('hoard', 'follow-link'));
 
 // Where the words are in the manuscript: the caret put inside them, or their middle on screen.
 const caretAt = (page, words) => page.evaluate((words) => {
@@ -87,22 +84,24 @@ const middleOf = (page, words) => page.evaluate((words) => {
   return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
 }, words);
 
-// Rule: a [[link]] in the manuscript, followed with Follow Link or Ctrl+click, opens the
-// stored page its title names (a wiki page before a source, case aside) in the pane, and the
-// writer's caret and book stay as they were; a link no page has is said so, and the pane
-// stays where it was.
+// Rule: a [[link]] in the manuscript is drawn as one when a stored page has its title, and
+// as missing when none does; followed with Follow Link or Ctrl+click, it opens that page (a
+// wiki page before a source, case aside) in the pane, and the writer's caret and book stay
+// as they were; a link no page has is said so, and the pane stays where it was.
 test('a link in the manuscript opens its stored page in the pane, the caret staying put', async () => {
   const { profile } = await libraryProfile();
   const fixture = await launchProfile(profile);
   try {
-    const { app, page } = fixture;
+    const { page } = fixture;
     await page.waitForFunction(() => !!window.hoard);
     const novel = await seedBook(page, '<p>Meet at the [[Harbour]] with [[ada vell]], not by [[Nowhere]].</p>');
     const pane = page.locator('.hoard-wiki-pane');
+    await expect.poll(() => drawnText(page, 'wiki-link')).toEqual(['[[Harbour]]', '[[ada vell]]']);
+    expect(await drawnText(page, 'wiki-missing')).toEqual(['[[Nowhere]]']);
 
     await caretAt(page, '[[Harbour]]');
     const before = await page.evaluate(() => captureCaret());
-    await menu(app, 'Follow Link');
+    await followLink(page);
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Harbour');
     await expect(pane.locator('.hoard-wiki-line')).toHaveText(['The wiki harbour faces east.']);
     expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('wiki/Harbour.html');
@@ -118,7 +117,7 @@ test('a link in the manuscript opens its stored page in the pane, the caret stay
     expect(await page.evaluate(() => book.id)).toBe(novel);
 
     await caretAt(page, '[[Nowhere]]');
-    await menu(app, 'Follow Link');
+    await followLink(page);
     await expect(page.locator('.plugin-status', { hasText: 'Nowhere' })).toHaveText('No page is called “Nowhere”.');
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Ada Vell');
   } finally {
@@ -311,6 +310,7 @@ test('new page, rename and move from the tree, with refusals next to the field',
     expect(fileOf(library, 'wiki/Quay.html')).toBe(PAGES['wiki/Harbour.html']);
     expect(fileOf(library, 'wiki/People/Ada Vell.html')).toContain('[[Quay]]');
     await expect.poll(() => page.evaluate(() => document.querySelector('#chapters .chapter-body p').textContent)).toBe('Meet at the [[Quay]] at noon.');
+    await expect.poll(() => drawnText(page, 'wiki-link')).toEqual(['[[Quay]]']);
     // the page shown is read again, its link reaching the page by its new title, and the
     // trail follows the rename
     await expect(pane.getByRole('button', { name: '[[Quay]]' })).toBeVisible();

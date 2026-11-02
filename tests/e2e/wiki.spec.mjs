@@ -10,9 +10,8 @@ import { launchProfile, seedBook } from '../support/electron-profile.mjs';
 // one wiki book, each page a chapter titled with its file's name, its words as written
 // and its CriticMarkup comments as comments; the import is committed; the wiki opens
 // from the Plugins menu or after the import, set flush left with no drop cap, which
-// comes back on leaving it; [[links]] are drawn in any book;
-// importing the same files again changes nothing; and nothing is imported while the
-// wiki is open.
+// comes back on leaving it; importing the same files again changes nothing; and nothing
+// is imported while the wiki is open.
 
 const HARBOUR = '---\ntype: lore\n---\nThe {==harbour wall==}{>>Which side?<<} faces east.\nSee [[Tide Tables]].\n';
 const TIDES = '# Tide Tables\n\nHigh water at the [[Harbour|harbour]].\n- [[Nowhere]]\n';
@@ -80,14 +79,14 @@ async function caretIn(page, words, into = 2) {
   await page.waitForTimeout(100);
 }
 
-test('picked pages come into the wiki, open in NEO, and their links are drawn', async () => {
+test('picked pages come into the wiki and open in NEO', async () => {
   const { profile, library, files } = await trackedProfile();
   const fixture = await launchProfile(profile);
   try {
     const { app, page } = fixture;
     await page.waitForFunction(() => !!window.hoard);
     await expect.poll(() => page.evaluate(() => window.hoard.gitStatus().then((s) => s.state))).toBe('tracked');
-    const novel = await seedBook(page, '<p>Meet me at the [[Harbour]] at noon.</p>');
+    await seedBook(page, '<p>Meet me at the [[Harbour]] at noon.</p>');
     const dropcapBefore = await page.evaluate(() => document.body.classList.contains('no-dropcap'));
 
     await answer(app, files);
@@ -114,9 +113,6 @@ test('picked pages come into the wiki, open in NEO, and their links are drawn', 
     const sidecar = JSON.parse(readFileSync(path.join(library, '.neo', wiki.id, 'chapters', `${harbour}.json`), 'utf8'));
     expect(sidecar.marks.map((m) => [m.kind, m.thread[0].body])).toEqual([['comment', 'Which side?']]);
 
-    // links: one to a page, one to none
-    await expect.poll(() => drawnText(page, 'wiki-link')).toEqual(['[[Tide Tables]]', '[[Harbour|harbour]]']);
-    expect(await drawnText(page, 'wiki-missing')).toEqual(['[[Nowhere]]']);
 
     // nothing is imported while the wiki is open
     const owl = path.join(path.dirname(files[0]), 'Owl.md');
@@ -138,9 +134,6 @@ test('picked pages come into the wiki, open in NEO, and their links are drawn', 
     expect(JSON.parse(readFileSync(path.join(library, wiki.id, 'book.json'), 'utf8')).chapterOrder).toEqual(wiki.order);
     expect(git(library, 'status', '--porcelain', '--', '.neo')).toBe('');
 
-    // a link in a manuscript is drawn too
-    await page.evaluate((id) => openBook(id), novel);
-    await expect.poll(() => drawnText(page, 'wiki-link')).toEqual(['[[Harbour]]']);
   } finally {
     await fixture.close();
   }

@@ -51,7 +51,7 @@ function pageBlocks(html: string): HTMLTemplateElement {
   return inert;
 }
 
-export function startWikiPane(neo: NeoApiV5) {
+export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
   const pane = neo.addPane({ id: 'wiki', title: 'Wiki', side: true });
   const history = new PageHistory();
   // the page drawn, if any
@@ -86,6 +86,7 @@ export function startWikiPane(neo: NeoApiV5) {
       if (history.current) await showCurrent();
     },
     moves: () => moves,
+    changed: o.changed,
     paneRoot: root,
   });
   root.append(tree.element, nav, title, where, status, body, empty);
