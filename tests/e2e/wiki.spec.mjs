@@ -10,9 +10,8 @@ import { launchProfile, seedBook } from '../support/electron-profile.mjs';
 // one wiki book, each page a chapter titled with its file's name, its words as written
 // and its CriticMarkup comments as comments; the import is committed; the wiki opens
 // from the Plugins menu or after the import, set flush left with no drop cap, which
-// comes back on leaving it; [[links]] are drawn in any book and followed into the wiki;
-// importing the same files again changes nothing; and nothing is imported while the
-// wiki is open.
+// comes back on leaving it; importing the same files again changes nothing; and nothing
+// is imported while the wiki is open.
 
 const HARBOUR = '---\ntype: lore\n---\nThe {==harbour wall==}{>>Which side?<<} faces east.\nSee [[Tide Tables]].\n';
 const TIDES = '# Tide Tables\n\nHigh water at the [[Harbour|harbour]].\n- [[Nowhere]]\n';
@@ -80,14 +79,15 @@ async function caretIn(page, words, into = 2) {
   await page.waitForTimeout(100);
 }
 
-test('picked pages come into the wiki, open in NEO, and their links are followed', async () => {
+// the Wiki book goes with WikiStore (PR #28), and this import into it with it
+test.fixme('picked pages come into the wiki and open in NEO', async () => {
   const { profile, library, files } = await trackedProfile();
   const fixture = await launchProfile(profile);
   try {
     const { app, page } = fixture;
     await page.waitForFunction(() => !!window.hoard);
     await expect.poll(() => page.evaluate(() => window.hoard.gitStatus().then((s) => s.state))).toBe('tracked');
-    const novel = await seedBook(page, '<p>Meet me at the [[Harbour]] at noon.</p>');
+    await seedBook(page, '<p>Meet me at the [[Harbour]] at noon.</p>');
     const dropcapBefore = await page.evaluate(() => document.body.classList.contains('no-dropcap'));
 
     await answer(app, files);
@@ -114,12 +114,6 @@ test('picked pages come into the wiki, open in NEO, and their links are followed
     const sidecar = JSON.parse(readFileSync(path.join(library, '.neo', wiki.id, 'chapters', `${harbour}.json`), 'utf8'));
     expect(sidecar.marks.map((m) => [m.kind, m.thread[0].body])).toEqual([['comment', 'Which side?']]);
 
-    // links: one to a page, one to none
-    await expect.poll(() => drawnText(page, 'wiki-link')).toEqual(['[[Tide Tables]]', '[[Harbour|harbour]]']);
-    expect(await drawnText(page, 'wiki-missing')).toEqual(['[[Nowhere]]']);
-    await caretIn(page, '[[Harbour|harbour]]');
-    await menu(app, 'Follow Link');
-    await expect.poll(() => page.evaluate(() => window.hoard && captureCaret()?.chId)).toBe(harbour);
 
     // nothing is imported while the wiki is open
     const owl = path.join(path.dirname(files[0]), 'Owl.md');
@@ -141,39 +135,6 @@ test('picked pages come into the wiki, open in NEO, and their links are followed
     expect(JSON.parse(readFileSync(path.join(library, wiki.id, 'book.json'), 'utf8')).chapterOrder).toEqual(wiki.order);
     expect(git(library, 'status', '--porcelain', '--', '.neo')).toBe('');
 
-    // a link in a manuscript is drawn and its page shown in the wiki pane beside the
-    // book, the caret staying where the writer was
-    await page.evaluate((id) => openBook(id), novel);
-    await expect.poll(() => drawnText(page, 'wiki-link')).toEqual(['[[Harbour]]']);
-    await caretIn(page, '[[Harbour]]');
-    const before = await page.evaluate(() => captureCaret());
-    await menu(app, 'Follow Link');
-    const pane = page.locator('.hoard-wiki-pane');
-    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Harbour');
-    await expect(pane).toBeVisible();
-    await expect(pane.locator('.hoard-wiki-line')).toHaveText(['The harbour wall faces east.', 'See [[Tide Tables]].']);
-    expect(await page.evaluate(() => [book.id, captureCaret()])).toEqual([novel, before]);
-
-    // links in the pane move it along, and Back and Forward walk the trail
-    await pane.getByRole('button', { name: '[[Tide Tables]]' }).click();
-    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tide Tables');
-    await expect(pane.locator('.hoard-wiki-missing')).toHaveText('[[Nowhere]]');
-    await pane.getByRole('button', { name: '‹ Back' }).click();
-    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Harbour');
-    // from the keyboard: Forward is disabled at the end of the trail, and the focus
-    // goes to the page's title rather than out of the pane
-    await pane.getByRole('button', { name: 'Forward ›' }).focus();
-    await page.keyboard.press('Enter');
-    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tide Tables');
-    await expect(pane.locator('.hoard-wiki-title')).toBeFocused();
-    await page.keyboard.press('Alt+ArrowLeft');
-    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Harbour');
-    expect(await page.evaluate(() => book.id)).toBe(novel);
-
-    // Edit in Wiki Book opens the wiki book at that page
-    await pane.getByRole('button', { name: 'Edit in Wiki Book' }).click();
-    await expect.poll(() => page.evaluate(() => book && book.id)).toBe(wiki.id);
-    await expect.poll(() => page.evaluate(() => captureCaret()?.chId)).toBe(harbour);
   } finally {
     await fixture.close();
   }

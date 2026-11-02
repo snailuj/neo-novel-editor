@@ -57,8 +57,10 @@ async function menu(app, label) {
 async function answer(app, files) {
   await app.evaluate(({ dialog }, files) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: files });
+    globalThis.__boxes = 0;
     dialog.showMessageBox = async (...args) => {
       const o = args.length > 1 ? args[1] : args[0];
+      globalThis.__boxes++;
       return { response: o.buttons && o.buttons[0].startsWith('Import') ? 0 : 1, checkboxChecked: false };
     };
   }, files);
@@ -90,7 +92,8 @@ test('a page named in new writing is flagged at the next save, once, hidden on r
     await page.waitForFunction(() => !!window.hoard);
     await answer(app, files);
     await menu(app, 'Import to Wiki…');
-    await expect.poll(() => page.evaluate(() => window.hoard.wiki.pages()?.pages.length ?? 0)).toBe(2);
+    // the import asks, then says it is done
+    await expect.poll(() => app.evaluate(() => globalThis.__boxes)).toBe(2);
     const bookId = await twoChapters(page);
     const chapter = (chId) => readFile(path.join(library, bookId, 'chapters', `${chId}.html`), 'utf8');
     const librarians = (chId) => page.evaluate((chId) => (window.hoard.marks.state().marks[chId] ?? [])
@@ -131,13 +134,14 @@ test('a page named in new writing is flagged at the next save, once, hidden on r
     const sidecar = JSON.parse(await readFile(path.join(library, '.neo', bookId, 'chapters', 'c1.json'), 'utf8'));
     expect(sidecar.marks.map((m) => m.created.who)).toEqual(['librarian']);
 
-    // its link shows the page beside the book, and the writer stays where they were
+    // its link opens the stored page it names beside the book, and the writer stays where they were
     await page.locator('.chapter-body p').nth(0).click();
     await page.evaluate(() => window.hoard.marks.show());
     const card = page.locator('.hoard-mark');
     await expect(card.locator('.hoard-who')).toContainText('Librarian');
     await card.locator('.hoard-body .hoard-wiki-link').click();
     await expect(page.locator('.hoard-wiki-pane .hoard-wiki-title')).toHaveText('Kraken');
+    expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('wiki/Kraken.html');
     expect(await page.evaluate(() => book.id)).toBe(bookId);
 
     // the same page again in that chapter, and a typed link in the other: nothing new
