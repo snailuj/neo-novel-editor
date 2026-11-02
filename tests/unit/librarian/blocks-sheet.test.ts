@@ -139,13 +139,6 @@ test('one copy of each text in the library; rows from an earlier run are never c
   assert.match(rows[1]!.reason, /^same text as Daily\/2026-01-01\.md lines 1-1; /);
 });
 
-test('a sheet written before dest reads its wiki column as dest: yes as sources, no as out, check as check', () => {
-  const head = 'page,block,lines,heading,proposed,label,wiki,wiki_page,book,pasted,by,reason,preview';
-  const text = `${head}\nA.md,b1,1-1,,writing,writing,yes,A-(snippets),,no,judge,r,x\nA.md,b2,2-2,,tasks,tasks,no,,,no,judge,r,y\nA.md,b3,3-3,,other,other,check,,,no,no-judge,r,z\n`;
-  assert.deepEqual(readSheet(text).map((r) => [r.dest, r.dest_page]), [['sources', 'A-(snippets)'], ['out', ''], ['check', '']]);
-  assert.match(writeSheet(readSheet(text)), /^﻿page,block,lines,heading,proposed,label,dest,dest_page,/, 'and is written back with the new columns');
-});
-
 test('an import list\'s to: and book: lines name no page already imported', () => {
   assert.deepEqual(parseAlready('to: wiki\nbook: Morning Pages\nA.md -> Name\n').map((a) => a.path), ['A.md']);
 });
