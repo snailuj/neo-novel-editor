@@ -1,6 +1,5 @@
 // A page edited by its id (pages.edit), and the librarian's pages named by id
-// (review.owners). The librarian's edit is the one rule here that wiki/write.ts also
-// keeps for chapters, so it lives once, in asLibrarian.
+// (review.owners). The librarian's edit goes through asLibrarian.
 //
 // The librarian's change sits between two commits (GitLayer.around): what the writer had
 // pending is committed as theirs, then the page as the librarian's. When the pre-commit

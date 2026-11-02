@@ -17,7 +17,7 @@ function setup(t: Parameters<typeof pagesLibrary>[0]) {
   lib.put('sources/Notes.html', '<p>Old notes.</p>');
   let n = 0;
   const marks = new MarkStore({ library: () => lib.library, now: () => new Date('2026-10-15T23:00:00.000Z'), newId: (p) => `${p}-t${String(n++).padStart(4, '0')}`, log: lib.log });
-  const companion = new Companion({ library: () => lib.library, marks, pages: lib.store, wikiBook: () => null, now: () => new Date('2026-10-15T23:00:00.000Z'), newId: () => `m-t${String(n++).padStart(4, '0')}`, log: lib.log });
+  const companion = new Companion({ library: () => lib.library, marks, pages: lib.store, now: () => new Date('2026-10-15T23:00:00.000Z'), newId: () => `m-t${String(n++).padStart(4, '0')}`, log: lib.log });
   return { ...lib, companion, marks };
 }
 

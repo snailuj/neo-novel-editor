@@ -2,7 +2,6 @@
 // - Stop Flagging This Page and Flag This Page Again act on the page the librarian's
 //   comment links to, and send its page id, whichever tree it is in;
 // - a title in both trees is the wiki page's id, as a link resolves it;
-// - a chapter of the Wiki book is never handed over, while that book exists.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Mark } from '../../src/generated/hoard-marks-v1.js';
@@ -41,7 +40,7 @@ function setup(pages: { id: string; tree: 'wiki' | 'sources'; title: string }[],
     state: () => ({ bookId: 'book-a', marks: { c1: [mark] }, active: 'm1', here: { chId: 'c1' } }),
     relist: async () => {},
   };
-  const watcher = startCompanion(neo as never, { marks: view, wikiBook: () => 'book-wiki', pages: async () => pages });
+  const watcher = startCompanion(neo as never, { marks: view, pages: async () => pages });
   return { handlers, commands, sent, said, watcher };
 }
 
@@ -72,13 +71,4 @@ test('a comment that links no page says so and changes nothing', async () => {
   await commands.get('stop-flagging')!();
   assert.equal(sent.some((s) => s.channel === 'companion.quiet'), false);
   assert.match(said.at(-1) ?? '', /Put the caret in one of the librarian's comments/);
-});
-
-test('a chapter of the Wiki book is never handed over, while that book exists', async () => {
-  const { handlers, sent, watcher } = setup([], 'Kraken');
-  const saved = handlers.get('chapter-saved') as (e: { bookId: string; chId: string; html: string; previous: string | null }) => void;
-  saved({ bookId: 'book-wiki', chId: 'c1', html: '<p>The Kraken.</p>', previous: '' });
-  saved({ bookId: 'book-a', chId: 'c1', html: '<p>The Kraken.</p>', previous: '' });
-  await watcher.settled();
-  assert.deepEqual(sent.filter((s) => s.channel === 'companion.read').map((s) => (s.payload as { bookId: string }).bookId), ['book-a']);
 });

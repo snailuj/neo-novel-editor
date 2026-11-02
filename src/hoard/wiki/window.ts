@@ -5,15 +5,12 @@
 // book (pane.ts), so the writer keeps their place. Nothing here runs while the writer types
 // but a redraw of the links, once typing pauses.
 import { titleIndex } from '../pages/titles.ts';
-import type { Applied } from './store.ts';
 import { linkAt, linksIn } from './links.ts';
 import { startWikiPane } from './pane.ts';
 import type { Listed } from './tree.ts';
 
 const REDRAW_MS = 300;
 const STATUS_MS = 4_000;
-
-interface Imported { outcome: string; bookId?: string | null; imported?: Applied['imported']; openBookId?: string | null; message?: string }
 
 export function startWiki(neo: NeoApiV5) {
   let importing = false;
@@ -55,12 +52,6 @@ export function startWiki(neo: NeoApiV5) {
     redrawTimer = setTimeout(drawLinks, REDRAW_MS);
   };
 
-  // A book an import list filled beside the wiki (Morning Pages, say); it is on no shelf.
-  const openImported = async (bookId: string) => {
-    if (neo.book()?.id === bookId) return;
-    if (!(await neo.open(bookId))) say('The book could not be opened.');
-  };
-
   const pane = startWikiPane(neo, {
     changed: () => { reindex().catch((err: unknown) => console.warn('hoard: wiki: the links were not drawn again', err)); },
   });
@@ -88,21 +79,16 @@ export function startWiki(neo: NeoApiV5) {
     }
     importing = true;
     try {
-      const answer = (await neo.invoke('wiki.import', { openBookId: neo.book()?.id ?? null, from })) as Imported;
+      await neo.invoke('wiki.import', { from });
       await readPages();
       drawLinks();
-      if (answer.outcome === 'imported' && answer.openBookId) await openImported(answer.openBookId);
-      else if (pane.currentPage()) await pane.reload();
+      if (pane.currentPage()) await pane.reload();
     } finally {
       importing = false;
     }
   };
   neo.addCommand('import-wiki', () => runImport('pages'));
   neo.addCommand('import-wiki-list', () => runImport('list'));
-  neo.addCommand('open-imported-book', async () => {
-    const { bookId } = (await neo.invoke('wiki.imported-book')) as { bookId: string | null };
-    if (bookId) await openImported(bookId);
-  });
   neo.addCommand('follow-link', async () => {
     const target = linkHere();
     if (!target) {

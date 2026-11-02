@@ -16,16 +16,16 @@ const page = (frontmatter: unknown) => JSON.stringify({
   frontmatter,
   imported: '2026-10-15T10:00:00Z',
 });
-const PAGE = '.neo/book-wiki-1/pages/ch-1.json';
+const PAGE = '.neo/pages/wiki/Harbour.html.json';
 const rules = (files: StagedFile[], scheme?: string) => checkFiles(files, { schemeText: () => scheme ?? null })
   .map((f) => `${f.path}|${f.rule}`);
 
 test('a clean set of staged files gives no finding', () => {
   const files: StagedFile[] = [
-    { path: '.neo/wiki.json', text: '{"version":1,"bookId":"book-wiki-1"}' },
     { path: PAGE, text: page({ type: 'subject' }) },
-    { path: '.neo/book-wiki-1/chapters/ch-1.json', text: '{"version":1,"marks":[]}' },
-    { path: 'book-wiki-1/chapters/ch-1.html', text: '<p data-block="b1">One.</p>\n<p data-block="b2">Two.</p>' },
+    { path: '.neo/book-fox-1/chapters/c1.json', text: '{"version":1,"marks":[]}' },
+    { path: '.neo/marks/wiki/Harbour.html.json', text: '{"version":1,"marks":[]}' },
+    { path: 'wiki/Harbour.html', text: '<p data-block="b1">One.</p>\n<p data-block="b2">Two.</p>' },
     { path: 'library.json', text: '{}' },
   ];
   assert.deepEqual(checkFiles(files, { schemeText: () => null }), []);
@@ -33,29 +33,27 @@ test('a clean set of staged files gives no finding', () => {
 
 test('Sidecar-Fits-Its-Schema: each known sidecar that breaks its schema or will not parse is named', () => {
   const files: StagedFile[] = [
-    { path: '.neo/wiki.json', text: '{"version":2,"bookId":"book-wiki-1"}' },
     { path: PAGE, text: '{"version":1' },
-    { path: '.neo/book-wiki-1/chapters/ch-1.json', text: '{"version":1,"marks":"none"}' },
+    { path: '.neo/book-fox-1/chapters/c1.json', text: '{"version":1,"marks":"none"}' },
     { path: '.neo/changes.jsonl', text: '{"version":1,"at":"2026-10-15T10:00:00Z","kind":"page-imported","bookId":"b","chId":"c","dest":"d","src":"s"}\n{"version":1}\n' },
     { path: '.neo/manifest.jsonl', text: '{"dest":"x"}\n' },
     { path: '.neo/scheme.json', text: '{"colours":[]}' },
   ];
   const found = checkFiles(files, { schemeText: () => null });
   assert.deepEqual(found.map((f) => `${f.path}|${f.rule}`), [
-    '.neo/wiki.json|Sidecar-Fits-Its-Schema',
     `${PAGE}|Sidecar-Fits-Its-Schema`,
-    '.neo/book-wiki-1/chapters/ch-1.json|Sidecar-Fits-Its-Schema',
+    '.neo/book-fox-1/chapters/c1.json|Sidecar-Fits-Its-Schema',
     '.neo/changes.jsonl|Sidecar-Fits-Its-Schema',
     '.neo/manifest.jsonl|Sidecar-Fits-Its-Schema',
     '.neo/scheme.json|Sidecar-Fits-Its-Schema',
   ]);
-  assert.match(found[3]!.message, /line 2/);
+  assert.match(found[2]!.message, /line 2/);
 });
 
 test('Sidecar-Fits-Its-Schema: a .neo file of no known kind, and any file outside .neo, is left alone', () => {
   assert.deepEqual(rules([
     { path: '.neo/notes.txt', text: '{' },
-    { path: '.neo/book-wiki-1/other/x.json', text: '{' },
+    { path: '.neo/book-fox-1/other/x.json', text: '{' },
     { path: 'book-fox-1/book.json', text: '{' },
   ]), []);
 });
@@ -88,7 +86,7 @@ test('Frontmatter-Fits-The-Scheme: the library\'s scheme decides what passes', (
 test('Frontmatter-Fits-The-Scheme: a library with no scheme has no frontmatter judged', () => {
   const files: StagedFile[] = [
     { path: PAGE, text: page(null) },
-    { path: '.neo/book-wiki-1/pages/ch-2.json', text: page({ type: 'lore', colour: 'red' }) },
+    { path: '.neo/pages/wiki/Ferry.html.json', text: page({ type: 'lore', colour: 'red' }) },
   ];
   assert.equal(rules(files, '{}').length, 3, 'with a scheme the same pages have FM1, FM3 and FM10');
   assert.deepEqual(rules(files), []);
@@ -101,7 +99,7 @@ test('Frontmatter-Fits-The-Scheme: a scheme file that will not load is a finding
 
 test('Frontmatter-Fits-The-Scheme: the scheme is read only when a page is staged', () => {
   let reads = 0;
-  checkFiles([{ path: 'book-fox-1/chapters/c1.html', text: '<p>One.</p>' }], { schemeText: () => { reads++; return null; } });
+  checkFiles([{ path: 'wiki/Harbour.html', text: '<p>One.</p>' }], { schemeText: () => { reads++; return null; } });
   assert.equal(reads, 0);
   checkFiles([{ path: PAGE, text: page({ type: 'subject' }) }], { schemeText: () => { reads++; return null; } });
   assert.equal(reads, 1);
@@ -110,7 +108,7 @@ test('Frontmatter-Fits-The-Scheme: the scheme is read only when a page is staged
 test('Block-Ids-Citable: each id a citation cannot name is one finding', () => {
   const html = ['<p data-block="b1">One.</p>', '<p class="hy" data-block="">Empty.</p>',
     '<p data-block="b 2">Spaced.</p>', '<p data-block="b^3">Caret.</p>', '<p data-block="b-4">Fine.</p>'].join('\n');
-  const found = checkFiles([{ path: 'book-wiki-1/chapters/ch-1.html', text: html }], { schemeText: () => null });
+  const found = checkFiles([{ path: 'wiki/Harbour.html', text: html }], { schemeText: () => null });
   assert.deepEqual(found.map((f) => `${f.rule}|${f.message}`), [
     "Block-Ids-Citable|block id '' cannot be cited (letters, digits and hyphens only)",
     "Block-Ids-Citable|block id 'b 2' cannot be cited (letters, digits and hyphens only)",
@@ -120,13 +118,13 @@ test('Block-Ids-Citable: each id a citation cannot name is one finding', () => {
 
 test('Block-Ids-Citable: a repeated id is no finding, because the first paragraph holding it owns it', () => {
   assert.deepEqual(rules([
-    { path: 'book-wiki-1/chapters/ch-1.html', text: '<p data-block="b1">One.</p>\n<p data-block="b1">One, split.</p>' },
+    { path: 'wiki/Harbour.html', text: '<p data-block="b1">One.</p>\n<p data-block="b1">One, split.</p>' },
   ]), []);
 });
 
-test('Block-Ids-Citable: a file that only looks like a chapter is not judged', () => {
+test('Block-Ids-Citable: a book chapter is not judged, because only pages are cited', () => {
   assert.deepEqual(rules([
-    { path: 'book-wiki-1/notes-ch-1.html', text: '<p data-block="b 1"></p>' },
-    { path: 'book-wiki-1/chapters/deeper/ch-1.html', text: '<p data-block="b 1"></p>' },
+    { path: 'book-fox-1/chapters/c1.html', text: '<p data-block="b 1"></p>' },
+    { path: 'wiki/notes-ch-1.md', text: '<p data-block="b 1"></p>' },
   ]), []);
 });

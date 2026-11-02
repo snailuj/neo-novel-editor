@@ -2,8 +2,8 @@
 // window half's health check (ping), and keeps the library's history in git: every
 // landed write feeds the checkpoints, the window asks for one on a chapter switch or a
 // book closing, and quitting makes one last commit. It keeps the writer's marks in
-// sidecars under .neo/, which the history commits with the chapters, brings hoard's
-// Markdown pages into the wiki book, searches the library's files, and reads each
+// sidecars under .neo/, which the history commits with the chapters, imports hoard's
+// Markdown pages as page files, searches the library's files, and reads each
 // chapter the writer leaves for wiki pages it names (companion/), and carries changes
 // through the wiki for a judge outside NEO, on the writer's word (ripple/). The library's
 // repository is looked at after activate returns, so NEO's start never waits on git.
@@ -21,7 +21,7 @@ import { startCompanion } from './companion/main.ts';
 import { textconvCommand } from './git/blame.ts';
 import { startGate } from './git/gate-main.ts';
 import { GitLayer, resolveSettings } from './git/layer.ts';
-import { startLibrarianPairs } from './git/librarian-main.ts';
+import { LibrarianPairs } from './git/pair.ts';
 import { createGit } from './git/runner.ts';
 import { ATTRIBUTES } from './git/start.ts';
 import { MarkStore, targeted } from './marks/store.ts';
@@ -149,24 +149,18 @@ export function activate(host: NeoMainHost): void {
   host.handle('ping', ping);
   const layer = startHistory(host);
   const gate = startGate(host, layer);
-  const pairs = startLibrarianPairs(host, layer);
-  // wiki.edit writes a Wiki book chapter outside the page store and the window's saves, so it tells the
-  // gate and the pair itself; #28 deletes the channel.
-  const wikiSaved = (bookId: string, chId: string) => {
-    gate.saved(`${bookId}/chapters/${chId}.html`);
-    pairs.landed(bookId, chId);
-  };
+  const pairs = new LibrarianPairs({ layer, library: () => host.paths.library(), log: host.log.bind(host) });
   const marks = startMarks(host, layer);
   // The page store starts after git opens; an import that writes pages before then has no index to refresh.
   const pageHolder: { store?: { list(): Promise<unknown>; announce: PageStore['announce'] } } = {};
-  const wiki = startWiki(host, layer, marks, { pageImported: (change) => pageHolder.store?.announce(change), pagesWrote: async () => pageHolder.store?.list().catch((err: unknown) => host.log('warn', 'pages: the trees did not list after an import', String(err))) });
+  startWiki(host, layer, { pageMarks: marks, pageImported: (change) => pageHolder.store?.announce(change), pagesWrote: async () => pageHolder.store?.list().catch((err: unknown) => host.log('warn', 'pages: the trees did not list after an import', String(err))) });
   startSearch(host);
   const opened = layer.open().catch((err: unknown) => host.log('error', 'git.open failed', String(err)));
   const { store: pages } = startPages(host, layer, opened);
   pageHolder.store = pages;
   // Every stored-page save, whoever makes it, is announced here and nowhere else.
   signalPageChanges(pages, gate, pairs, host.log.bind(host));
-  startReview(host, marks, { layer, wiki, pages, wikiSaved });
-  startCompanion(host, layer, marks, wiki, pages);
+  startReview(host, marks, { layer, pages });
+  startCompanion(host, layer, marks, pages);
   startRipple(host, layer, pages, marks);
 }

@@ -1,18 +1,12 @@
-// The librarian's review on the main side: which chapters of a book are the librarian's
-// (from their page sidecars), and its verdicts on the writer's suggestions, signed as the
-// librarian. Applying an accepted change in the open book is the window's: a librarian
-// edit (git/librarian.ts), which sits between the writer's commit and the librarian's.
-// A change made from the Wiki pane, beside another book, is written here (wiki.edit,
-// wiki/write.ts), since no window holds that page. A page in wiki/ or sources/ is edited
-// by its id (pages.edit, edit.ts), and its owners asked for by id or tree (review.owners).
+// The librarian's review on the main side: which pages are the librarian's (from their
+// page sidecars), and its verdicts on the writer's suggestions, signed as the librarian.
+// A page in wiki/ or sources/ is edited by its id (pages.edit, edit.ts), since no window
+// holds that page, and its owners asked for by id or tree (review.owners).
 import type { GitLayer } from '../git/layer.ts';
 import { targeted, type MarkStore } from '../marks/store.ts';
 import type { PageStore } from '../pages/store.ts';
-import type { WikiStore } from '../wiki/store.ts';
-import { writePage } from '../wiki/write.ts';
 import { editPage, librarianAmong, librarianInTree } from './edit.ts';
-import { librarianPages } from './owner.ts';
-import { validateHoardPagesEditV1, validateHoardReviewOwnersV1, validateHoardReviewVerdictV1, validateHoardWikiEditV1 } from '../../generated/validators.cjs';
+import { validateHoardPagesEditV1, validateHoardReviewOwnersV1, validateHoardReviewVerdictV1 } from '../../generated/validators.cjs';
 
 type Validator<T> = { (data: unknown): data is T; errors?: { instancePath: string; message?: string }[] | null };
 
@@ -24,18 +18,8 @@ function checked<T>(name: string, validate: Validator<T>, payload: unknown): T {
   return payload;
 }
 
-export function startReview(host: NeoMainHost, marks: MarkStore, o: { layer: GitLayer; wiki: WikiStore; pages: PageStore; wikiSaved?: (bookId: string, chId: string) => void }): void {
+export function startReview(host: NeoMainHost, marks: MarkStore, o: { layer: GitLayer; pages: PageStore }): void {
   const log = host.log.bind(host);
-  host.handle('wiki.edit', (payload) => writePage({
-    library: () => host.paths.library(),
-    listed: (chId) => {
-      const wiki = o.wiki.pages();
-      return wiki && wiki.pages.some((p) => p.chId === chId) ? { bookId: wiki.bookId } : null;
-    },
-    layer: o.layer,
-    log,
-    saved: o.wikiSaved,
-  }, checked('wiki.edit', validateHoardWikiEditV1, payload)));
   host.handle('pages.edit', (payload) => editPage({
     library: () => host.paths.library(),
     store: o.pages,
@@ -46,8 +30,7 @@ export function startReview(host: NeoMainHost, marks: MarkStore, o: { layer: Git
     const ask = checked('review.owners', validateHoardReviewOwnersV1, payload);
     const library = host.paths.library();
     if (ask.pages !== undefined) return { librarian: await librarianAmong(library, ask.pages, log) };
-    if (ask.tree !== undefined) return { librarian: await librarianInTree(library, ask.tree, log) };
-    return { librarian: librarianPages(library, ask.bookId ?? '', log) };
+    return { librarian: await librarianInTree(library, ask.tree!, log) }; // the schema requires pages or tree
   });
   host.handle('review.verdict', async (payload) => {
     const { reason, ...req } = checked('review.verdict', validateHoardReviewVerdictV1, payload);

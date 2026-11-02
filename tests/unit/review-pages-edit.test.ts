@@ -273,13 +273,13 @@ test('Owners-List-Only-Librarian: a tree listing skips a sidecar whose page is g
   assert.deepEqual(await librarianInTree(lib, 'wiki', () => {}), [OURS]);
 });
 
-test('the channels: pages.edit and review.owners take a page form, and wiki.edit and the book form still work', async (t) => {
+test('the channels: pages.edit and review.owners take a page form, and wiki.edit and the book form are gone', async (t) => {
   const { o, library: lib, page } = await library(t);
   const handlers = new Map<string, (payload: unknown) => unknown>();
   const host = { handle: (name: string, fn: (payload: unknown) => unknown) => handlers.set(name, fn), log: () => {}, paths: { library: () => lib } };
   const saved: string[] = [];
   signalPageChanges(o.store, { saved: (id) => { saved.push(id); } }, { landed: () => {} }, () => {});
-  startReview(host as never, {} as never, { layer: o.layer, wiki: { pages: () => null } as never, pages: o.store as never });
+  startReview(host as never, {} as never, { layer: o.layer, pages: o.store as never });
   const call = async (name: string, payload: unknown) => handlers.get(name)!(payload);
   assert.deepEqual(await call('pages.edit', { page: SOURCE, before: BEFORE, after: AFTER, as: 'author' }), { ok: true });
   assert.equal(page(SOURCE), AFTER);
@@ -289,8 +289,8 @@ test('the channels: pages.edit and review.owners take a page form, and wiki.edit
   await assert.rejects(call('pages.edit', { page: 'notes/x.html', before: '', after: '', as: 'author' }), /pages\.edit/);
   assert.deepEqual(await call('review.owners', { pages: [OURS, THEIRS, SOURCE] }), { librarian: [OURS] });
   assert.deepEqual(await call('review.owners', { tree: 'wiki' }), { librarian: [OURS] });
-  assert.deepEqual(await call('review.owners', { bookId: 'book-none-1' }), { librarian: [] });
+  await assert.rejects(call('review.owners', { bookId: 'book-none-1' }), /review\.owners/);
   await assert.rejects(call('review.owners', { tree: 'wiki', pages: [] }), /review\.owners/);
   await assert.rejects(call('review.owners', {}), /review\.owners/);
-  assert.deepEqual(await call('wiki.edit', { chId: 'c9', before: '', after: '', as: 'author' }), { ok: false, reason: 'missing' });
+  assert.equal(handlers.has('wiki.edit'), false);
 });

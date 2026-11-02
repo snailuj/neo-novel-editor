@@ -15,10 +15,9 @@
 // which the next import writes over: importing the same files again finishes the page,
 // never takes it as done.
 //
-// With history kept, an import is two commits, as the Wiki book's is (store.ts): the
-// author's first, with each page that is theirs and the author's blocks of the
-// librarian's pages, then the librarian's, with the rest. There is no book to be open,
-// so an import never waits for the writer to leave one.
+// With history kept, an import is two commits: the author's first, with each page that
+// is theirs and the author's blocks of the librarian's pages, then the librarian's, with
+// the rest.
 import { randomBytes } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';

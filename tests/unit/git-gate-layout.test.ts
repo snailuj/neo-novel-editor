@@ -13,7 +13,7 @@ const page = (frontmatter: unknown) => JSON.stringify({
   frontmatter,
   imported: '2026-10-15T10:00:00Z',
 });
-const PAGE = '.neo/book-wiki-1/pages/ch-1.json';
+const PAGE = '.neo/pages/wiki/Harbour.html.json';
 const messages = () => checkFiles(
   [{ path: PAGE, text: page({ type: 'lore', colour: 'red' }) }],
   { schemeText: () => '{}' },
