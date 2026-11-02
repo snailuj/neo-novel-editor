@@ -1,20 +1,29 @@
 // The review sheet: one CSV row per block, so the author can correct the classifier
 // before anything is imported. `proposed` is the classifier's label and stays as it was;
-// the rest is the author's to edit. A block has two possible homes: `wiki` (yes, no or
-// check) sends it to the wiki page `wiki_page`; a `book` value sends it to that chapter
-// of the Morning Pages book. A Morning Pages section goes to the book whole, whatever its
+// the rest is the author's to edit. A block has two possible homes: `dest` sends it to
+// the page `dest_page` in the library's sources (`sources`, where snippets go) or wiki
+// (`wiki`), or leaves it out (`out`; `check` until the author decides); a `book` value
+// sends it to that chapter of the Morning Pages book. A Morning Pages section goes to the book whole, whatever its
 // blocks' labels, so the journal keeps each day as written. `entry` and `topic` come from
 // the group command: the entry a block belongs to and what that entry is about. A re-run
 // keeps every row it already has (matched by page and block id) and only adds new blocks.
+// A sheet written before `dest` reads its `wiki` column as one: yes as sources, no as out.
 import path from 'node:path';
 import type { Judged } from './judge.ts';
 import { fallbackGuess, type Label, MORNING_PAGES, ruleLabel } from './rules.ts';
 import type { Block } from './split.ts';
 
-export const COLUMNS = ['page', 'block', 'lines', 'heading', 'proposed', 'label', 'wiki', 'wiki_page', 'book', 'topic', 'entry', 'topic_by', 'pasted', 'by', 'reason', 'preview'] as const;
+export const COLUMNS = ['page', 'block', 'lines', 'heading', 'proposed', 'label', 'dest', 'dest_page', 'book', 'topic', 'entry', 'topic_by', 'pasted', 'by', 'reason', 'preview'] as const;
 /** Columns added after the first sheets were written; a sheet without them reads them as empty. */
 const LATER: readonly string[] = ['topic', 'entry', 'topic_by'];
 export type Row = Record<(typeof COLUMNS)[number], string>;
+/** Where a row's block goes: a tree of the library, or nowhere; `check` is not decided yet. */
+export const DESTS = ['sources', 'wiki', 'out', 'check'] as const;
+/** The tree a row's block goes to, or null when it goes to none. */
+export const treeOf = (r: Row): 'sources' | 'wiki' | null => (r.dest === 'sources' || r.dest === 'wiki' ? r.dest : null);
+// The columns a sheet written before `dest` has instead, and what their values mean now.
+const OLD: Record<string, string> = { wiki: 'dest', wiki_page: 'dest_page' };
+const OLD_DEST: Record<string, string> = { yes: 'sources', no: 'out', check: 'check' };
 
 export interface Already {
   /** The page's path with forward slashes, as written in the list. */
@@ -23,12 +32,13 @@ export interface Already {
   name: string | null;
 }
 
-/** An import list's lines: `path`, `path#Section` and either with ` -> Name`; `#` starts a comment. */
+/** An import list's lines: `path`, `path#Section` and either with ` -> Name`; `#` starts a comment, and `to:` and `book:` lines are skipped. */
 export function parseAlready(text: string): Already[] {
   const out: Already[] = [];
   for (const raw of text.replace(/^﻿/, '').split(/\r?\n/)) {
     const line = raw.trim();
-    if (!line || line.startsWith('#')) continue;
+    // a `to:` or `book:` line says where the lines after it go, and names no page
+    if (!line || line.startsWith('#') || /^(?:to|book):/i.test(line)) continue;
     const arrow = line.indexOf(' -> ');
     const target = (arrow >= 0 ? line.slice(0, arrow) : line).trim().replace(/\\/g, '/');
     const name = arrow >= 0 ? line.slice(arrow + 4).trim() : null;
@@ -55,7 +65,7 @@ const stemOf = (page: string) => path.posix.basename(page.replace(/\\/g, '/')).r
 const safe = (s: string) => s.replace(/[\\/:*?"<>|#^[\]]+/g, ' ').trim().replace(/\s+/g, '-').replace(/-{2,}/g, '-');
 const DATE = /\d{4}-\d{2}-\d{2}/;
 
-/** A wiki page named for the source page (a daily note by its date alone) and one part of it. */
+/** A page named for the source page (a daily note by its date alone) and one part of it. */
 function destOf(page: string, part: string): string {
   const stem = stemOf(page);
   const name = safe(/^\d{4}-\d{2}-\d{2}\b/.exec(stem)?.[0] ?? stem);
@@ -64,19 +74,19 @@ function destOf(page: string, part: string): string {
   return `${[name, head].filter(Boolean).join('-')}-(snippets)`;
 }
 
-/** The default wiki page for a writing block: its page and innermost heading. */
+/** The default page for a writing block: its page and innermost heading. */
 export const defaultDest = (page: string, heading: string) => destOf(page, heading.split(' > ').pop() ?? '');
 
 /**
- * Leaves one wiki copy of each text: a fresh row bound for the wiki whose text an earlier
- * one already carries (a generated line repeated across daily notes) is set to no.
+ * Leaves one copy of each text in the library: a fresh row bound for a tree whose text an
+ * earlier one already carries (a generated line repeated across daily notes) is set to out.
  * Rows an earlier run made are never changed, so a reviewed sheet stays as reviewed.
  */
 export function dedupeRows(rows: Row[], isFresh: (row: Row) => boolean): number {
   const first = new Map<string, Row>();
   let changed = 0;
   for (const r of rows) {
-    if (r.wiki !== 'yes') continue;
+    if (!treeOf(r)) continue;
     const hash = r.block.replace(/-\d+$/, '');
     const earlier = first.get(hash);
     if (!earlier) {
@@ -84,14 +94,14 @@ export function dedupeRows(rows: Row[], isFresh: (row: Row) => boolean): number 
       continue;
     }
     if (!isFresh(r)) continue;
-    r.wiki = 'no';
+    r.dest = 'out';
     r.reason = `same text as ${earlier.page} lines ${earlier.lines}; ${r.reason}`;
     changed++;
   }
   return changed;
 }
 
-/** The wiki page for the writing of one topic on one page; the same name on another page is another topic. */
+/** The page for the writing of one topic on one page; the same name on another page is another topic. */
 export const topicDest = (page: string, topic: string) => destOf(page, topic);
 
 /** The default Morning Pages chapter: the page's date, else a heading's, else the page. */
@@ -116,22 +126,22 @@ export function rowsFor(page: string, blocks: readonly Block[], judged: Readonly
     let reason = ruled?.reason ?? j?.reason ?? 'not judged';
     const said = (l: Label) => label === l || (j?.votes ?? []).includes(l);
     // Unsure means the author decides: no judge, a failed one, or votes of which one says writing.
-    let wiki = ruled ? 'no'
-      : by === 'judge' ? (label === 'writing' && !pasted ? 'yes' : 'no')
-      : by === 'votes-differ' ? (said('writing') ? 'check' : 'no')
+    let dest = ruled ? 'out'
+      : by === 'judge' ? (label === 'writing' && !pasted ? 'sources' : 'out')
+      : by === 'votes-differ' ? (said('writing') ? 'check' : 'out')
       : 'check';
     const inMorningPages = b.heading.some((h) => MORNING_PAGES.test(h));
-    let wikiPage = wiki !== 'no' || label === 'writing' ? defaultDest(page, heading) : '';
+    let destPage = dest !== 'out' || label === 'writing' ? defaultDest(page, heading) : '';
     const book = !ruled && (inMorningPages || said('morning-pages')) ? defaultBook(page, heading) : '';
     const done = alreadyFor(page, b, already);
     if (done && !ruled) {
-      wiki = 'no';
+      dest = 'out';
       reason = `already imported as ${done.name ?? stemOf(done.path)}; ${reason}`;
-      if (label === 'writing') wikiPage = done.name ?? stemOf(done.path);
+      if (label === 'writing') destPage = done.name ?? stemOf(done.path);
     }
     return {
       page, block: b.id, lines: `${b.start}-${b.end}`, heading,
-      proposed: label, label, wiki, wiki_page: wikiPage, book, topic: '', entry: '', topic_by: '',
+      proposed: label, label, dest, dest_page: destPage, book, topic: '', entry: '', topic_by: '',
       pasted: pasted ? 'yes' : 'no', by, reason, preview: preview(b.text),
     };
   });
@@ -184,8 +194,14 @@ export function readSheet(text: string): Row[] {
     rec.push(field);
     records.push(rec);
   }
-  const [header, ...body] = records.filter((r) => r.some((f) => f !== ''));
-  if (!header) return [];
+  const [found, ...body] = records.filter((r) => r.some((f) => f !== ''));
+  if (!found) return [];
+  const old = !found.includes('dest') && found.includes('wiki');
+  const header = old ? found.map((c) => OLD[c] ?? c) : found;
   for (const c of COLUMNS) if (!header.includes(c) && !LATER.includes(c)) throw new Error(`the sheet has no '${c}' column`);
-  return body.map((r) => Object.fromEntries(COLUMNS.map((c) => [c, r[header.indexOf(c)] ?? ''])) as Row);
+  return body.map((r) => {
+    const row = Object.fromEntries(COLUMNS.map((c) => [c, r[header.indexOf(c)] ?? ''])) as Row;
+    if (old) row.dest = OLD_DEST[row.dest] ?? row.dest;
+    return row;
+  });
 }

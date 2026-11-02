@@ -16,16 +16,12 @@
 // that is theirs (review/owner.ts, the rule suggest mode follows) and only the quotations
 // and code of the librarian's pages (convert.ts), then the librarian's, with the rest.
 //
-// A page's source that changed since it came in updates the page in place only while
-// NEO has not changed the page (its chapter file still hashes as the import left it),
-// and every mark on it stays. When NEO has changed it too, the new source comes in as
-// the next page, as NEO does with a chapter changed on two devices, and later imports
-// follow that newest page. Words written in NEO are never written over.
-//
-// A pick is a file, or an import list's entry (import-list.ts): a page with a name of
-// its own, or sections of a page joined into one (a split). A page an old vault gave
-// hoard, by hoard's own manifest, comes in with hoard's pages instead, so it is not
-// imported twice. A page's images and PDFs are copied into the wiki book.
+// What each pick would do is sorted in picks.ts. A page's source that changed since it
+// came in updates the page in place only while NEO has not changed the page (its chapter
+// file still hashes as the import left it), and every mark on it stays. When NEO has
+// changed it too, the new source comes in as the next page, and later imports follow
+// that newest page. Words written in NEO are never written over. A page's images and
+// PDFs are copied into the wiki book.
 //
 // The same store makes and fills another book, by title (Morning Pages, say), when an
 // import list sends pages there: such a book is named in .neo/books/<slug>.json instead,
@@ -40,7 +36,6 @@ import type { Mark } from '../../generated/hoard-marks-v1.js';
 import type { HoardPageV1 } from '../../generated/hoard-page-v1.js';
 import type { HoardWikiV1 } from '../../generated/hoard-wiki-v1.js';
 import { validateHoardChangeV1, validateHoardPageV1, validateHoardWikiV1 } from '../../generated/validators.cjs';
-import { split } from '../../librarian/frontmatter.ts';
 import { key } from '../../librarian/links.ts';
 import { appendRecord, parseManifest, serialiseRecord } from '../../librarian/manifest.ts';
 import { oneName, writeJson, writeWhole } from '../files.ts';
@@ -48,12 +43,11 @@ import { anchorAt, anchorPoint } from '../marks/anchor.ts';
 import { newMark } from '../marks/model.ts';
 import type { MarkStore } from '../marks/store.ts';
 import { ownerFromFrontmatter } from '../review/owner.ts';
-import { AttachmentFinder, attachmentsIn, copyAttachment } from './attachments.ts';
-import { convertPage, pageHtml, type Block, type ConvertedPage } from './convert.ts';
-import { HoardIndex, hoardRoot, vaultRoot } from './hoard-manifest.ts';
-import { lineRange } from './import-list.ts';
+import { copyAttachment } from './attachments.ts';
+import { pageHtml, type Block, type ConvertedPage } from './convert.ts';
+import { HoardIndex, hoardRoot } from './hoard-manifest.ts';
 import { inline } from './inline.ts';
-import { section } from './sections.ts';
+import { pickKey, sha256, sortPicks, type KnownPage, type Pick, type SortedOf, type VerdictOf } from './picks.ts';
 
 type Level = 'error' | 'warn' | 'info' | 'debug';
 
@@ -73,23 +67,9 @@ export interface WikiStoreOptions {
   book?: string;
 }
 
-/**
- * A file to import, or an import list's entry: a name of its own, or one section of it
- * (a heading, or a line range with the start of the hash the file had then).
- */
-export interface Pick { path: string; name?: string | null; section?: string | null; sha?: string | null }
-
-interface Picked { path: string; name: string; sections: string[]; sha: string | null }
-/** An attachment a page names, and the file found for it. */
-export interface Found { target: string; file: string }
-interface Converted { sha256: string; page: ConvertedPage; attachments: Found[]; missing: string[] }
-export type Verdict =
-  | Picked & Converted & { kind: 'new' }
-  | Picked & Converted & { kind: 'update' | 'beside'; chId: string }
-  | Picked & { kind: 'same' | 'clash' | 'through-hoard' | 'hoard-older' }
-  | Picked & { kind: 'unreadable'; why: string };
-
-export interface Sorted { verdicts: Verdict[]; picks?: Pick[] }
+export type { Found, Pick } from './picks.ts';
+export type Verdict = VerdictOf<{ chId: string }>;
+export type Sorted = SortedOf<{ chId: string }>;
 
 export interface Applied {
   bookId: string | null;
@@ -115,18 +95,6 @@ interface Book {
   chapterKinds?: Record<string, string>;
   [field: string]: unknown;
 }
-
-const sha256 = (data: string | Buffer) => createHash('sha256').update(data).digest('hex');
-const nameOf = (file: string) => path.basename(file).replace(/\.md$/i, '');
-// Paths compare as the file system does: without case on Windows.
-const samePath = (file: string) => (process.platform === 'win32' ? path.resolve(file).toLowerCase() : path.resolve(file));
-const pickKey = (p: { path: string; sections: string[] }) => [samePath(p.path), ...p.sections].join('\n');
-const byName = (a: Picked, b: Picked) => {
-  const [ka, kb] = [key(a.name), key(b.name)];
-  if (ka !== kb) return ka < kb ? -1 : 1;
-  if (a.name !== b.name) return a.name < b.name ? -1 : 1;
-  return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
-};
 
 /** A book title as a folder name's part: `Morning Pages` is `morning-pages`. */
 export function bookSlug(title: string): string {
@@ -222,8 +190,8 @@ export class WikiStore {
 
   // Each page already in the wiki: the newest page for each source (path and sections),
   // every title and source name (by link key), and hoard's roots, found from its pages.
-  #known(): { bySource: Map<string, { chId: string; title: string; sha256: string; imported: string }>; names: Set<string>; hoards: Set<string> } {
-    const bySource = new Map<string, { chId: string; title: string; sha256: string; imported: string }>();
+  #known(): { bySource: Map<string, KnownPage<string> & { imported: string }>; names: Set<string>; hoards: Set<string> } {
+    const bySource = new Map<string, KnownPage<string> & { imported: string }>();
     const names = new Set<string>();
     const hoards = new Set<string>();
     const wiki = this.pages();
@@ -238,7 +206,7 @@ export class WikiStore {
         if (!validateHoardPageV1(page)) continue;
         const k = pickKey({ path: page.source.path, sections: page.source.sections ?? [] });
         const was = bySource.get(k);
-        if (!was || was.imported <= page.imported) bySource.set(k, { chId, title, sha256: page.source.sha256, imported: page.imported });
+        if (!was || was.imported <= page.imported) bySource.set(k, { at: chId, title, sha256: page.source.sha256, imported: page.imported });
         names.add(key(page.source.name));
         const dir = path.dirname(page.source.path);
         if (!rootOf.has(dir)) rootOf.set(dir, hoardRoot(page.source.path));
@@ -272,115 +240,19 @@ export class WikiStore {
     return was !== undefined && existsSync(file) && sha256(readFileSync(file)) === was;
   }
 
-  // Each file once, or each list entry's sections joined into the page it names.
-  #picked(picks: readonly (string | Pick)[]): Picked[] {
-    const picked: Picked[] = [];
-    const whole = new Set<string>();
-    const parts = new Map<string, Picked>();
-    for (const raw of picks) {
-      const pick: Pick = typeof raw === 'string' ? { path: raw } : raw;
-      const name = pick.name || nameOf(pick.path);
-      if (pick.section) {
-        const k = `${samePath(pick.path)}\n${key(name)}`;
-        const into = parts.get(k);
-        if (into) {
-          if (!into.sections.includes(pick.section)) into.sections.push(pick.section);
-          into.sha ??= pick.sha ?? null;
-          continue;
-        }
-        const p = { path: pick.path, name, sections: [pick.section], sha: pick.sha ?? null };
-        parts.set(k, p);
-        picked.push(p);
-        continue;
-      }
-      if (whole.has(samePath(pick.path))) continue;
-      whole.add(samePath(pick.path));
-      picked.push({ path: pick.path, name, sections: [], sha: null });
-    }
-    return picked.sort(byName);
-  }
-
-  // The Markdown a pick brings in: the page, or its sections or line ranges joined,
-  // without the frontmatter of the page they were cut from.
-  #converted(p: Picked, bytes: Buffer, finders: Map<string, AttachmentFinder>): Converted | { why: string } {
-    let text = bytes.toString('utf8');
-    if (p.sha && !sha256(bytes).startsWith(p.sha)) return { why: 'it changed after the list was made, so its lines may have moved' };
-    if (p.sections.length) {
-      const whole = text.replace(/^\ufeff/, '').replace(/\r\n?/g, '\n');
-      // a file's last newline ends its last line and starts none
-      const lines = whole.replace(/\n$/, '').split('\n');
-      let body: string;
-      try {
-        ({ body } = split(whole));
-      } catch (err) {
-        return { why: err instanceof Error ? err.message : String(err) };
-      }
-      const cut: string[] = [];
-      for (const heading of p.sections) {
-        const range = lineRange(heading);
-        if (range) {
-          if (range.end > lines.length) return { why: `it has only ${lines.length} lines, not ${range.end}` };
-          cut.push(lines.slice(range.start - 1, range.end).join('\n').replace(/\s+$/, ''));
-          continue;
-        }
-        const part = section(body, heading);
-        if (part === null) return { why: `it has no heading \u201c${heading}\u201d` };
-        cut.push(part);
-      }
-      text = `${cut.join('\n\n')}\n`;
-    }
-    let page: ConvertedPage;
-    try {
-      page = convertPage(text, () => this.#id('b'));
-    } catch (err) {
-      return { why: err instanceof Error ? err.message : String(err) };
-    }
-    const root = vaultRoot(p.path) ?? path.dirname(path.resolve(p.path));
-    let finder = finders.get(root);
-    if (!finder) finders.set(root, finder = new AttachmentFinder(root));
-    const attachments: Found[] = [];
-    const missing: string[] = [];
-    for (const target of attachmentsIn(text)) {
-      const file = finder.find(target, p.path);
-      if (file) attachments.push({ target, file });
-      else missing.push(target);
-    }
-    return { sha256: sha256(bytes), page, attachments, missing };
-  }
-
   /** What importing these files or list entries would do. Reads; never writes. */
   sort(picks: readonly (string | Pick)[]): Sorted {
     const { bySource, names, hoards } = this.#known();
-    const hoard = hoards.size ? HoardIndex.read(hoards, this.#o.log) : null;
     const written = this.#written();
     const bookId = this.wikiId();
-    const finders = new Map<string, AttachmentFinder>();
-    const day = this.#now().slice(0, 10);
-    const verdicts = this.#picked(picks).map((p): Verdict => {
-      let bytes: Buffer;
-      try {
-        bytes = readFileSync(p.path);
-      } catch (err) {
-        return { ...p, kind: 'unreadable', why: (err as NodeJS.ErrnoException).code === 'ENOENT' ? 'the file is not there' : String(err) };
-      }
-      const known = bySource.get(pickKey(p));
-      if (known && known.sha256 === sha256(bytes)) return { ...p, name: known.title, kind: 'same' };
-      if (!known && !p.sections.length) {
-        const held = hoard?.verdict(p.path, sha256(bytes));
-        if (held) return { ...p, kind: held };
-      }
-      if (!known && names.has(key(p.name))) return { ...p, kind: 'clash' };
-      const made = this.#converted(p, bytes, finders);
-      if ('why' in made) return { ...p, kind: 'unreadable', why: made.why };
-      if (!known) {
-        names.add(key(p.name));
-        return { ...p, ...made, kind: 'new' };
-      }
-      if (bookId && this.#untouched(bookId, known.chId, written)) return { ...p, ...made, name: known.title, kind: 'update', chId: known.chId };
-      let name = `${p.name} (source changed ${day})`;
-      for (let n = 2; names.has(key(name)); n++) name = `${p.name} (source changed ${day}, ${n})`;
-      names.add(key(name));
-      return { ...p, ...made, name, kind: 'beside', chId: known.chId };
+    const verdicts = sortPicks(picks, {
+      bySource,
+      names,
+      hoard: hoards.size ? HoardIndex.read(hoards, this.#o.log) : null,
+      untouched: (chId: string) => bookId !== null && this.#untouched(bookId, chId, written),
+      where: (chId: string) => ({ chId }),
+      day: this.#now().slice(0, 10),
+      blockId: () => this.#id('b'),
     });
     return { verdicts, picks: [...picks].map((x) => (typeof x === 'string' ? { path: x } : x)) };
   }

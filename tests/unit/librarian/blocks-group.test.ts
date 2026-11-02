@@ -136,7 +136,7 @@ const judged = (labels: string[]) => new Map(blocks.map((b, i) => [b.id, { label
 
 test('topic rows: every row gets its entry and topic; the writing of each topic goes to its own wiki page', () => {
   const rows = rowsFor('Scratch.md', blocks, judged(['writing', 'writing', 'tasks', 'tasks', 'writing', 'writing', 'writing']), []);
-  rows[4]!.wiki_page = 'Poems'; // the author named this one
+  rows[4]!.dest_page = 'Poems'; // the author named this one
   const topics = [
     { topic: 'The Otter', by: 'judge', others: [] },
     { topic: 'Errands', by: 'judge', others: [] },
@@ -150,7 +150,7 @@ test('topic rows: every row gets its entry and topic; the writing of each topic 
     ['e3', 'Heron', 'votes-differ'], ['e3', 'Heron', 'votes-differ'],
     ['e4', 'The Otter', 'judge'],
   ]);
-  assert.deepEqual(rows.map((r) => r.wiki_page), [
+  assert.deepEqual(rows.map((r) => r.dest_page), [
     'Scratch-The-Otter-(snippets)', 'Scratch-The-Otter-(snippets)', '', '',
     'Poems', 'Scratch-Heron-(snippets)', // a topic of one entry gets its own page too
     'Scratch-The-Otter-(snippets)',
@@ -159,19 +159,19 @@ test('topic rows: every row gets its entry and topic; the writing of each topic 
 
 test('a page name the author edited is never replaced', () => {
   const rows = rowsFor('Scratch.md', blocks, judged(['writing', 'writing', 'tasks', 'tasks', 'other', 'other', 'writing']), []);
-  rows[0]!.wiki_page = 'Mine';
+  rows[0]!.dest_page = 'Mine';
   topicRows('Scratch.md', blocks, entries, entries.map(() => ({ topic: 'All', by: 'judge', others: [] })), rows);
-  assert.equal(rows[0]!.wiki_page, 'Mine');
-  assert.equal(rows[6]!.wiki_page, 'Scratch-All-(snippets)');
+  assert.equal(rows[0]!.dest_page, 'Mine');
+  assert.equal(rows[6]!.dest_page, 'Scratch-All-(snippets)');
   // Grouped again: a page name the last grouping gave is the tool's, so it follows the new topic.
   topicRows('Scratch.md', blocks, entries, entries.map((e) => ({ topic: e.title === 'Otter' ? 'Lone' : 'Other', by: 'judge', others: [] })), rows);
-  assert.deepEqual([rows[0]!.wiki_page, rows[1]!.wiki_page, rows[6]!.wiki_page], ['Mine', 'Scratch-Lone-(snippets)', 'Scratch-Other-(snippets)']);
+  assert.deepEqual([rows[0]!.dest_page, rows[1]!.dest_page, rows[6]!.dest_page], ['Mine', 'Scratch-Lone-(snippets)', 'Scratch-Other-(snippets)']);
 });
 
 test('entries left alone by a failed judge never share a page, even with the same title', () => {
   const rows = rowsFor('Scratch.md', blocks, judged(['writing', 'writing', 'tasks', 'tasks', 'writing', 'writing', 'writing']), []);
   topicRows('Scratch.md', blocks, entries, entries.map(() => ({ topic: 'Notes', by: 'judge-failed', others: [] })), rows);
-  assert.deepEqual([rows[0]!.wiki_page, rows[6]!.wiki_page], ['Scratch-3-May-(snippets)', 'Scratch-Later-(snippets)']);
+  assert.deepEqual([rows[0]!.dest_page, rows[6]!.dest_page], ['Scratch-3-May-(snippets)', 'Scratch-Later-(snippets)']);
   assert.equal(rows[0]!.topic_by, 'judge-failed');
   // Nor does a failed entry join a real topic that happens to share its title.
   const again = rowsFor('Scratch.md', blocks, judged(['writing', 'writing', 'tasks', 'tasks', 'writing', 'writing', 'writing']), []);
@@ -179,7 +179,7 @@ test('entries left alone by a failed judge never share a page, even with the sam
     { topic: 'Notes', by: 'judge-failed', others: [] }, { topic: 'Errands', by: 'judge', others: [] },
     { topic: 'Notes', by: 'judge', others: [] }, { topic: 'Notes', by: 'judge', others: [] },
   ], again);
-  assert.deepEqual([again[0]!.wiki_page, again[4]!.wiki_page, again[6]!.wiki_page], ['Scratch-3-May-(snippets)', 'Scratch-Notes-(snippets)', 'Scratch-Notes-(snippets)']);
+  assert.deepEqual([again[0]!.dest_page, again[4]!.dest_page, again[6]!.dest_page], ['Scratch-3-May-(snippets)', 'Scratch-Notes-(snippets)', 'Scratch-Notes-(snippets)']);
 });
 
 test('topicDest is one safe path segment, named for the page as well as the topic', () => {
