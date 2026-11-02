@@ -7,23 +7,17 @@
 // blocks' labels, so the journal keeps each day as written. `entry` and `topic` come from
 // the group command: the entry a block belongs to and what that entry is about. A re-run
 // keeps every row it already has (matched by page and block id) and only adds new blocks.
-// A sheet written before `dest` reads its `wiki` column as one: yes as sources, no as out.
 import path from 'node:path';
 import type { Judged } from './judge.ts';
 import { fallbackGuess, type Label, MORNING_PAGES, ruleLabel } from './rules.ts';
 import type { Block } from './split.ts';
 
 export const COLUMNS = ['page', 'block', 'lines', 'heading', 'proposed', 'label', 'dest', 'dest_page', 'book', 'topic', 'entry', 'topic_by', 'pasted', 'by', 'reason', 'preview'] as const;
-/** Columns added after the first sheets were written; a sheet without them reads them as empty. */
-const LATER: readonly string[] = ['topic', 'entry', 'topic_by'];
 export type Row = Record<(typeof COLUMNS)[number], string>;
 /** Where a row's block goes: a tree of the library, or nowhere; `check` is not decided yet. */
 export const DESTS = ['sources', 'wiki', 'out', 'check'] as const;
 /** The tree a row's block goes to, or null when it goes to none. */
 export const treeOf = (r: Row): 'sources' | 'wiki' | null => (r.dest === 'sources' || r.dest === 'wiki' ? r.dest : null);
-// The columns a sheet written before `dest` has instead, and what their values mean now.
-const OLD: Record<string, string> = { wiki: 'dest', wiki_page: 'dest_page' };
-const OLD_DEST: Record<string, string> = { yes: 'sources', no: 'out', check: 'check' };
 
 export interface Already {
   /** The page's path with forward slashes, as written in the list. */
@@ -196,12 +190,6 @@ export function readSheet(text: string): Row[] {
   }
   const [found, ...body] = records.filter((r) => r.some((f) => f !== ''));
   if (!found) return [];
-  const old = !found.includes('dest') && found.includes('wiki');
-  const header = old ? found.map((c) => OLD[c] ?? c) : found;
-  for (const c of COLUMNS) if (!header.includes(c) && !LATER.includes(c)) throw new Error(`the sheet has no '${c}' column`);
-  return body.map((r) => {
-    const row = Object.fromEntries(COLUMNS.map((c) => [c, r[header.indexOf(c)] ?? ''])) as Row;
-    if (old) row.dest = OLD_DEST[row.dest] ?? row.dest;
-    return row;
-  });
+  for (const c of COLUMNS) if (!found.includes(c)) throw new Error(`the sheet has no '${c}' column`);
+  return body.map((r) => Object.fromEntries(COLUMNS.map((c) => [c, r[found.indexOf(c)] ?? ''])) as Row);
 }
