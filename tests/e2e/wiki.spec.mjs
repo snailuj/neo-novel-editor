@@ -117,9 +117,6 @@ test('picked pages come into the wiki, open in NEO, and their links are followed
     // links: one to a page, one to none
     await expect.poll(() => drawnText(page, 'wiki-link')).toEqual(['[[Tide Tables]]', '[[Harbour|harbour]]']);
     expect(await drawnText(page, 'wiki-missing')).toEqual(['[[Nowhere]]']);
-    await caretIn(page, '[[Harbour|harbour]]');
-    await menu(app, 'Follow Link');
-    await expect.poll(() => page.evaluate(() => window.hoard && captureCaret()?.chId)).toBe(harbour);
 
     // nothing is imported while the wiki is open
     const owl = path.join(path.dirname(files[0]), 'Owl.md');

@@ -79,6 +79,73 @@ async function caretInBook(page) {
   await expect.poll(() => inManuscript(page)).toBe(true);
 }
 
+async function menu(app, label) {
+  await app.evaluate(({ Menu }, label) => {
+    const find = (items) => items.flatMap((item) => [item, ...(item.submenu ? find(item.submenu.items) : [])]);
+    const item = find(Menu.getApplicationMenu().items).find((i) => i.label === label);
+    if (!item) throw new Error(`no ${label} in the menu`);
+    item.click();
+  }, label);
+}
+
+// Where the words are in the manuscript: the caret put inside them, or their middle on screen.
+const caretAt = (page, words) => page.evaluate((words) => {
+  const p = [...document.querySelectorAll('#chapters .chapter-body p')].find((el) => el.textContent.includes(words));
+  p.closest('.chapter-body').focus();
+  const range = document.createRange();
+  range.setStart(p.firstChild, p.textContent.indexOf(words) + 2);
+  getSelection().removeAllRanges();
+  getSelection().addRange(range);
+}, words);
+const middleOf = (page, words) => page.evaluate((words) => {
+  const p = [...document.querySelectorAll('#chapters .chapter-body p')].find((el) => el.textContent.includes(words));
+  const range = document.createRange();
+  const at = p.textContent.indexOf(words);
+  range.setStart(p.firstChild, at + 2);
+  range.setEnd(p.firstChild, at + words.length - 2);
+  const box = range.getBoundingClientRect();
+  return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+}, words);
+
+// Rule: a [[link]] in the manuscript, followed with Follow Link or Ctrl+click, opens the
+// stored page its title names (a wiki page before a source, case aside) in the pane, and the
+// writer's caret and book stay as they were; a link no page has is said so, and the pane
+// stays where it was.
+test('a link in the manuscript opens its stored page in the pane, the caret staying put', async () => {
+  const { profile } = await libraryProfile();
+  const fixture = await launchProfile(profile);
+  try {
+    const { app, page } = fixture;
+    await page.waitForFunction(() => !!window.hoard);
+    const novel = await seedBook(page, '<p>Meet at the [[Harbour]] with [[ada vell]], not by [[Nowhere]].</p>');
+    const pane = page.locator('.hoard-wiki-pane');
+
+    await caretAt(page, '[[Harbour]]');
+    const before = await page.evaluate(() => captureCaret());
+    await menu(app, 'Follow Link');
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Harbour');
+    await expect(pane.locator('.hoard-wiki-line')).toHaveText(['The wiki harbour faces east.']);
+    expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('wiki/Harbour.html');
+    expect(await page.evaluate(() => [book.id, captureCaret()])).toEqual([novel, before]);
+    expect(await inManuscript(page)).toBe(true);
+
+    const { x, y } = await middleOf(page, '[[ada vell]]');
+    await page.keyboard.down('Control');
+    await page.mouse.click(x, y);
+    await page.keyboard.up('Control');
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Ada Vell');
+    expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('wiki/People/Ada Vell.html');
+    expect(await page.evaluate(() => book.id)).toBe(novel);
+
+    await caretAt(page, '[[Nowhere]]');
+    await menu(app, 'Follow Link');
+    await expect(page.locator('.plugin-status', { hasText: 'Nowhere' })).toHaveText('No page is called “Nowhere”.');
+    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Ada Vell');
+  } finally {
+    await fixture.close();
+  }
+});
+
 // Rule: a stored page shows read-only beside the book, marked where it is asked to be, with
 // its links reaching pages by title (wiki first, then the Wiki book); the pane's edit and
 // marks code see no chapter, so nothing can save into it; Back and Forward walk both kinds;

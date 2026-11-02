@@ -127,19 +127,14 @@ export function startWiki(neo: NeoApiV5) {
 
   const pane = startWikiPane(neo, { resolve: () => index(), editInBook });
 
-  // The page a link names: in the pane beside another book, or in the wiki book itself.
+  // The stored page a link names, by title, shown in the pane beside the book.
   const follow = async (target: string) => {
-    if (!wiki) await refresh();
-    const chId = index().get(target);
-    if (!chId) {
-      say(`No wiki page is called “${target}”.`);
-      return;
+    try {
+      if ((await pane.follow(target)) === 'missing') say(`No page is called “${target}”.`);
+    } catch (err) {
+      console.warn('hoard: wiki: a link did not follow', err);
+      say(`The link could not be followed: ${err instanceof Error ? err.message : String(err)}`);
     }
-    if (wikiOpen()) {
-      if (!neo.go({ chId, pIdx: 0, off: 0, len: 0 })) say(`The page “${target}” could not be shown.`);
-      return;
-    }
-    await pane.open(chId);
   };
 
   const linkHere = (): string | null => {

@@ -127,7 +127,9 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
         // one piece while the page is edited: its words are changed in the wiki book
         go.contentEditable = 'false';
         go.addEventListener('click', () => {
-          follow(link.target).catch((err: unknown) => {
+          follow(link.target, !!stored).then((got) => {
+            if (got === 'missing') status.textContent = `No page is called “${link.target}” now. It may have been renamed or removed outside NEO.`;
+          }, (err: unknown) => {
             status.textContent = `The link could not be followed: ${err instanceof Error ? err.message : String(err)}. Try again.`;
           });
         });
@@ -193,10 +195,10 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
     return { get: (target) => index.resolve(target)?.id ?? book.get(target) };
   };
 
-  // A link found when it is followed, from a stored page against the list read again, so a
-  // page made, moved or removed outside the tree since the page was drawn is reached or said gone.
-  const follow = async (target: string) => {
-    const fromStored = !!stored;
+  // A link found when it is followed, against the list read again, so a page made, moved or
+  // removed outside the tree since the page was drawn is reached or said gone. Dropped if
+  // the writer has gone to another page meanwhile.
+  const follow = async (target: string, fromStored = true): Promise<'opened' | 'missing' | 'dropped'> => {
     // a page gone to since (Back, another link) stands over this one
     const mine = ++moves;
     let library: Listed[] | null = null;
@@ -205,12 +207,13 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
     } catch (err) {
       if (mine === moves) throw err;
       console.warn('hoard: wiki pane: the list for a link the writer went on from did not read', err);
-      return;
+      return 'dropped';
     }
-    if (mine !== moves) return;
+    if (mine !== moves) return 'dropped';
     const id = (library ? storedResolver(library) : o.resolve()).get(target);
-    if (id) await open(id);
-    else status.textContent = `No page is called “${target}” now. It may have been renamed or removed outside NEO.`;
+    if (!id) return 'missing';
+    await open(id);
+    return 'opened';
   };
 
   const render = (page: { title: string; html: string }, pages: Resolver) => {
@@ -317,6 +320,8 @@ export function startWikiPane(neo: NeoApiV5, o: { resolve: () => Resolver; editI
 
   return {
     open,
+    /** The page a [[link]] names, by title, opened here: 'missing' when no page has it. */
+    follow: (target: string) => follow(target),
     back,
     forward,
     /** The Wiki book chapter shown; null while a stored page or nothing is. */
