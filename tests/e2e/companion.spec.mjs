@@ -12,9 +12,7 @@ import { launchProfile } from '../support/electron-profile.mjs';
 // same page named again in that chapter gets no second comment; a typed [[link]] is not a
 // forgotten reference; Stop Flagging This Page resolves the comment and quiets the page
 // in every chapter; and Flag This Page Again undoes both.
-// The pages are files under wiki/ and sources/ (stage 3 of pages as files). The Wiki book
-// is imported beside them only because the pane still opens a page through it until
-// stage 5; the librarian skips that book and reads the files.
+// The pages are files under wiki/ and sources/ (stage 3 of pages as files).
 
 async function profileWithVault() {
   const profile = await mkdtemp(path.join(tmpdir(), 'neo-test-'));
@@ -54,18 +52,6 @@ async function menu(app, label) {
   }, label);
 }
 
-async function answer(app, files) {
-  await app.evaluate(({ dialog }, files) => {
-    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: files });
-    globalThis.__boxes = 0;
-    dialog.showMessageBox = async (...args) => {
-      const o = args.length > 1 ? args[1] : args[0];
-      globalThis.__boxes++;
-      return { response: o.buttons && o.buttons[0].startsWith('Import') ? 0 : 1, checkboxChecked: false };
-    };
-  }, files);
-}
-
 // A book of two chapters, opened.
 async function twoChapters(page) {
   return page.evaluate(async () => {
@@ -85,15 +71,11 @@ async function twoChapters(page) {
 const drawn = (page, name) => page.evaluate((key) => [...(CSS.highlights.get(key) ?? [])].map((r) => r.toString()), `plugin-hoard-${name}`);
 
 test('a page named in new writing is flagged at the next save, once, hidden on request, not after Stop Flagging, and again after Flag Again', async () => {
-  const { profile, library, files } = await profileWithVault();
+  const { profile, library } = await profileWithVault();
   const fixture = await launchProfile(profile);
   try {
     const { app, page } = fixture;
     await page.waitForFunction(() => !!window.hoard);
-    await answer(app, files);
-    await menu(app, 'Import to Wiki…');
-    // the import asks, then says it is done
-    await expect.poll(() => app.evaluate(() => globalThis.__boxes)).toBe(2);
     const bookId = await twoChapters(page);
     const chapter = (chId) => readFile(path.join(library, bookId, 'chapters', `${chId}.html`), 'utf8');
     const librarians = (chId) => page.evaluate((chId) => (window.hoard.marks.state().marks[chId] ?? [])
