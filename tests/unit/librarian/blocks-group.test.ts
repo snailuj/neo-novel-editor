@@ -194,6 +194,15 @@ test('the topic columns round-trip', () => {
   assert.equal(readSheet(writeSheet(rows))[0]!.topic, 'A, "quoted"');
 });
 
+test('a sheet without a topic column is refused, naming the column', () => {
+  const rows = rowsFor('Scratch.md', blocks, judged(['writing', 'writing', 'tasks', 'tasks', 'other', 'other', 'writing']), []);
+  const text = writeSheet(rows);
+  for (const c of ['topic', 'entry', 'topic_by']) {
+    const header = text.split('\n')[0]!.replace(`,${c},`, ',gone,');
+    assert.throws(() => readSheet([header, ...text.split('\n').slice(1)].join('\n')), new RegExp(`no '${c}' column`));
+  }
+});
+
 test('the outline lists each topic with its entries, lines, labels and doubts', () => {
   const rows = rowsFor('Scratch.md', blocks, judged(['writing', 'writing', 'tasks', 'tasks', 'writing', 'writing', 'writing']), []);
   const topics: Topic[] = [

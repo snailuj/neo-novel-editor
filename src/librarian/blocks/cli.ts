@@ -245,6 +245,8 @@ function apply(values: Map<string, string>, io: Io): number {
   const kinds = (values.get('--picks-kinds') ?? 'writing,morning-pages').split(',').map((k) => k.trim());
   for (const k of kinds) if (k !== 'writing' && k !== 'morning-pages') throw new UsageError(`--picks-kinds: unknown kind '${k}'`);
   const rows = readSheet(readFileSync(at(values.get('--sheet')!), 'utf8'));
+  // An empty sheet would clear the last run's outputs and write none.
+  if (!rows.length) throw new UsageError('the sheet has no rows; nothing to apply');
   const prefix = values.get('--vault-prefix');
   const result = applySheet(at(values.get('--vault')!), rows, at(values.get('--out')!), prefix === undefined ? {} : { vaultPrefix: prefix });
   const picksFile = values.get('--picks');
