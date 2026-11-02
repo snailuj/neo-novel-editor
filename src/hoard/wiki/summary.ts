@@ -1,5 +1,7 @@
 // What an import will do, in words for the message box that asks the writer. Pure.
-import type { Sorted, Verdict } from './store.ts';
+import type { SortedOf, VerdictOf } from './picks.ts';
+
+type Verdict = VerdictOf<object>;
 
 const SHOWN = 12;
 
@@ -16,8 +18,8 @@ export interface Summary {
   detail: string;
 }
 
-/** `where` names the book: the wiki, or another book's title. */
-export function describeSort(sorted: Sorted, where = 'the wiki'): Summary {
+/** `where` names where the pages go: the wiki, sources, or a book's title. */
+export function describeSort(sorted: SortedOf<object>, where = 'the wiki'): Summary {
   const of = (kind: Verdict['kind']) => sorted.verdicts.filter((v) => v.kind === kind);
   const fresh = of('new');
   const moving = sorted.verdicts.filter((v) => v.kind === 'new' || v.kind === 'update' || v.kind === 'beside');

@@ -1,4 +1,4 @@
-// The wiki in the window. Import to Wiki and Import List to Wiki ask the main half, which runs the file picker
+// The wiki in the window. Import to Wiki and Import List ask the main half, which runs the file picker
 // and the questions. [[links]] are drawn on the page of any book and followed with
 // Ctrl+click (Cmd+click on a Mac) or Follow Link: from another book the page shows in
 // the wiki pane beside it (pane.ts), so the writer keeps their place; in the wiki book

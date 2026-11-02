@@ -201,7 +201,7 @@ export async function groupEntries(page: string, blocks: readonly Block[], entri
 
 /**
  * Writes each block's entry and topic into its row. The writing of each topic goes to a
- * wiki page of its own, so each holds related notes only; a page name the author edited
+ * page of its own, so each holds related notes only; a page name the author edited
  * stays as it is.
  */
 export function topicRows(page: string, blocks: readonly Block[], entries: readonly Entry[], topics: readonly Topic[], rows: Row[]): void {
@@ -210,9 +210,9 @@ export function topicRows(page: string, blocks: readonly Block[], entries: reado
   entries.forEach((e, i) => {
     const t = topics[i]!;
     for (const r of rowsOf(e)) {
-      const untouched = r.wiki_page === defaultDest(page, r.heading) || (r.topic !== '' && r.wiki_page === topicDest(page, r.topic));
+      const untouched = r.dest_page === defaultDest(page, r.heading) || (r.topic !== '' && r.dest_page === topicDest(page, r.topic));
       // A failed judge's topic is only the entry's own title, so it keeps its heading's page.
-      if (r.wiki_page && untouched) r.wiki_page = t.by === 'judge-failed' ? defaultDest(page, r.heading) : topicDest(page, t.topic);
+      if (r.dest_page && untouched) r.dest_page = t.by === 'judge-failed' ? defaultDest(page, r.heading) : topicDest(page, t.topic);
       r.entry = `e${i + 1}`;
       r.topic = t.topic;
       r.topic_by = t.by;
