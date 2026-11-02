@@ -410,7 +410,7 @@ export class Ripple {
           this.#o.log('warn', 'ripple.owner.changed', { page: page.id, proposal: p.id });
           return new Error(`${page.title} is no longer the librarian's, so nothing was written. Apply again to have it suggested instead.`);
         }
-        const written = await this.#o.pages.write(page.id, made.before, made.html);
+        const written = await this.#o.pages.write(page.id, made.before, made.html, 'librarian');
         if (!written.ok) return new Error(`${page.title} changed while ripple was working on it (${written.reason}). Apply again to read it afresh.`);
         const state = this.#rulings.read();
         const job = next(state, { page: page.id, title: page.title }, made.html, await this.#o.layer.head());
@@ -428,7 +428,7 @@ export class Ripple {
       await this.#asLibrarian('ripple.apply', { page: id, proposal: p.id }, [id, sidecarRel(id), this.#rulingsRel], async () => {
         const html = made.paragraphs.map((t) => `<p data-block="${randomBytes(3).toString('hex')}">${inline(t).html || '<br>'}</p>`).join('');
         try {
-          await this.#o.pages.create('wiki', `${made.title}.html`, html);
+          await this.#o.pages.create('wiki', `${made.title}.html`, html, 'librarian');
         } catch (err) {
           if (err instanceof PageRefused) return err; // a page by that name came meanwhile: nothing of ours was written
           throw err;
