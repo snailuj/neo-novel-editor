@@ -20,13 +20,15 @@ export interface Applied {
 /**
  * Makes each edit with `replace`. Edits in one paragraph go last offset first, so the
  * ones before it keep their offsets. A refused edit (the text changed since the file was
- * read, the writer is composing a word) is listed, and the rest still go.
+ * read, the writer is composing a word, the host threw) is listed, and the rest still go.
  */
 export async function applyChapterEdits(neo: Pick<PagesWindow, 'replace'>, chapters: readonly ChapterEdits[]): Promise<Applied> {
   const done: Applied = { applied: 0, refused: [] };
   for (const { chId, edits } of chapters) {
     for (const e of [...edits].sort((a, b) => b.pIdx - a.pIdx || b.off - a.off)) {
-      const result = await neo.replace({ chId, pIdx: e.pIdx, off: e.off, len: e.len }, e.expected, e.replacement);
+      // the rename has happened by now, so a throw is one more edit left undone, not a failed rename
+      const result = await neo.replace({ chId, pIdx: e.pIdx, off: e.off, len: e.len }, e.expected, e.replacement)
+        .catch((err: unknown) => ({ ok: false as const, reason: err instanceof Error ? err.message : String(err) }));
       if (result.ok) done.applied++;
       else done.refused.push({ chId, pIdx: e.pIdx, reason: result.reason });
     }

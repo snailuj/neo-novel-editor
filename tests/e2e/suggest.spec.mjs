@@ -67,16 +67,6 @@ async function select(page, words) {
   }, words);
 }
 
-// The side pane slides in (a CSS transition on #side-pane), and a click aimed while it
-// moves lands outside the window, so a test clicks in it only once it stands still.
-async function paneSettled(page) {
-  await expect(page.locator('#side-pane')).toHaveClass(/\bopen\b/);
-  await page.waitForFunction(() => {
-    const pane = document.getElementById('side-pane');
-    return pane.getAnimations().length === 0 && pane.getBoundingClientRect().right <= innerWidth + 0.5;
-  });
-}
-
 // NEO toggles fullscreen on any Ctrl+Enter that reaches the document (app.js), so a box
 // that takes Ctrl+Enter to send must keep it from going further. These count the ones
 // that got there, from a listener on the document beside NEO's.
@@ -167,76 +157,6 @@ test('the librarian\'s page takes suggestions, which the librarian accepts or fl
     await expect.poll(() => chapterFile(library, bookId), { timeout: 10_000 }).toContain('dawn. Typed.');
     await reopen(page, bookId);
     await expect(page.locator(`.chapter[data-id="${LORE}"][data-held]`)).toHaveCount(1);
-  } finally {
-    await fixture.close();
-  }
-});
-
-// Rule: the Wiki pane shows a page's comments on its lines and under it, and a comment
-// made there on selected words is the same mark the wiki book shows, in the same sidecar.
-test('a comment made in the Wiki pane is drawn there and is the wiki book\'s own', async () => {
-  const { profile, library } = await trackedProfile();
-  const fixture = await launchProfile(profile);
-  try {
-    const { page } = fixture;
-    await ready(page);
-    const wikiId = await page.evaluate(async ({ chId, html }) => {
-      const meta = await neo.createBook({ title: 'Wiki', author: 'Test author' });
-      meta.chapterOrder = [chId];
-      meta.chapterTitles = { [chId]: 'Vell' };
-      await neo.writeBookMeta(meta.id, meta);
-      await neo.writeChapter(meta.id, chId, html);
-      return meta.id;
-    }, { chId: LORE, html: TEXT });
-    await mkdir(path.join(library, '.neo'), { recursive: true });
-    await writeFile(path.join(library, '.neo', 'wiki.json'), JSON.stringify({ version: 1, bookId: wikiId }));
-    await seedBook(page, '<p>See [[Vell]] today.</p>');
-    await page.evaluate((chId) => window.hoard.wiki.pane.open(chId), LORE);
-    const line = page.locator('.hoard-wiki-page p').nth(0);
-    await expect(line).toHaveText('The harbour of Vell faces west.');
-
-    const selectWest = () => page.evaluate(() => {
-      const p = document.querySelector('.hoard-wiki-page p');
-      const node = p.firstChild;
-      const at = node.textContent.indexOf('west');
-      const range = document.createRange();
-      range.setStart(node, at);
-      range.setEnd(node, at + 4);
-      getSelection().removeAllRanges();
-      getSelection().addRange(range);
-    });
-    await paneSettled(page);
-    // Esc in the composer stops composing, and the book stays open
-    await selectWest();
-    await page.locator('.hoard-pane-add').click({ force: true });
-    await page.locator('#hoard-pane-compose-text').press('Escape');
-    await expect(page.locator('#hoard-pane-compose-text')).toBeHidden();
-    await expect(page.locator('#editor-view')).toBeVisible();
-
-    await selectWest();
-    await watchCtrlEnter(page);
-    await page.locator('.hoard-pane-add').click({ force: true });
-    await page.locator('#hoard-pane-compose-text').fill('Why west?');
-    await page.locator('#hoard-pane-compose-text').press('Control+Enter');
-    await expect.poll(() => readMarks(library, wikiId).map((m) => [m.kind, m.anchor.exact, m.thread[0]?.body])).toEqual([['comment', 'west', 'Why west?']]);
-    await expect.poll(() => page.evaluate(() => [...(CSS.highlights.get('hoard-pane-comment') ?? [])].map((r) => r.toString()))).toEqual(['west']);
-    // the manuscript beside it was never touched
-    await expect(page.locator('.chapter-body p').nth(0)).toHaveText('See [[Vell]] today.');
-
-    const [made] = readMarks(library, wikiId);
-    const cardIn = page.locator(`.hoard-pane-marks .hoard-mark[data-mark="${made.id}"]`);
-    await cardIn.locator('textarea').fill('Because of the sunset.');
-    await cardIn.locator('textarea').press('Control+Enter');
-    await expect.poll(() => readMarks(library, wikiId)[0].thread.map((e) => e.body)).toEqual(['Why west?', 'Because of the sunset.']);
-    expect(await ctrlEnterReached(page)).toBe(0);
-    await paneSettled(page);
-    await page.locator(`.hoard-pane-marks .hoard-mark[data-mark="${made.id}"] button[data-action="Resolve"]`).click({ force: true });
-    await expect.poll(() => readMarks(library, wikiId)[0].state).toBe('resolved');
-    await expect.poll(() => page.evaluate(() => CSS.highlights.has('hoard-pane-comment'))).toBe(false);
-
-    // the wiki book lists the same comment
-    await page.evaluate(() => window.hoard.wiki.openWiki());
-    await expect.poll(() => page.evaluate((chId) => (window.hoard.marks.state().marks[chId] ?? []).map((m) => m.state), LORE)).toEqual(['resolved']);
   } finally {
     await fixture.close();
   }

@@ -17,7 +17,7 @@ import { key } from '../../librarian/links.ts';
 import { booksWithOwnRepo } from '../git/commit.ts';
 import type { GitLayer } from '../git/layer.ts';
 import { fileAbove, folderLinkProblem, folderLinkText, writeWhole } from '../files.ts';
-import { checkPath, idOf, marksOf, PageRefused, parseId, titleOf, TREES, type PageRef, type Tree } from './identity.ts';
+import { checkPath, checkTitle, idOf, marksOf, PageRefused, parseId, titleOf, TREES, type PageRef, type Tree } from './identity.ts';
 import { editsFor, rewriteHtml, type Retarget, type WindowEdit } from './rewrite.ts';
 import { Titles } from './titles.ts';
 
@@ -86,15 +86,17 @@ const sameFile = (a: string, b: string) => {
   return x.ino === y.ino && x.dev === y.dev;
 };
 
-// A title becomes the target of a [[link]], which the grammar ends at ] | # or ^.
-const UNLINKABLE = /[[\]|#^\p{Cc}]/u;
-
 export class PageStore {
   protected readonly o: PageStoreOptions;
   #tail: Promise<unknown> = Promise.resolve();
   // Built on first use and kept by create and rename; list() builds it again, since pages
   // also arrive through sync. Null until then, or after a rename failed part way.
   #titles: Titles<PageEntry> | null = null;
+  // counts each write, create and rename as it starts and as it ends: odd while one runs
+  #changes = 0;
+  // a list set its walk aside (a change ran beside it), so the index may lack a page that
+  // came by sync: the next title check walks again, from inside the queue
+  #stale = false;
 
   constructor(options: PageStoreOptions) {
     this.o = options;
@@ -179,11 +181,24 @@ export class PageStore {
     return this.#titles;
   }
 
+  // The index a title is checked against; called only in the queue, so no change runs beside its walk.
+  #checked(): Promise<Titles<PageEntry>> {
+    if (this.#stale) {
+      this.#stale = false;
+      this.#titles = null;
+    }
+    return this.#index();
+  }
+
   async list(): Promise<PageEntry[]> {
     const start = performance.now();
+    const at = this.#changes;
     const pages = await this.#scan();
-    this.#titles = new Titles(pages);
-    for (const group of this.#titles.duplicates) this.o.log('warn', 'pages: these pages share one title, so a link reaches only the first', group.map((p) => p.id));
+    const titles = new Titles(pages);
+    // a walk that a change ran beside may miss it, so the index the change kept stays
+    if (at % 2 === 0 && at === this.#changes) this.#titles = titles;
+    else this.#stale = true;
+    for (const group of titles.duplicates) this.o.log('warn', 'pages: these pages share one title, so a link reaches only the first', group.map((p) => p.id));
     this.o.log('info', 'pages.list', { pages: pages.length, ms: Math.round(performance.now() - start) });
     return pages;
   }
@@ -225,21 +240,12 @@ export class PageStore {
     }));
   }
 
-  /** Refuses a title no link could name; the title is the file name without .html. */
-  protected checkTitle(p: string): string {
-    const title = titleOf(p);
-    if (title.trim() === '' || title !== title.trim() || UNLINKABLE.test(title)) {
-      throw new PageRefused('title', `${JSON.stringify(title)} cannot be a page title: it is empty, has spaces at an end, or holds one of [ ] | # ^`);
-    }
-    return title;
-  }
-
   create(tree: Tree, pagePath: string, html: string): Promise<PageEntry> {
     return this.#serial(() => this.op('create', async () => {
       const ref = parseId(`${tree}/${checkPath(pagePath)}`);
-      const title = this.checkTitle(ref.path);
+      const title = checkTitle(ref.path);
       this.inside(ref);
-      const index = await this.#index();
+      const index = await this.#checked();
       const clash = index.taken(ref.tree, title);
       if (clash || existsSync(this.file(ref))) {
         throw new PageRefused('taken', `${JSON.stringify(title)} is already a page in ${ref.tree}${clash ? ` (${clash.id})` : ''}`);
@@ -257,7 +263,14 @@ export class PageStore {
   // Writes, creates and renames run one at a time: each reads the library the last one
   // left, so a write cannot land between a rename's read of a file and its rewrite.
   #serial<T>(run: () => Promise<T>): Promise<T> {
-    const next = this.#tail.then(run);
+    const next = this.#tail.then(async () => {
+      this.#changes++;
+      try {
+        return await run();
+      } finally {
+        this.#changes++;
+      }
+    });
     this.#tail = next.catch(() => {});
     return next;
   }
@@ -365,7 +378,7 @@ export class PageStore {
   // Checks the request and finds the files that hold a link to rewrite. Writes nothing.
   async #plan(from: PageRef, to: PageRef): Promise<HoardRenameV1> {
     const [id, newId] = [idOf(from), idOf(to)];
-    let index = await this.#index();
+    let index = await this.#checked();
     // a page that arrived through sync since the last list
     if (!index.has(id) && existsSync(this.file(from))) {
       this.#titles = null;
@@ -378,7 +391,7 @@ export class PageStore {
       throw new PageRefused('missing', `${id} is no longer on disk`);
     }
     const oldTitle = titleOf(from.path);
-    const newTitle = this.checkTitle(to.path);
+    const newTitle = checkTitle(to.path);
     const clash = index.taken(to.tree, newTitle, id);
     if (clash) throw new PageRefused('taken', `${JSON.stringify(newTitle)} is already a page in ${to.tree} (${clash.id})`);
     // a file that arrived by sync since the titles were walked; a case-only rename on a

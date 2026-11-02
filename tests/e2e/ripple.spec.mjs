@@ -11,10 +11,7 @@ import { launchProfile } from '../support/electron-profile.mjs';
 // at the next run; the judge's answer, read at the next run, shows as a card in the
 // Ripple section; Apply writes the librarian's wiki page in its own file and the ruling
 // goes in the log, with the next hop's job for the page it changed. Ripple This Page with
-// no page open in the side pane says so.
-//
-// Stage 5 adds the pane's currentPage(); until it lands the command cannot be given a page,
-// so the flow that asks about an open page is skipped below, with its reason.
+// no page open in the side pane says so, and with one open makes its job and packet.
 
 const SIDECAR = JSON.stringify({
   version: 1, source: { path: '/v/Harbour.md', name: 'Harbour', sha256: 'a'.repeat(64) }, frontmatter: { type: 'lore' }, imported: '2026-11-01T12:00:00.000Z',
@@ -125,5 +122,28 @@ test('Ripple This Page with no page open in the side pane says so and makes no j
   }
 });
 
-// Needs stage 5: the pane's currentPage() gives Ripple This Page the page open in it.
-test.skip('Ripple This Page packets the page open in the side pane (needs stage 5\'s currentPage)', async () => {});
+// Rule: Ripple This Page asks about the stored page open in the side pane, which the pane's
+// currentPage() names: a job for that page, asked for at hop 0, and its packet, whose path
+// the section says.
+test('Ripple This Page packets the page open in the side pane', async () => {
+  const { profile, library } = await profileWithPages();
+  const fixture = await launchProfile(profile);
+  try {
+    const { app, page } = fixture;
+    await page.waitForFunction(() => !!window.hoard);
+    await openANovel(page);
+    await page.evaluate(() => window.hoard.wiki.pane.open('sources/Field Notes.html'));
+    await expect(page.locator('.hoard-wiki-title')).toHaveText('Field Notes');
+    await menu(app, 'Ripple This Page');
+    const said = page.locator('.hoard-ripple .hoard-status');
+    await expect(said).toContainText('The packet for Field Notes is in the packets folder');
+    const ripple = path.join(library, '.neo', 'ripple');
+    const job = (await readFile(path.join(ripple, 'rulings.jsonl'), 'utf8')).trim().split('\n').map((l) => JSON.parse(l)).filter((r) => r.type === 'job').at(-1);
+    expect([job.source.page, job.origin, job.hop]).toEqual(['sources/Field Notes.html', 'asked', 0]);
+    const packet = path.join(ripple, 'packets', `${job.id}.md`);
+    await expect(said).toContainText(packet);
+    expect(await readFile(packet, 'utf8')).not.toBe('');
+  } finally {
+    await fixture.close();
+  }
+});
