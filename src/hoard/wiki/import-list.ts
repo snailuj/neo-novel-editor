@@ -7,11 +7,8 @@
 //
 // Each page goes to one of the library's two trees of pages, sources/ (the default) or
 // wiki/: a `to: wiki` line sends the entries after it to the wiki, and `to: sources`
-// back. A `book: Title` line sends the entries after it into the NEO book of that title
-// instead (Morning Pages, say), until the next `to:` or `book:` line. The wiki is a tree,
-// not a book, so `book: Wiki` is refused. A .csv list is a keep/move list: the rows of
-// its `path` column whose `verdict` is Move, named by a `name` column, sent to a `to` column's tree or a `book`
-// column's book where it has them.
+// back. A .csv list is a keep/move list: the rows of its `path` column whose `verdict` is
+// Move, named by a `name` column, sent to a `to` column's tree where it has one.
 //
 // Pure: the list's text is handed in, and nothing is read from the disk.
 import path from 'node:path';
@@ -27,10 +24,8 @@ export interface ListEntry {
   name: string | null;
   /** The folder of its tree the page goes in, `/` between folders, or null for the default. */
   folder: string | null;
-  /** The tree the page goes to, or null when it goes into a book. */
-  to: Tree | null;
-  /** The book the page goes into, by title, or null when it goes to a tree. */
-  book: string | null;
+  /** The tree the page goes to. */
+  to: Tree;
   /** The start of the file's SHA-256 that a line range was read against, or null. */
   sha: string | null;
 }
@@ -48,12 +43,9 @@ export class ListError extends Error {
 
 const PAGE = /^(.*?\.md)(?:#(.*))?$/i;
 const LINES = /^L(\d+)-L(\d+)(?:@([0-9a-f]{8,64}))?$/i;
-const BOOK = /^book:(.*)$/i;
 const TO = /^to:(.*)$/i;
 
-/** Where the entries after a `to:` or `book:` line go. */
-type Dest = { to: Tree; book: null } | { to: null; book: string };
-const SOURCES: Dest = { to: 'sources', book: null };
+const SOURCES: Tree = 'sources';
 
 /** True for a section that names a line range, `L12-L40`, rather than a heading. */
 export function lineRange(section: string): { start: number; end: number } | null {
@@ -68,35 +60,27 @@ function oneTitle(line: number, what: string, title: string): string {
   return title;
 }
 
-// A book by its title. The wiki is a tree of pages, not a book.
-function bookOf(line: number, title: string): Dest {
-  const t = title.trim();
-  if (t.toLowerCase() === 'wiki') throw new ListError(`line ${line}: the wiki is a tree, not a book: use to: wiki`);
-  return { to: null, book: oneTitle(line, 'book after book:', t) };
-}
-
-function treeOf(line: number, word: string): Dest {
+function treeOf(line: number, word: string): Tree {
   const t = word.trim().toLowerCase();
   if (t !== 'sources' && t !== 'wiki') throw new ListError(`line ${line}: a page goes to sources or wiki, not "${word.trim()}"`);
-  return { to: t, book: null };
+  return t;
 }
 
 // `Folder/Sub/Name`: the name, and the folders before it, each one name a page path can hold.
-function placed(line: number, text: string, dest: Dest): { name: string; folder: string | null } {
+function placed(line: number, text: string): { name: string; folder: string | null } {
   const parts = text.split('/').map((p) => p.trim());
   const name = oneTitle(line, 'name after ->', parts.pop()!);
   if (!parts.length) return { name, folder: null };
-  if (dest.book !== null) throw new ListError(`line ${line}: a page going into the book ${dest.book} takes a name, not a folder`);
   for (const p of parts) {
     if (p === '' || p.startsWith('.') || /[\\\0]/.test(p)) throw new ListError(`line ${line}: "${p}" cannot be a folder: it is empty, starts with a dot, or holds a backslash`);
   }
   return { name, folder: parts.join('/') };
 }
 
-function entry(line: number, text: string, dir: string, dest: Dest = SOURCES): ListEntry {
+function entry(line: number, text: string, dir: string, dest: Tree = SOURCES): ListEntry {
   const arrow = text.indexOf('->');
   const target = (arrow < 0 ? text : text.slice(0, arrow)).trim();
-  const { name, folder } = arrow < 0 ? { name: null, folder: null } : placed(line, text.slice(arrow + 2), dest);
+  const { name, folder } = arrow < 0 ? { name: null, folder: null } : placed(line, text.slice(arrow + 2));
   const page = PAGE.exec(target);
   if (!page) throw new ListError(`line ${line}: a page in the list is a .md file`);
   let section = page[2]?.trim() || null;
@@ -108,7 +92,7 @@ function entry(line: number, text: string, dir: string, dest: Dest = SOURCES): L
     section = `L${start}-L${end}`;
     sha = lines[3]?.toLowerCase() ?? null;
   }
-  return { line, path: path.resolve(dir, page[1]!), section, name, folder, to: dest.to, book: dest.book, sha };
+  return { line, path: path.resolve(dir, page[1]!), section, name, folder, to: dest, sha };
 }
 
 function readText(text: string, dir: string): ImportList {
@@ -117,10 +101,8 @@ function readText(text: string, dir: string): ImportList {
   text.split(/\r\n?|\n/).forEach((raw, i) => {
     const line = raw.trim();
     if (line === '' || line.startsWith('#')) return;
-    const into = BOOK.exec(line);
     const to = TO.exec(line);
-    if (into) dest = bookOf(i + 1, into[1]!);
-    else if (to) dest = treeOf(i + 1, to[1]!);
+    if (to) dest = treeOf(i + 1, to[1]!);
     else entries.push(entry(i + 1, line, dir, dest));
   });
   return { entries, left: [] };
@@ -158,7 +140,7 @@ function readCsv(text: string, dir: string): ImportList {
   const [head, ...rows] = csvRows(text);
   const columns = (head?.cells ?? []).map((c) => c.trim().toLowerCase());
   const at = {
-    path: columns.indexOf('path'), verdict: columns.indexOf('verdict'), name: columns.indexOf('name'), to: columns.indexOf('to'), book: columns.indexOf('book'),
+    path: columns.indexOf('path'), verdict: columns.indexOf('verdict'), name: columns.indexOf('name'), to: columns.indexOf('to'),
   };
   if (at.path < 0 || at.verdict < 0) throw new ListError('line 1: a keep/move list needs a path column and a verdict column');
   const list: ImportList = { entries: [], left: [] };
@@ -168,9 +150,8 @@ function readCsv(text: string, dir: string): ImportList {
     if (file === '') continue;
     if (verdict.toLowerCase() === 'move') {
       const name = at.name < 0 ? '' : (cells[at.name] ?? '').trim();
-      const book = at.book < 0 ? '' : (cells[at.book] ?? '').trim();
       const to = at.to < 0 ? '' : (cells[at.to] ?? '').trim();
-      const dest = book ? bookOf(line, book) : to ? treeOf(line, to) : SOURCES;
+      const dest = to ? treeOf(line, to) : SOURCES;
       list.entries.push(entry(line, name ? `${file} -> ${name}` : file, dir, dest));
     }
     else if (verdict.toLowerCase() === 'split') list.left.push({ line, path: file, why: 'its verdict is Split: name its sections in a text list' });

@@ -1,5 +1,5 @@
-// What an import makes of the files it was given, whatever it fills: a NEO book (store.ts)
-// or a tree of page files (page-import.ts). A pick is a file, or an import list's entry
+// What an import makes of the files it was given, whatever it fills: a tree of
+// page files (page-import.ts). A pick is a file, or an import list's entry
 // (import-list.ts): a page with a name of its own, or sections of a page joined into one
 // (a split). Sorting reads the picked files and says what importing each would do, given
 // what the destination already holds; it never writes.

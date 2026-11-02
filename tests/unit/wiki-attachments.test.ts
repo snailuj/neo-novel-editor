@@ -5,7 +5,7 @@
 // - it is found as Obsidian finds it: the path from the vault's root, then from the
 //   page's folder, then by its name anywhere in the vault outside dot-folders;
 // - copying keeps its bytes, reuses a copy with the same bytes, and gives a different
-//   file under a name already taken a numbered name, inside the wiki book's attachments.
+//   file under a name already taken a numbered name, inside a tree's attachments folder.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -56,11 +56,11 @@ test('copying keeps the bytes, reuses the same bytes, and numbers a different fi
   const vault = tempDir(t, 'hoard-att-');
   const a = put(path.join(vault, 'a', 'Map.png'), Buffer.from([0, 1, 2, 255]));
   const b = put(path.join(vault, 'b', 'Map.png'), 'another map');
-  const first = copyAttachment(library, 'book-wiki-x', a);
-  assert.deepEqual(first, { dest: 'book-wiki-x/attachments/Map.png', sha256: sha(Buffer.from([0, 1, 2, 255])), copied: true });
-  assert.deepEqual(readFileSync(path.join(library, 'book-wiki-x', 'attachments', 'Map.png')), Buffer.from([0, 1, 2, 255]));
-  assert.deepEqual(copyAttachment(library, 'book-wiki-x', a), { ...first, copied: false });
-  const second = copyAttachment(library, 'book-wiki-x', b);
-  assert.deepEqual(second, { dest: 'book-wiki-x/attachments/Map (2).png', sha256: sha('another map'), copied: true });
+  const first = copyAttachment(library, 'wiki', a);
+  assert.deepEqual(first, { dest: 'wiki/attachments/Map.png', sha256: sha(Buffer.from([0, 1, 2, 255])), copied: true });
+  assert.deepEqual(readFileSync(path.join(library, 'wiki', 'attachments', 'Map.png')), Buffer.from([0, 1, 2, 255]));
+  assert.deepEqual(copyAttachment(library, 'wiki', a), { ...first, copied: false });
+  const second = copyAttachment(library, 'wiki', b);
+  assert.deepEqual(second, { dest: 'wiki/attachments/Map (2).png', sha256: sha('another map'), copied: true });
   assert.throws(() => copyAttachment(library, '../x', a), /one name/);
 });

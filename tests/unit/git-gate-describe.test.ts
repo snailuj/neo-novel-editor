@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { describeFindings, type Finding } from '../../src/hoard/git/gate.ts';
 
-const finding = (n: number): Finding => ({ path: `book-wiki-1/chapters/ch-${n}.html`, rule: 'Block-Ids-Citable', message: `block id 'b ${n}' cannot be cited` });
+const finding = (n: number): Finding => ({ path: `wiki/Page-${n}.html`, rule: 'Block-Ids-Citable', message: `block id 'b ${n}' cannot be cited` });
 
 test('with nothing found the box says so', () => {
   assert.deepEqual(describeFindings([], []), {
@@ -14,14 +14,14 @@ test('with nothing found the box says so', () => {
 });
 
 test('each finding is a line, and held files come first', () => {
-  const box = describeFindings([finding(1), finding(2)], ['book-wiki-1/chapters/ch-3.html']);
+  const box = describeFindings([finding(1), finding(2)], ['wiki/Page-3.html']);
   assert.equal(box.message, '2 findings, and 1 librarian edit held out of history until it is fixed.');
   assert.deepEqual(box.detail.split('\n'), [
     'Held out of history:',
-    'book-wiki-1/chapters/ch-3.html',
+    'wiki/Page-3.html',
     '',
-    "book-wiki-1/chapters/ch-1.html: block id 'b 1' cannot be cited",
-    "book-wiki-1/chapters/ch-2.html: block id 'b 2' cannot be cited",
+    "wiki/Page-1.html: block id 'b 1' cannot be cited",
+    "wiki/Page-2.html: block id 'b 2' cannot be cited",
   ]);
 });
 

@@ -1,18 +1,13 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "description": "A request for the librarian's pages, version 1, from their page sidecars: those of one book's chapters, those among the named pages, or those in one tree.",
+  "description": "A request for the librarian's pages, version 1, from their page sidecars: those among the named pages, or those in one tree.",
   "type": "object",
   "additionalProperties": false,
   "oneOf": [
-    { "required": ["bookId"], "properties": { "bookId": true, "pages": false, "tree": false } },
-    { "required": ["pages"], "properties": { "pages": true, "bookId": false, "tree": false } },
-    { "required": ["tree"], "properties": { "tree": true, "bookId": false, "pages": false } }
+    { "required": ["pages"], "properties": { "pages": true, "tree": false } },
+    { "required": ["tree"], "properties": { "tree": true, "pages": false } }
   ],
   "properties": {
-    "bookId": {
-      "type": "string",
-      "minLength": 1
-    },
     "pages": {
       "description": "Page ids, <tree>/<path>, to be asked about.",
       "type": "array",

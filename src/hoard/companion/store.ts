@@ -8,8 +8,7 @@
 // its comment was answered.
 //
 // Pages the writer asked the librarian to stop flagging are kept in .neo/companion.json
-// by their page id (`wiki/People/Name.html`); a key that is not one, left by the Wiki
-// book's chapter ids, is ignored and logged once. A file there that does not read is
+// by their page id (`wiki/People/Name.html`). A file there that does not read is
 // reported and never taken for empty, which would flag every quiet page again (hoard's
 // rule); nothing writes over it until it is mended. The librarian never touches the writer's words: it only adds marks.
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -36,8 +35,6 @@ export interface CompanionOptions {
   marks: MarkStore;
   /** The page store, or anything that lists pages as it does; reads no page body. */
   pages: PageSource;
-  /** The Wiki book's id while it exists; its chapters are pages already and are not read. */
-  wikiBook: () => string | null;
   now?: () => Date;
   /** Milliseconds, for the page listing's age; Date.now unless a test sets it. */
   clock?: () => number;
@@ -97,8 +94,6 @@ export class Companion {
   // each page sidecar's frontmatter, read again only when its stamp changes
   readonly #meta = new Map<string, { stamp: string; aliases: string[]; pantsing: boolean }>();
   readonly #skipped = new Set<string>();
-  // quiet keys that are not page ids, logged once each
-  readonly #stale = new Set<string>();
   // a chapter's marks file that did not read, by its stamp then, so it is not read (and
   // logged) again at every save until it changes
   readonly #broken = new Map<string, string>();
@@ -130,7 +125,6 @@ export class Companion {
 
   async #read({ bookId, chId, before, after, caret }: ReadRequest): Promise<{ added: number }> {
     const started = Date.now();
-    if (bookId === this.#o.wikiBook()) return { added: 0 };
     const paragraphs = paragraphTexts(after);
     const fresh = newParagraphs(paragraphTexts(before), paragraphs);
     if (fresh.length === 0) return { added: 0 };
@@ -220,20 +214,7 @@ export class Companion {
     if (!validateHoardCompanionV1(data)) {
       throw this.#unreadable(file, (validateHoardCompanionV1.errors ?? []).map((e) => `${e.instancePath || '/'} ${e.message}`).join('; '));
     }
-    // a key left by the chapter-id scheme names no page: dropped here, so the next write drops it from the file
-    const quiet: HoardCompanionV1['quiet'] = {};
-    for (const [id, entry] of Object.entries(data.quiet)) {
-      try {
-        parseId(id);
-        quiet[id] = entry;
-      } catch {
-        if (!this.#stale.has(id)) {
-          this.#stale.add(id);
-          this.#o.log('warn', `companion: the quiet key "${id}" is not a page id, so it is ignored`, { file });
-        }
-      }
-    }
-    return { version: 1, quiet };
+    return data;
   }
 
   #unreadable(file: string, why: string): CompanionFileError {

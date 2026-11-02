@@ -1,5 +1,5 @@
 // The pre-commit gate: the checks every commit runs over the files it stages. A page
-// (wiki/**/*.html, sources/**/*.html, or a chapter of the Wiki book) is HTML with its
+// (wiki/**/*.html or sources/**/*.html) is HTML with its
 // frontmatter in a sidecar, so of hoard's lint only the frontmatter rules still have their
 // input; the rest read Markdown lines and callouts. Prose is never judged: the gate reads
 // a page only for the block ids and the citations ([[Page#^id]]) it holds.
@@ -9,7 +9,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
-  validateHoardChangeV1, validateHoardMarksV1, validateHoardPageV1, validateHoardWikiV1,
+  validateHoardChangeV1, validateHoardMarksV1, validateHoardPageV1,
 } from '../../generated/validators.cjs';
 import { checkNote } from '../../librarian/lint.ts';
 import { ManifestError, parseManifest } from '../../librarian/manifest.ts';
@@ -50,16 +50,13 @@ export const SCHEME_FILE = '.neo/scheme.json';
 type Validator = { (data: unknown): boolean; errors?: { instancePath: string; message?: string }[] | null };
 
 const SIDECARS: { match: RegExp; validate: Validator }[] = [
-  { match: /^\.neo\/wiki\.json$/, validate: validateHoardWikiV1 },
-  { match: /^\.neo\/book-[^/]+\/pages\/[^/]+\.json$/, validate: validateHoardPageV1 },
   { match: /^\.neo\/book-[^/]+\/chapters\/[^/]+\.json$/, validate: validateHoardMarksV1 },
   { match: /^\.neo\/pages\/(?:wiki|sources)\/(?:[^/.][^/]*\/)*[^/.][^/]*\.html\.json$/, validate: validateHoardPageV1 },
   { match: /^\.neo\/marks\/(?:wiki|sources)\/(?:[^/.][^/]*\/)*[^/.][^/]*\.html\.json$/, validate: validateHoardMarksV1 },
 ];
-// A page's frontmatter lives in its sidecar: the Wiki book's, or the page store's. The
-// pattern leaves out the rename journal, .neo/pages/.rename.json.
-const PAGE = /^\.neo\/(?:book-[^/]+\/pages\/[^/]+|pages\/(?:wiki|sources)\/(?:[^/.][^/]*\/)*[^/.][^/]*\.html)\.json$/;
-const CHAPTER = /^book-[^/]+\/chapters\/[^/]+\.html$/;
+// A page's frontmatter lives in its sidecar, in the page store. The pattern leaves out the
+// rename journal, .neo/pages/.rename.json.
+const PAGE = /^\.neo\/pages\/(?:wiki|sources)\/(?:[^/.][^/]*\/)*[^/.][^/]*\.html\.json$/;
 const BLOCK_ID = /\sdata-block="([^"]*)"/g;
 // What a citation's [[Page#^id]] can name, as wiki/convert.ts reads a page's own ^id.
 const CITABLE = /^[A-Za-z0-9-]+$/;
@@ -171,9 +168,7 @@ export function checkFiles(files: readonly StagedFile[], context: CheckContext):
   const htmlOf = (id: string) => staged.get(id) ?? context.pageHtml?.(id) ?? null;
 
   for (const file of files) {
-    if (CHAPTER.test(file.path)) {
-      findings.push(...uncitableIds(file));
-    } else if (staged.has(file.path)) {
+    if (staged.has(file.path)) {
       findings.push(...uncitableIds(file));
       const cites = citationsIn(file.text);
       const index = cites.length ? titlesOnce() : null;

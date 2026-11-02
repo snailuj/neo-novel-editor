@@ -33,7 +33,7 @@ interface Item {
   extraShown: string;
 }
 
-/** A button another part of the plugin puts on a card (review/window.ts: Accept Anyway, Withdraw). */
+/** A button another part of the plugin puts on a card (Accept Anyway, Withdraw, from the review flow). */
 export interface CardAction {
   label: string;
   run: () => Promise<void>;

@@ -33,7 +33,7 @@ const sidecar = (over: object = {}) => JSON.stringify({
   ...over,
 });
 
-test('Block-Ids-Citable: a page in either tree has the id check a chapter has', () => {
+test('Block-Ids-Citable: a page in either tree has the id check, and a book chapter has none', () => {
   const html = '<p data-block="b1">One.</p>\n<p data-block="">Empty.</p>\n<p data-block="b 2">Spaced.</p>';
   const found = checkFiles([
     { path: 'wiki/People/Harbour.html', text: html },
@@ -45,8 +45,6 @@ test('Block-Ids-Citable: a page in either tree has the id check a chapter has', 
     "wiki/People/Harbour.html|Block-Ids-Citable|block id 'b 2' cannot be cited (letters, digits and hyphens only)",
     "sources/Notes/Log.html|Block-Ids-Citable|block id '' cannot be cited (letters, digits and hyphens only)",
     "sources/Notes/Log.html|Block-Ids-Citable|block id 'b 2' cannot be cited (letters, digits and hyphens only)",
-    "book-fox-1/chapters/c1.html|Block-Ids-Citable|block id '' cannot be cited (letters, digits and hyphens only)",
-    "book-fox-1/chapters/c1.html|Block-Ids-Citable|block id 'b 2' cannot be cited (letters, digits and hyphens only)",
   ]);
 });
 

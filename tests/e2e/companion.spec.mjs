@@ -12,21 +12,16 @@ import { launchProfile } from '../support/electron-profile.mjs';
 // same page named again in that chapter gets no second comment; a typed [[link]] is not a
 // forgotten reference; Stop Flagging This Page resolves the comment and quiets the page
 // in every chapter; and Flag This Page Again undoes both.
-// The pages are files under wiki/ and sources/ (stage 3 of pages as files).
+// The pages are files under wiki/ and sources/, written straight into the library.
 
 async function profileWithVault() {
   const profile = await mkdtemp(path.join(tmpdir(), 'neo-test-'));
   const library = path.join(profile, 'documents', 'NEO Library');
   await mkdir(library, { recursive: true });
-  await mkdir(path.join(profile, 'vault'), { recursive: true });
   await writeFile(path.join(library, 'library.json'), JSON.stringify({
     firstRunDone: true, authorName: 'Test author', penNames: [], pageTheme: 'night', outlineView: 'list',
     hintShown: true, shelves: [{ id: 'shelf-1', name: 'Synthetic shelf', bookIds: [] }],
   }));
-  const kraken = path.join(profile, 'vault', 'Kraken.md');
-  await writeFile(kraken, '---\naliases: [the Deep One]\n---\nIt lives below the harbour.\n');
-  const harbour = path.join(profile, 'vault', 'Harbour.md');
-  await writeFile(harbour, 'The old wall faces east.\n');
   // the pages as files: one in each tree, the first with an alias in its sidecar
   const sidecar = (name, frontmatter) => JSON.stringify({
     version: 1,
@@ -40,7 +35,7 @@ async function profileWithVault() {
   await writeFile(path.join(library, 'wiki', 'Kraken.html'), '<p>It lives below the harbour.</p>');
   await writeFile(path.join(library, '.neo', 'pages', 'wiki', 'Kraken.html.json'), sidecar('Kraken', { aliases: ['the Deep One'] }));
   await writeFile(path.join(library, 'sources', 'Harbour.html'), '<p>The old wall faces east.</p>');
-  return { profile, library, files: [kraken, harbour] };
+  return { profile, library };
 }
 
 async function menu(app, label) {

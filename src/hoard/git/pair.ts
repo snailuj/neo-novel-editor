@@ -1,13 +1,12 @@
-// The librarian's commit pair as the window asks for it. The window holds the chapter
-// and applies the edit; the commits are made here, around it (GitLayer.around). begin
-// waits until the chapter on disk is what the window holds, so the writer's last typing
+// The librarian's commit pair as a caller asks for it. The caller holds the page and
+// applies the edit; the commits are made here, around it (GitLayer.around). begin
+// waits until the page on disk is what the caller holds, so the writer's last typing
 // is in the author's commit, then makes that commit. end waits until the disk holds the
-// edited text, then commits the chapter as the librarian's. NEO saves a chapter 800 ms
-// after it changes, so both waits are short; the disk, not the window's word, says when
+// edited text, then commits the page as the librarian's. A save lands a moment after the
+// page changes, so both waits are short; the disk, not the caller's word, says when
 // a save has landed.
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { oneName } from '../files.ts';
 import { parseId } from '../pages/identity.ts';
 import { GateRefused, type Finding } from './gate.ts';
 import type { GitLayer, Paired } from './layer.ts';
@@ -19,7 +18,7 @@ export interface PairOptions {
   log: GitLog;
   /** How long a wait for a save to land lasts. Default 5 s. */
   settleMs?: number;
-  /** How long a pair waits for the window's end before ending itself. Default 60 s. */
+  /** How long a pair waits for the caller's end before ending itself. Default 60 s. */
   abandonMs?: number;
 }
 
@@ -45,24 +44,21 @@ export class LibrarianPairs {
     this.#o = { settleMs: 5_000, abandonMs: 60_000, ...options };
   }
 
-  /** A write has landed: a chapter's, by its book and chapter ids, or a page's, by its id. */
-  landed(bookId: string, chId: string): void;
-  landed(target: { page: string }): void;
-  landed(first: string | { page: string }, chId?: string): void {
-    const rel = typeof first === 'string' ? `${first}/chapters/${chId}.html` : first.page;
-    const waiters = this.#waiting.get(rel);
+  /** A write of a page has landed, by its id. */
+  landed(target: { page: string }): void {
+    const waiters = this.#waiting.get(target.page);
     if (waiters) for (const wake of [...waiters]) wake();
   }
 
-  /** Commits the writer's work as the author's once the file on disk, a chapter or a page, is html. */
-  async begin(ask: ({ bookId: string; chId: string } | { page: string }) & { html: string }): Promise<Begun> {
+  /** Commits the writer's work as the author's once the page file on disk is html. */
+  async begin(ask: { page: string; html: string }): Promise<Begun> {
     // A page's file is its id; parseId refuses one that leaves its tree.
-    if ('page' in ask) parseId(ask.page);
-    const rel = 'page' in ask ? ask.page : `${oneName(ask.bookId, 'bookId')}/chapters/${oneName(ask.chId, 'chId')}.html`;
+    parseId(ask.page);
+    const rel = ask.page;
     const { layer, log } = this.#o;
     if (layer.status().state !== 'tracked') return { pair: null };
     if (!(await this.#settled(rel, ask.html))) {
-      log('warn', 'git.librarian: the chapter on disk is not what the window holds, so the edit waits', { rel });
+      log('warn', 'git.librarian: the page on disk is not what the caller holds, so the edit waits', { rel });
       return { refused: 'unsaved' };
     }
     let finish!: (html: string | null) => void;
@@ -80,7 +76,7 @@ export class LibrarianPairs {
     await Promise.race([inside, done]);
     const pair = `p${this.#next++}`;
     const timer = setTimeout(() => {
-      log('warn', 'git.librarian: the window never ended the edit; what the disk holds is committed as the librarian\'s', { rel });
+      log('warn', 'git.librarian: the caller never ended the edit; what the disk holds is committed as the librarian\'s', { rel });
       this.#close(pair, null).catch((err: unknown) => log('error', 'git.librarian: the abandoned edit was not committed', String(err)));
     }, this.#o.abandonMs);
     timer.unref?.(); // NEO quitting is not held for it; the next start commits what is left
@@ -88,7 +84,7 @@ export class LibrarianPairs {
     return { pair };
   }
 
-  /** Commits the edit as the librarian's once the chapter on disk is html (null: as it is). */
+  /** Commits the edit as the librarian's once the page on disk is html (null: as it is). */
   async end(ask: { pair: string | null; html: string | null }): Promise<Ended> {
     if (ask.pair === null) return { before: null, after: null };
     if (!this.#open.has(ask.pair)) throw new Error(`git.librarian: no edit ${ask.pair} is open`);
