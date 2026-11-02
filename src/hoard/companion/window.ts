@@ -1,4 +1,5 @@
-// The librarian's watcher in the window. It keeps, for each chapter the writer saves, the
+// The librarian's watcher in the window. A stored page the writer changed in the wiki pane
+// is handed over once its save lands (pageSaved), as it was before and after that save. It keeps, for each chapter the writer saves, the
 // chapter as it was at its first save here (`previous`) and as last saved, and hands both
 // to the main half at every save (snailuj, 16 October: comments at each save, with Show
 // or Hide Comments to keep them off the page). While the writer is still in the chapter
@@ -140,10 +141,27 @@ export function startCompanion(neo: NeoApiV4, o: {
   neo.addCommand('stop-flagging', () => quiet(true));
   neo.addCommand('flag-again', () => quiet(false));
 
+  // A page the writer's own typing changed in the wiki pane, read once, as it was and is;
+  // told is called when the librarian added comments, so the pane lists them.
+  // each page handed over, and whether the main half took the read or refused it
+  const handed: { page: string; read: 'taken' | 'refused' | 'out' }[] = [];
+  const pageSaved = (change: { page: string; before: string; after: string }, told?: () => void) => {
+    const entry = { page: change.page, read: 'out' as 'taken' | 'refused' | 'out' };
+    handed.push(entry);
+    const run = (neo.invoke('companion.read', change) as Promise<{ added: number }>)
+      .then(({ added }) => { entry.read = 'taken'; if (added > 0) told?.(); })
+      .catch((err: unknown) => { entry.read = 'refused'; console.warn('hoard: companion.read for a page', change.page, err); })
+      .finally(() => { reading.delete(run); });
+    reading.add(run);
+  };
+
   return {
+    pageSaved,
     /** For tests: resolves once every read handed over so far has answered. */
     settled: async () => { while (reading.size) await Promise.all([...reading]); },
     /** For tests and the console: the chapters waiting to be read. */
     pending: () => [...pending.keys()],
+    /** For tests and the console: the pages handed over from the wiki pane, in order, and how each read went. */
+    pagesHanded: () => handed.map((h) => ({ ...h })),
   };
 }
