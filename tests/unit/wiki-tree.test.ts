@@ -78,6 +78,7 @@ test('a rename asks for its path in the same folder, or says why not', () => {
   assert.deepEqual(refused(''), ['title', 'A page needs a title. Type one, or press Esc to cancel.']);
   assert.deepEqual(refused(' Harbour'), ['title', 'A title can\'t start or end with a space. Take the space out.']);
   assert.deepEqual(refused('Harbour [old]'), ['title', 'A title can\'t hold [ ] | # or ^, because a [[link]] ends there. Take that character out.']);
+  assert.deepEqual(refused('Harbour `old`'), ['title', 'A title can\'t hold a backtick (`), because a [[link]] is not read after one. Take it out.']);
   assert.deepEqual(refused('Old/Harbour'), ['title', 'A title can\'t hold a slash. To put the page in another folder, choose Move.']);
   assert.deepEqual(refused('.Harbour'), ['unsafe', 'A title can\'t start with a dot or hold a backslash. Change the title.']);
   assert.deepEqual(refused('Har\\bour'), ['unsafe', 'A title can\'t start with a dot or hold a backslash. Change the title.']);

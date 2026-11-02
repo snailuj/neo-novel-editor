@@ -33,10 +33,11 @@ test('an id for a tree that does not exist, or with a bad path, is refused', () 
 });
 
 // Rule: a title is refused, in the window as in the store, when no [[link]] could name it:
-// empty, spaces at an end, or one of the link grammar's stops or a control character.
+// empty, spaces at an end, one of the link grammar's stops, a backtick (which starts inline
+// code, where no link is read), or a control character.
 test('a title no link could name is refused, from the path alone', () => {
   assert.equal(checkTitle('People/Ada Vell.html'), 'Ada Vell');
-  for (const bad of ['.html', ' .html', 'A /B .html', 'A[1].html', 'A|B.html', 'A#B.html', 'A^B.html', 'A\u0007.html', 'A].html']) {
+  for (const bad of ['.html', ' .html', 'A /B .html', 'A[1].html', 'A|B.html', 'A#B.html', 'A^B.html', 'A\u0007.html', 'A].html', 'A`B.html', 'A`B`.html']) {
     assert.throws(() => checkTitle(bad), (e: PageRefused) => e.code === 'title', bad);
   }
 });

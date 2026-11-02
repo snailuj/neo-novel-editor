@@ -197,6 +197,7 @@ function titleRefusal(value: string): Verdict | null {
   if (value.trim() === '') return refused('title', 'A page needs a title. Type one, or press Esc to cancel.');
   if (value !== value.trim()) return refused('title', 'A title can\'t start or end with a space. Take the space out.');
   if (/[[\]|#^]/.test(value)) return refused('title', 'A title can\'t hold [ ] | # or ^, because a [[link]] ends there. Take that character out.');
+  if (value.includes('`')) return refused('title', 'A title can\'t hold a backtick (`), because a [[link]] is not read after one. Take it out.');
   return refused('title', 'A title can\'t hold a tab, a line break or another hidden character. Take it out.');
 }
 
