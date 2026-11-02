@@ -55,9 +55,6 @@ test('Sidecar-Fits-Its-Schema: a .neo file of no known kind, and any file outsid
     { path: '.neo/notes.txt', text: '{' },
     { path: '.neo/book-fox-1/other/x.json', text: '{' },
     { path: 'book-fox-1/book.json', text: '{' },
-    // the Wiki book's own files are no longer judged
-    { path: '.neo/wiki.json', text: '{' },
-    { path: '.neo/book-wiki-1/pages/ch-1.json', text: '{' },
   ]), []);
 });
 

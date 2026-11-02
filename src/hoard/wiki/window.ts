@@ -12,14 +12,15 @@
 // matching, and it is put back as it was when the wiki closes. A change to the drop cap
 // setting made while the wiki is open takes effect on the wiki's pages until it is
 // opened again.
-import type { Applied, WikiPages } from './store.ts';
 import { linkAt, linksIn, pageIndex } from './links.ts';
 import { startWikiPane } from './pane.ts';
 
 const REDRAW_MS = 300;
 const STATUS_MS = 4_000;
 
-interface Imported { outcome: string; bookId?: string | null; imported?: Applied['imported']; open?: boolean; openBookId?: string | null; message?: string }
+// Wiki book plumbing for the pane. The Wiki book is retired, so there is no book to list
+// and `wiki` stays null; the pane's move onto pages replaces this.
+interface WikiPages { bookId: string; pages: { chId: string; title: string }[] }
 
 const frames = (n: number) => new Promise<void>((resolve) => {
   const next = (left: number) => (left === 0 ? resolve() : requestAnimationFrame(() => next(left - 1)));
@@ -27,7 +28,7 @@ const frames = (n: number) => new Promise<void>((resolve) => {
 });
 
 export function startWiki(neo: NeoApiV5) {
-  let wiki: WikiPages | null = null;
+  const wiki = null as WikiPages | null;
   let importing = false;
   let redrawTimer: ReturnType<typeof setTimeout> | undefined;
   let statusTimer: ReturnType<typeof setTimeout> | undefined;
@@ -39,7 +40,6 @@ export function startWiki(neo: NeoApiV5) {
   };
 
   const refresh = async () => {
-    wiki = (await neo.invoke('wiki.pages')) as WikiPages | null;
     return wiki;
   };
 
@@ -109,12 +109,6 @@ export function startWiki(neo: NeoApiV5) {
     return opened;
   };
 
-  // A book an import list filled beside the wiki (Morning Pages, say); it is on no shelf.
-  const openImported = async (bookId: string) => {
-    if (neo.book()?.id === bookId) return;
-    if (!(await neo.open(bookId))) say('The book could not be opened.');
-  };
-
   // The wiki book opened at a page. The book takes the writer back to where they last
   // were a frame after it opens, so the page is gone to once that is done.
   const editInBook = async (chId: string) => {
@@ -155,23 +149,16 @@ export function startWiki(neo: NeoApiV5) {
     }
     importing = true;
     try {
-      const answer = (await neo.invoke('wiki.import', { openBookId: neo.book()?.id ?? null, from })) as Imported;
+      await neo.invoke('wiki.import', { from });
       await refresh();
       drawLinks();
-      if (answer.outcome === 'imported' && answer.open) await openWiki();
-      else if (answer.outcome === 'imported' && answer.openBookId) await openImported(answer.openBookId);
-      else if (pane.shown()) await pane.reload();
+      if (pane.shown()) await pane.reload();
     } finally {
       importing = false;
     }
   };
   neo.addCommand('import-wiki', () => runImport('pages'));
   neo.addCommand('import-wiki-list', () => runImport('list'));
-  neo.addCommand('open-wiki', async () => { await openWiki(); });
-  neo.addCommand('open-imported-book', async () => {
-    const { bookId } = (await neo.invoke('wiki.imported-book')) as { bookId: string | null };
-    if (bookId) await openImported(bookId);
-  });
   neo.addCommand('follow-link', async () => {
     const target = linkHere();
     if (!target) {
