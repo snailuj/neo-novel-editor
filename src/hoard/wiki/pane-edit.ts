@@ -18,7 +18,7 @@
 // The ids are set as attributes after the browser's edit, which the undo stack does not
 // record, so after an undo or redo they are worked out again from the lines as they are.
 // While the writer edits, the pane asks the host for more room (host API 5's wide).
-import { blockKeys, joinedIds, type NowBlock, type Was } from './edit.ts';
+import { blockKeys, joinedIds, readBlocks, type NowBlock, type Was } from './edit.ts';
 import { BLOCK_CLASS, BLOCK_DATA, CHIP, CHIP_SOURCE, INLINE, type ShownPage } from './pane.ts';
 
 // NEO's own cleaner for pasted HTML (app.js), a global of the window
@@ -144,11 +144,16 @@ export function startPaneEdit(neo: Pick<NeoApiV5, 'on'>, pane: Pane, o: PaneEdit
   const { body } = pane;
   // the librarian's pages the writer chose to edit directly, until the open book closes
   const direct = new Set<string>();
-  // what each line was when last saved or shown: its block's key in the stored page and
-  // what the pane writes of it. A line the pane made has no entry until it is saved.
-  const base = new WeakMap<Element, { key: string; serial: string; id: string; alias: string }>();
+  // what each line was when last saved or shown: its block's key and opening tag in the
+  // stored page, and what the pane writes of it. A line the pane made has no entry until it
+  // is saved. Keys are the stored page's, so a native undo that brings back a line removed
+  // and saved is a new block to write, with the opening tag it had.
+  const base = new WeakMap<Element, { key: string; open: string; serial: string; id: string; alias: string }>();
   // every id seen on each page this session, so a new block never takes one again
   const used = new Map<string, Set<string>>();
+  // the ids the pane made this session: nothing cited one, so a block of one that goes (an
+  // undone split, say) leaves no alias
+  const made = new Set<string>();
   // a line that took the id of words joined into it while empty: its own id, back on undo
   const took = new WeakMap<Element, string>();
   // the lines as they were after the last edit, for working out where a removed line's ids go
@@ -202,9 +207,9 @@ export function startPaneEdit(neo: Pick<NeoApiV5, 'on'>, pane: Pane, o: PaneEdit
 
   /** The lines as written in html, which holds one block for each, in order. */
   function rebase(ls: HTMLElement[], serials: string[], html: string) {
-    const keys = blockKeys(html);
-    if (keys.length !== ls.length) return;
-    ls.forEach((line, i) => base.set(line, { key: keys[i]!, serial: serials[i]!, id: line.dataset.block ?? '', alias: aliasOf(line).join(' ') }));
+    const stored = readBlocks(html);
+    if (stored.length !== ls.length) return;
+    ls.forEach((line, i) => base.set(line, { key: stored[i]!.key, open: stored[i]!.open, serial: serials[i]!, id: line.dataset.block ?? '', alias: aliasOf(line).join(' ') }));
   }
 
   /** A page drawn: what it shows is what was saved. */
@@ -238,13 +243,15 @@ export function startPaneEdit(neo: Pick<NeoApiV5, 'on'>, pane: Pane, o: PaneEdit
       const id = line.dataset.block;
       if (id ? owner.get(id) !== line : uses) {
         line.dataset.block = newBlockId(taken);
+        made.add(line.dataset.block);
         delete line.dataset.alias;
       }
     }
   }
 
   // After an edit that made or removed lines, an undo or a redo: each line's ids as the
-  // rules give them for the lines as they now are.
+  // rules give them for the lines as they now are. Only an id the page had on disk, which a
+  // citation could name, is kept as an alias.
   function settleIds() {
     const page = o.page();
     if (!page) return;
@@ -269,7 +276,8 @@ export function startPaneEdit(neo: Pick<NeoApiV5, 'on'>, pane: Pane, o: PaneEdit
     fixIds(taken);
     // the ids of the lines the edit removed
     const was: Was[] = prev.map((p) => ({ id: p.id, alias: p.alias, empty: p.empty, live: live.has(p.line) }));
-    for (const [i, got] of joinedIds(was, idsIn(page.html))) {
+    const cited = new Set([...idsIn(page.html)].filter((id) => !made.has(id)));
+    for (const [i, got] of joinedIds(was, cited)) {
       const line = prev[i]!.line;
       if (got.id !== (line.dataset.block ?? '')) {
         if (!took.has(line)) took.set(line, line.dataset.block ?? '');
@@ -297,7 +305,7 @@ export function startPaneEdit(neo: Pick<NeoApiV5, 'on'>, pane: Pane, o: PaneEdit
         claimed.add(was.key);
         return { key: was.key, id, alias, open: '', inner: serials[i]!, touched: was.serial !== serials[i] || was.id !== id || was.alias !== alias };
       }
-      return { key: null, id, alias, open: openTag(line), inner: serials[i]!, touched: true };
+      return { key: null, id, alias, open: was?.open ?? openTag(line), inner: serials[i]!, touched: true };
     });
     if (now.length === stored.length && now.every((b, i) => b.key === stored[i] && !b.touched)) return;
     const putBack = async (why: string, words: string[]) => {
@@ -442,10 +450,12 @@ export function startPaneEdit(neo: Pick<NeoApiV5, 'on'>, pane: Pane, o: PaneEdit
 
   // The window-wide chords that act on the open book (placeholder, darling, footnote,
   // snapshot, fullscreen: app.js, a document listener) are not heard from the pane: seen
-  // first, from the window, they stop here. Editing keys are not among them.
+  // first, from the window, they stop here. So are redo's (Ctrl+Shift+Z, Ctrl+Y), which
+  // NEO takes for the book's structural redo while it has one waiting; in the pane they
+  // are the engine's redo of the pane's own edits.
   window.addEventListener('keydown', (e) => {
     if (!(e.target instanceof Node) || !body.contains(e.target) || !(e.ctrlKey || e.metaKey) || e.altKey) return;
-    const chord = e.shiftKey ? ['KeyX', 'KeyD', 'KeyN'].includes(e.code) : e.code === 'KeyS' || e.key === 'Enter';
+    const chord = e.shiftKey ? ['KeyX', 'KeyD', 'KeyN', 'KeyZ'].includes(e.code) : e.code === 'KeyS' || e.code === 'KeyY' || e.key === 'Enter';
     if (chord) e.stopPropagation();
   }, true);
 

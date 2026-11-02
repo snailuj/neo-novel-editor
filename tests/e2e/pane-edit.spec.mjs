@@ -154,9 +154,8 @@ test('the pane edits a page in full: paragraphs made and joined, formatting, pas
     await page.keyboard.press('Backspace');
     await expect(lines).toHaveCount(2);
     await expect(lines.nth(0)).toHaveText('The harbour of Vell faces west.Gulls nest there.');
-    // the joined block was saved, so it could have been cited: its id stays on the survivor
-    const joined = await page.evaluate(() => document.querySelector('.hoard-wiki-page > p').dataset.alias);
-    expect(joined).toMatch(/^[0-9a-f]{6}$/);
+    // the joined block's id was made in the pane this session, so nothing cited it and no alias stays
+    expect(await page.evaluate(() => document.querySelector('.hoard-wiki-page > p').hasAttribute('data-alias'))).toBe(false);
 
     // formatting
     await selectIn(page, 'keeper');
@@ -169,13 +168,13 @@ test('the pane edits a page in full: paragraphs made and joined, formatting, pas
     await page.keyboard.press('Control+v');
     await expect(lines).toHaveCount(3);
     await expect(lines.nth(2)).toHaveText('The lamp is lit.');
-    await expect.poll(() => pageFile(library)).toMatch(/^<p data-block="b1" data-alias="[0-9a-f]{6}">The harbour of Vell faces west\.Gulls nest there\.<\/p><p data-block="b2">Its <b>keeper<\/b> rows at dawn\. And dusk\.<\/p><p data-block="[0-9a-f]{6}">The lamp is lit\.<\/p>$/);
+    await expect.poll(() => pageFile(library)).toMatch(/^<p data-block="b1">The harbour of Vell faces west\.Gulls nest there\.<\/p><p data-block="b2">Its <b>keeper<\/b> rows at dawn\. And dusk\.<\/p><p data-block="[0-9a-f]{6}">The lamp is lit\.<\/p>$/);
 
     // a paragraph's words selected by a triple click are typed over, and the paragraph stays
     await lines.nth(0).click({ clickCount: 3 });
     await page.keyboard.type('Gone.');
     await expect(lines).toHaveCount(3);
-    await expect.poll(() => pageFile(library)).toMatch(/^<p data-block="b1" data-alias="[0-9a-f]{6}">Gone\.<\/p><p data-block="b2">Its <b>keeper<\/b>/);
+    await expect.poll(() => pageFile(library)).toMatch(/^<p data-block="b1">Gone\.<\/p><p data-block="b2">Its <b>keeper<\/b>/);
   } finally {
     await fixture.close();
   }

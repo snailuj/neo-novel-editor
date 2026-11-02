@@ -88,14 +88,15 @@ export interface NowBlock {
   touched: boolean;
 }
 
-interface Stored { key: string; start: number; end: number; open: string; inner: string }
+export interface Stored { key: string; start: number; end: number; open: string; inner: string }
 
 const OPEN = /^<p(?:\s[^>]*)?>/i;
 const ID = /\sdata-block="([^"]*)"/;
 const ALIAS = /\sdata-alias="[^"]*"/;
 const escapeAttr = (text: string) => text.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-function readBlocks(html: string): Stored[] {
+/** The page's blocks: each one's key, where it is in the bytes, its opening tag and inner HTML. */
+export function readBlocks(html: string): Stored[] {
   const seen = new Map<string, number>();
   return [...html.matchAll(P)].map((m, i) => {
     const open = OPEN.exec(m[0])![0];
