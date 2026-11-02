@@ -174,7 +174,8 @@ test('the librarian\'s page takes suggestions, which the librarian accepts or fl
 
 // Rule: the Wiki pane shows a page's comments on its lines and under it, and a comment
 // made there on selected words is the same mark the wiki book shows, in the same sidecar.
-test('a comment made in the Wiki pane is drawn there and is the wiki book\'s own', async () => {
+// stage 6 rebuilds pane editing on page files
+test.fixme('a comment made in the Wiki pane is drawn there and is the wiki book\'s own', async () => {
   const { profile, library } = await trackedProfile();
   const fixture = await launchProfile(profile);
   try {

@@ -1,10 +1,9 @@
 // The wiki in the window. Import to Wiki and Import List ask the main half, which runs the file picker
 // and the questions. [[links]] are drawn on the page of any book and followed with
-// Ctrl+click (Cmd+click on a Mac) or Follow Link: from another book the page shows in
-// the wiki pane beside it (pane.ts), so the writer keeps their place; in the wiki book
-// the caret goes to the page. Edit Wiki as a Book opens the wiki book itself, which is
-// where pages are edited until the pane can. Nothing here runs while the writer types
-// but a redraw of the links, once typing pauses.
+// Ctrl+click (Cmd+click on a Mac) or Follow Link: the stored page the link's title names
+// shows in the wiki pane beside the book (pane.ts), so the writer keeps their place. Edit
+// Wiki as a Book opens the wiki book itself. Nothing here runs while the writer types but
+// a redraw of the links, once typing pauses.
 //
 // While the wiki is open the body carries data-hoard-wiki, so the plugin's stylesheet
 // can set its pages flush left: they are Markdown, not prose. It also carries NEO's own
@@ -20,11 +19,6 @@ const REDRAW_MS = 300;
 const STATUS_MS = 4_000;
 
 interface Imported { outcome: string; bookId?: string | null; imported?: Applied['imported']; open?: boolean; openBookId?: string | null; message?: string }
-
-const frames = (n: number) => new Promise<void>((resolve) => {
-  const next = (left: number) => (left === 0 ? resolve() : requestAnimationFrame(() => next(left - 1)));
-  next(n);
-});
 
 export function startWiki(neo: NeoApiV5) {
   let wiki: WikiPages | null = null;
@@ -115,17 +109,7 @@ export function startWiki(neo: NeoApiV5) {
     if (!(await neo.open(bookId))) say('The book could not be opened.');
   };
 
-  // The wiki book opened at a page. The book takes the writer back to where they last
-  // were a frame after it opens, so the page is gone to once that is done.
-  const editInBook = async (chId: string) => {
-    if (!wikiOpen()) {
-      if (!(await openWiki())) return;
-      await frames(2);
-    }
-    if (!neo.go({ chId, pIdx: 0, off: 0, len: 0 })) say('The page could not be shown.');
-  };
-
-  const pane = startWikiPane(neo, { resolve: () => index(), editInBook });
+  const pane = startWikiPane(neo);
 
   // The stored page a link names, by title, shown in the pane beside the book.
   const follow = async (target: string) => {
@@ -155,7 +139,7 @@ export function startWiki(neo: NeoApiV5) {
       drawLinks();
       if (answer.outcome === 'imported' && answer.open) await openWiki();
       else if (answer.outcome === 'imported' && answer.openBookId) await openImported(answer.openBookId);
-      else if (pane.shown()) await pane.reload();
+      else if (pane.currentPage()) await pane.reload();
     } finally {
       importing = false;
     }
