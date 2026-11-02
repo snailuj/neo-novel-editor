@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import { PageRefused } from '../../src/hoard/pages/identity.ts';
 import { PageStore, type PageEntry } from '../../src/hoard/pages/store.ts';
 import { tempDir } from './git-support.ts';
@@ -191,38 +191,68 @@ test('a path through a symlinked folder or to a symlinked file is refused for ev
   assert.deepEqual((await store.list()).map((p) => p.id), ['wiki/Tide.html'], 'list follows neither link');
 });
 
-// Rule: a list whose walk began before a create, a rename or a write finished does not put
-// its titles in place of the index the change kept, so a title made meanwhile stays taken.
-test('a list that walked the trees before a change does not put back titles from before it', async (t) => {
-  const { library, log } = pagesLibrary(t);
-  let hold: Promise<void> | null = null;
-  let walked!: () => void;
-  const walkedOnce = new Promise<void>((resolve) => { walked = resolve; });
-  // the first walk after hold is set takes the library as it is, then waits before answering
+// A store whose next walk, once held, takes the library as it is and then waits to answer.
+function heldStore(t: TestContext) {
+  const { library, log, put } = pagesLibrary(t);
+  let gate: Promise<void> | null = null;
+  let walked = () => {};
   class Held extends PageStore {
     override async *entries(): AsyncGenerator<PageEntry> {
-      const gate = hold;
-      hold = null;
+      const wait = gate;
+      gate = null;
       const seen: PageEntry[] = [];
       for await (const p of super.entries()) seen.push(p);
-      if (gate) {
+      if (wait) {
         walked();
-        await gate;
+        await wait;
       }
       yield* seen;
     }
   }
-  const store = new Held({ library: () => library, log });
+  const holdNextWalk = () => {
+    let release!: () => void;
+    gate = new Promise<void>((resolve) => { release = resolve; });
+    const done = new Promise<void>((resolve) => { walked = resolve; });
+    return { walked: done, release: () => release() };
+  };
+  return { store: new Held({ library: () => library, log }), put, holdNextWalk };
+}
+
+// Rule: a list whose walk began before a create, a rename or a write finished does not put
+// its titles in place of the index the change kept, so a title made meanwhile stays taken.
+test('a list that walked the trees before a change does not put back titles from before it', async (t) => {
+  const { store, holdNextWalk } = heldStore(t);
   await store.create('wiki', 'Harbour.html', '<p>x</p>');
-  let release!: () => void;
-  hold = new Promise<void>((resolve) => { release = resolve; });
+  const held = holdNextWalk();
   const listing = store.list();
-  await walkedOnce;
+  await held.walked;
   await store.create('wiki', 'Places/Quay.html', '<p>x</p>');
-  release();
+  held.release();
   assert.deepEqual((await listing).map((p) => p.id), ['wiki/Harbour.html'], 'the list itself is from before the create');
   await assert.rejects(store.create('wiki', 'Docks/quay.html', '<p>x</p>'), (e: PageRefused) => e.code === 'taken');
 });
+
+// Rule: a list that keeps the index it found (a change ran beside it) still leaves it to be
+// walked again before the next title is checked, so a page that came in by sync, which only
+// a walk sees, keeps its title taken, for a create and for a rename alike.
+const asks = {
+  create: (store: PageStore) => store.create('wiki', 'Docks/tide.html', '<p>x</p>'),
+  rename: (store: PageStore) => store.rename('wiki/Harbour.html', 'Other/TIDE.html', null),
+};
+for (const [name, ask] of Object.entries(asks)) {
+  test(`a page that came by sync stays taken though the list that saw it was set aside (${name})`, async (t) => {
+    const { store, put, holdNextWalk } = heldStore(t);
+    await store.create('wiki', 'Harbour.html', '<p>x</p>');
+    put('wiki/Tide.html', '<p>synced</p>');
+    const held = holdNextWalk();
+    const listing = store.list();
+    await held.walked;
+    await store.create('wiki', 'Places/Quay.html', '<p>x</p>');
+    held.release();
+    assert.deepEqual((await listing).map((p) => p.id), ['wiki/Harbour.html', 'wiki/Tide.html'], 'the list saw the synced page');
+    await assert.rejects(ask(store), (e: PageRefused) => e.code === 'taken');
+  });
+}
 
 // Rule: a page tree that is itself a link out of the library is refused for every request and not listed.
 for (const tree of ['wiki', 'sources'] as const) {

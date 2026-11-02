@@ -94,6 +94,9 @@ export class PageStore {
   #titles: Titles<PageEntry> | null = null;
   // counts each write, create and rename as it starts and as it ends: odd while one runs
   #changes = 0;
+  // a list set its walk aside (a change ran beside it), so the index may lack a page that
+  // came by sync: the next title check walks again, from inside the queue
+  #stale = false;
 
   constructor(options: PageStoreOptions) {
     this.o = options;
@@ -178,6 +181,15 @@ export class PageStore {
     return this.#titles;
   }
 
+  // The index a title is checked against; called only in the queue, so no change runs beside its walk.
+  #checked(): Promise<Titles<PageEntry>> {
+    if (this.#stale) {
+      this.#stale = false;
+      this.#titles = null;
+    }
+    return this.#index();
+  }
+
   async list(): Promise<PageEntry[]> {
     const start = performance.now();
     const at = this.#changes;
@@ -185,6 +197,7 @@ export class PageStore {
     const titles = new Titles(pages);
     // a walk that a change ran beside may miss it, so the index the change kept stays
     if (at % 2 === 0 && at === this.#changes) this.#titles = titles;
+    else this.#stale = true;
     for (const group of titles.duplicates) this.o.log('warn', 'pages: these pages share one title, so a link reaches only the first', group.map((p) => p.id));
     this.o.log('info', 'pages.list', { pages: pages.length, ms: Math.round(performance.now() - start) });
     return pages;
@@ -232,7 +245,7 @@ export class PageStore {
       const ref = parseId(`${tree}/${checkPath(pagePath)}`);
       const title = checkTitle(ref.path);
       this.inside(ref);
-      const index = await this.#index();
+      const index = await this.#checked();
       const clash = index.taken(ref.tree, title);
       if (clash || existsSync(this.file(ref))) {
         throw new PageRefused('taken', `${JSON.stringify(title)} is already a page in ${ref.tree}${clash ? ` (${clash.id})` : ''}`);
@@ -365,7 +378,7 @@ export class PageStore {
   // Checks the request and finds the files that hold a link to rewrite. Writes nothing.
   async #plan(from: PageRef, to: PageRef): Promise<HoardRenameV1> {
     const [id, newId] = [idOf(from), idOf(to)];
-    let index = await this.#index();
+    let index = await this.#checked();
     // a page that arrived through sync since the last list
     if (!index.has(id) && existsSync(this.file(from))) {
       this.#titles = null;
