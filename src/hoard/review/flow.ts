@@ -1,7 +1,5 @@
-// The review of the writer's suggestions, wherever the page is shown: in the open book
-// (review/window.ts) or in the Wiki pane beside another book (marks/pane-marks.ts). Each
-// passes in how its page is read and changed; the rules, the verdicts and what the
-// writer is told are the same in both.
+// The review of the writer's suggestions on a page shown in the Wiki pane
+// (marks/pane-marks.ts), which passes in how its page is read and changed.
 //
 // The librarian reviews a suggestion against the page as it is now (rules.ts): it
 // applies an accepted change as its own edit, or flags it with its reason as a comment.

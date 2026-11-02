@@ -13,7 +13,7 @@ import type { Git } from '../../src/hoard/git/runner.ts';
 import { isolateGitConfig, log, tempDir, tempLibrary } from './git-support.ts';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
-const C1 = 'book-fox-1/chapters/c1.html';
+const C1 = 'wiki/Harbour.html';
 
 // Timers that run only when fire() is called, so a test decides when a checkpoint is due.
 function manualClock() {
@@ -66,6 +66,7 @@ const slowed = (git: Git, ms: number): Git => ({
 async function tracked(t: { after(fn: () => void): void }, clock?: Clock, slowMs = 0) {
   isolateGitConfig(t, { name: 'Ada', email: 'ada@example.com' });
   const lib = tempLibrary(t);
+  lib.write(C1, '<p>One.</p><p>Two.</p>');
   await lib.git.run(lib.library, ['init', '-q']);
   const { layer, lines } = pairLayer(t, slowMs ? slowed(lib.git, slowMs) : lib.git, lib.library, clock);
   await layer.open();
@@ -194,13 +195,13 @@ async function pairsFor(t: { after(fn: () => void): void }, options: { settleMs?
   // NEO's save: the file, then the host's after-write
   const save = (html: string, ms: number) => new Promise<void>((resolve) => setTimeout(() => {
     lib.write(C1, html);
-    pairs.landed('book-fox-1', 'c1');
+    pairs.landed({ page: C1 });
     resolve();
   }, ms));
   return { ...lib, pairs, save };
 }
 
-const ask = (html: string) => ({ bookId: 'book-fox-1', chId: 'c1', html });
+const ask = (html: string) => ({ page: C1, html });
 
 test('a save landing after the edit is asked for still goes in the author\'s commit', async (t) => {
   // a time limit far longer than any git call, so only a wake can end the wait in time
@@ -220,7 +221,7 @@ test('a save landing after the edit is asked for still goes in the author\'s com
   assert.equal(after, edited);
 });
 
-test('a chapter whose save never lands refuses the edit, and makes no commit', async (t) => {
+test('a page whose save never lands refuses the edit, and makes no commit', async (t) => {
   const { library, git, layer, pairs, write } = await pairsFor(t, { settleMs: 200 });
   assert.deepEqual(await pairs.begin(ask('<p>Never saved.</p>')), { refused: 'unsaved' });
   assert.deepEqual(await history(git, library), ['Ada|recovered']);
@@ -252,8 +253,8 @@ test('with no history there is no pair, and ending it commits nothing', async (t
 
 test('a name that leaves the library is refused', async (t) => {
   const { pairs } = await pairsFor(t);
-  await assert.rejects(pairs.begin({ bookId: '..', chId: 'c1', html: '' }), TypeError);
-  await assert.rejects(pairs.begin({ bookId: 'book-fox-1', chId: 'a/b', html: '' }), TypeError);
+  await assert.rejects(pairs.begin({ page: 'wiki/../x.html', html: '' }), /page|tree/);
+  await assert.rejects(pairs.begin({ page: 'notes/x.html', html: '' }), /page|tree/);
 });
 
 // Rule: a librarian edit the gate refuses ends with its findings, and nothing of it is

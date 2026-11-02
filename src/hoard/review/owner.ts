@@ -1,13 +1,11 @@
-// Who owns a page, from its page sidecar (.neo/<bookId>/pages/<chId>.json, written by
-// Import to Wiki; for a page in the wiki/ or sources/ folders, .neo/pages/<tree>/<path>.json). Hoard's rule: what the file records wins, so provenance.author's first
+// Who owns a page, from its page sidecar (.neo/pages/<tree>/<path>.json for a page in the
+// wiki/ or sources/ folders). Hoard's rule: what the file records wins, so provenance.author's first
 // voice decides; with no voice recorded, a librarian-authored type (lore, project) makes
-// the page the librarian's. Anything else is the writer's, a chapter with no page sidecar
+// the page the librarian's. Anything else is the writer's, a page with no sidecar
 // included, so a page of unknown ownership is never one the librarian changes.
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { validateHoardPageV1 } from '../../generated/validators.cjs';
-import { oneName } from '../files.ts';
 import { parseId } from '../pages/identity.ts';
 
 export type Owner = 'librarian' | 'author';
@@ -61,28 +59,4 @@ export async function ownerOf(library: string, page: string, log: Log = () => {}
     return 'author';
   }
   return ownerFromFrontmatter(data.frontmatter);
-}
-
-/** The chapters of a book that are the librarian's; reading never writes. */
-export function librarianPages(library: string, bookId: string, log: Log): string[] {
-  const dir = path.join(library, '.neo', oneName(bookId, 'bookId'), 'pages');
-  if (!existsSync(dir)) return [];
-  const found: string[] = [];
-  for (const name of readdirSync(dir).sort()) {
-    if (!name.endsWith('.json')) continue;
-    const file = path.join(dir, name);
-    let data: unknown;
-    try {
-      data = JSON.parse(readFileSync(file, 'utf8'));
-    } catch (err) {
-      log('warn', `review: ${file} does not read, so its page is the writer's: ${String(err)}`);
-      continue;
-    }
-    if (!validateHoardPageV1(data)) {
-      log('warn', `review: ${file} is not a page sidecar, so its page is the writer's`, validateHoardPageV1.errors);
-      continue;
-    }
-    if (ownerFromFrontmatter(data.frontmatter) === 'librarian') found.push(name.slice(0, -'.json'.length));
-  }
-  return found;
 }

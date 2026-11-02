@@ -43,7 +43,7 @@
 .hoard-mark .hoard-label, .hoard-mark .hoard-reply, .hoard-mark .s-actions { opacity: 0; }
 .hoard-mark:hover .hoard-label, .hoard-mark:hover .hoard-reply, .hoard-mark:hover .s-actions,
 .hoard-mark:focus-within .hoard-label, .hoard-mark:focus-within .hoard-reply, .hoard-mark:focus-within .s-actions { opacity: 1; }
-.hoard-composer, .hoard-suggest-composer { cursor: default; }
+.hoard-composer { cursor: default; }
 
 /* The wiki: a [[link]] to a page is underlined in the accent, one to no page dotted and
    muted. Its pages are set flush left without indents (window.ts). */
@@ -126,18 +126,6 @@ body[data-hoard-wiki] .chapter-body p { text-indent: 0; text-align: start; hyphe
 .hoard-wiki-pane:hover .hoard-pane-direct, .hoard-pane-direct:focus-visible { opacity: 1; }
 .hoard-pane-direct:hover { color: var(--accent); }
 
-/* Suggest mode: the librarian's pages take suggestions (review/window.ts). A held page
-   carries a quiet rule at its edge; the Comments section says why and offers the way
-   out. The mode line's buttons, like the rest of the section's, show on hover or focus. */
-.chapter[data-held] .chapter-body { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 35%, transparent); }
-.hoard-mode { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-inline: 12px; margin-block-end: 8px; }
-.hoard-mode-text { flex: 1 1 100%; margin: 0; font-size: 11px; color: var(--muted); }
-.hoard-mode button {
-  background: none; border: none; color: var(--muted); font-size: 11px; padding: 0;
-  min-block-size: 44px; min-inline-size: 44px; opacity: 0;
-}
-.hoard-marks:hover .hoard-mode button, .hoard-mode button:focus-visible { opacity: 1; }
-.hoard-mode button:hover { color: var(--accent); }
 .hoard-extra { display: inline-flex; gap: 8px; margin-inline-start: 8px; }
 .hoard-extra[hidden] { display: none; }
 .hoard-mark .hoard-extra button { min-block-size: 44px; min-inline-size: 44px; }

@@ -52,7 +52,9 @@ test('the request schemas take the three suggestion kinds, and nothing looser', 
   assert.ok(validateHoardReviewVerdictV1({ ...ids, markId: 'm-x', state: 'accepted' }));
   assert.ok(!validateHoardReviewVerdictV1({ ...ids, markId: 'm-x', state: 'flagged' }), 'a flag says why');
   assert.ok(!validateHoardReviewVerdictV1({ ...ids, markId: 'm-x', state: 'rejected' }), 'the librarian flags, it does not reject');
-  assert.ok(validateHoardReviewOwnersV1({ bookId: 'book-wiki-1' }));
+  assert.ok(validateHoardReviewOwnersV1({ tree: 'wiki' }));
+  assert.ok(validateHoardReviewOwnersV1({ pages: ['wiki/Harbour.html'] }));
+  assert.ok(!validateHoardReviewOwnersV1({ bookId: 'book-fox-1' }), 'owners are asked for pages, not for a book');
   assert.ok(!validateHoardReviewOwnersV1({}));
 });
 
