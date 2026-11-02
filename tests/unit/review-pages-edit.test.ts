@@ -29,6 +29,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { Gate } from '../../src/hoard/git/gate.ts';
 import { GitLayer, resolveSettings } from '../../src/hoard/git/layer.ts';
+import { signalPageChanges } from '../../src/hoard/pages/signals.ts';
 import { PageStore } from '../../src/hoard/pages/store.ts';
 import { startReview } from '../../src/hoard/review/main.ts';
 import { editPage, librarianAmong, librarianInTree } from '../../src/hoard/review/edit.ts';
@@ -157,13 +158,14 @@ async function heldPage(t: Parameters<typeof library>[0], saved: string[] = []) 
   const AFTER_BAD = '<p data-block="b 1">The quay is very old.</p>';
   const CHANGED = '<p data-block="b 2">Changed meanwhile.</p>';
   const store = {
-    write: async (id: string, was: string, now: string) => {
-      const written = await lib.o.store.write(id, was, now);
+    write: async (id: string, was: string, now: string, who?: 'author' | 'librarian') => {
+      const written = await lib.o.store.write(id, was, now, who);
       if (written.ok && now === AFTER_BAD) writeFileSync(path.join(lib.library, id), CHANGED);
       return written;
     },
   };
-  await assert.rejects(editPage({ ...lib.o, store, saved: (id: string) => { saved.push(id); } } as unknown as typeof lib.o, { page: OURS, before: BEFORE, after: AFTER_BAD, as: 'librarian' }));
+  signalPageChanges(lib.o.store, { saved: (id) => { saved.push(id); gate.saved(id); } }, { landed: () => {} }, () => {});
+  await assert.rejects(editPage({ ...lib.o, store } as unknown as typeof lib.o, { page: OURS, before: BEFORE, after: AFTER_BAD, as: 'librarian' }));
   assert.deepEqual(gate.held(), [OURS]);
   assert.deepEqual(saved, [], 'a failed restore is not an author save');
   return { ...lib, gate, CHANGED };
@@ -172,8 +174,7 @@ async function heldPage(t: Parameters<typeof library>[0], saved: string[] = []) 
 test('Author-Save-Frees-A-Held-Page: an author save of a held page frees it, and the next checkpoint commits it as the author\'s', async (t) => {
   const saved: string[] = [];
   const { o, layer, gate, page, CHANGED } = await heldPage(t, saved);
-  const hooked = { ...o, saved: (id: string) => { saved.push(id); gate.saved(id); } };
-  assert.deepEqual(await editPage(hooked, { page: OURS, before: CHANGED, after: AFTER, as: 'author' }), { ok: true });
+  assert.deepEqual(await editPage(o, { page: OURS, before: CHANGED, after: AFTER, as: 'author' }), { ok: true });
   assert.deepEqual(saved, [OURS]);
   assert.deepEqual(gate.held(), []);
   await layer.commitNow('import-author');
@@ -184,10 +185,10 @@ test('Author-Save-Frees-A-Held-Page: an author save of a held page frees it, and
 test('Author-Save-Frees-A-Held-Page: a librarian edit and a refused author save do not say the author saved', async (t) => {
   const { o } = await library(t);
   const saved: string[] = [];
-  const hooked = { ...o, saved: (id: string) => { saved.push(id); } };
-  assert.deepEqual(await editPage(hooked, { page: OURS, before: BEFORE, after: AFTER, as: 'librarian' }), { ok: true });
-  assert.deepEqual(await editPage(hooked, { page: OURS, before: BEFORE, after: AFTER, as: 'author' }), { ok: false, reason: 'stale' });
-  assert.deepEqual(await editPage(hooked, { page: 'wiki/Gone.html', before: BEFORE, after: AFTER, as: 'author' }), { ok: false, reason: 'missing' });
+  signalPageChanges(o.store as never, { saved: (id) => { saved.push(id); } }, { landed: () => {} }, () => {});
+  assert.deepEqual(await editPage(o, { page: OURS, before: BEFORE, after: AFTER, as: 'librarian' }), { ok: true });
+  assert.deepEqual(await editPage(o, { page: OURS, before: BEFORE, after: AFTER, as: 'author' }), { ok: false, reason: 'stale' });
+  assert.deepEqual(await editPage(o, { page: 'wiki/Gone.html', before: BEFORE, after: AFTER, as: 'author' }), { ok: false, reason: 'missing' });
   assert.deepEqual(saved, []);
 });
 
@@ -277,7 +278,8 @@ test('the channels: pages.edit and review.owners take a page form, and wiki.edit
   const handlers = new Map<string, (payload: unknown) => unknown>();
   const host = { handle: (name: string, fn: (payload: unknown) => unknown) => handlers.set(name, fn), log: () => {}, paths: { library: () => lib } };
   const saved: string[] = [];
-  startReview(host as never, {} as never, { layer: o.layer, wiki: { pages: () => null } as never, pages: o.store as never, authorSavedPage: (id) => { saved.push(id); } });
+  signalPageChanges(o.store, { saved: (id) => { saved.push(id); } }, { landed: () => {} }, () => {});
+  startReview(host as never, {} as never, { layer: o.layer, wiki: { pages: () => null } as never, pages: o.store as never });
   const call = async (name: string, payload: unknown) => handlers.get(name)!(payload);
   assert.deepEqual(await call('pages.edit', { page: SOURCE, before: BEFORE, after: AFTER, as: 'author' }), { ok: true });
   assert.equal(page(SOURCE), AFTER);

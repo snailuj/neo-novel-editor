@@ -82,22 +82,19 @@ export interface PageEditorOptions {
   store: Pick<PageStore, 'write'>;
   layer: Pick<GitLayer, 'around' | 'release' | 'held'>;
   log: Log;
-  /** Told the page's id once the author's edit of it is written; never for the librarian's. */
-  saved?: (page: string) => void;
 }
 
 export async function editPage(o: PageEditorOptions, ask: PageEdit): Promise<Edited> {
   const { page, before, after } = ask;
   parseId(page);
   const write = async (): Promise<Refusal | null> => {
-    const written = await o.store.write(page, before, after);
+    const written = await o.store.write(page, before, after, ask.as);
     return written.ok ? null : written.reason;
   };
   if (ask.as === 'author') {
     const refused = await write();
     if (refused) return { ok: false, reason: refused };
     o.log('info', 'pages.edit', { page, as: 'author' });
-    o.saved?.(page);
     return { ok: true };
   }
   const owned = async (): Promise<boolean> => {
@@ -112,7 +109,7 @@ export async function editPage(o: PageEditorOptions, ask: PageEdit): Promise<Edi
   // write, or commit, a page that is the author's when the write happens.
   const swap = async (): Promise<Refusal | null> => (await owned() ? write() : 'owned');
   const restore = async (): Promise<void> => {
-    const put = await o.store.write(page, after, before);
+    const put = await o.store.write(page, after, before, 'librarian');
     if (put.ok) return;
     // The page is no longer what the swap wrote, so the refused text may still be on disk: it stays held.
     o.log('error', 'pages.edit: the refused librarian change could not be put back, so the page stays held', { page, reason: put.reason });

@@ -17,7 +17,6 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { Gate } from '../../src/hoard/git/gate.ts';
 import { GitLayer, resolveSettings } from '../../src/hoard/git/layer.ts';
-import { authorSaved } from '../../src/hoard/review/saved.ts';
 import { startReview } from '../../src/hoard/review/main.ts';
 import { writePage, type PageWriterOptions } from '../../src/hoard/wiki/write.ts';
 import { isolateGitConfig, log, tempDir, tempLibrary } from './git-support.ts';
@@ -178,7 +177,7 @@ test('an author wiki.edit of a held chapter frees it and wakes its librarian pai
   const host = { handle: (name: string, fn: (payload: unknown) => unknown) => handlers.set(name, fn), log: () => {}, paths: { library: () => library } };
   const wikiStore = { pages: () => ({ bookId: 'book-fox-1', pages: [{ chId: 'c1' }] }) };
   startReview(host as never, {} as never, {
-    layer, wiki: wikiStore as never, pages: {} as never, authorSavedPage: authorSaved(gate, { landed: ((...args: string[]) => { woken.push(args); }) as never }),
+    layer, wiki: wikiStore as never, pages: {} as never, wikiSaved: (bookId, chId) => { gate.saved(`${bookId}/chapters/${chId}.html`); woken.push([bookId, chId]); },
   });
   assert.deepEqual(await handlers.get('wiki.edit')!({ chId: 'c1', before: changed, after: AFTER, as: 'author' }), { ok: true });
   assert.equal(page(), AFTER);

@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { LibrarianPairs } from '../../src/hoard/git/pair.ts';
 import { startPages } from '../../src/hoard/pages/main.ts';
+import { signalPageChanges } from '../../src/hoard/pages/signals.ts';
 import { PageStore } from '../../src/hoard/pages/store.ts';
 import { pagesLibrary } from './pages-support.ts';
 
@@ -94,7 +95,8 @@ test('a librarian pair begun on a page lands once the author\'s save of that pag
   const layer = { status: () => ({ state: 'tracked' }), around: async (_files: string[], fn: () => Promise<void>) => { await fn(); return { before: null, after: null }; } };
   // a time limit far longer than the save, so only a landed write can end the wait in time
   const pairs = new LibrarianPairs({ layer: layer as never, library: () => library, log: () => {}, settleMs: 30_000 });
-  startPages(h.fake, undefined, undefined, (page) => pairs.landed({ page }));
+  const started = startPages(h.fake, undefined);
+  signalPageChanges(started.store, { saved: () => {} }, pairs, () => {});
 
   const asked = performance.now();
   const typed = '<p>two</p>';
@@ -113,7 +115,8 @@ test('a refused save of a page does not say a write landed', async (t) => {
   put('wiki/Tide.html', '<p>one</p>');
   const h = host(library);
   const landed: string[] = [];
-  startPages(h.fake, undefined, undefined, (page) => landed.push(page));
+  const started = startPages(h.fake, undefined);
+  signalPageChanges(started.store, { saved: () => {} }, { landed: ({ page }) => { landed.push(page); } }, () => {});
   assert.deepEqual(await h.call('pages.write', { id: 'wiki/Tide.html', before: '<p>stale</p>', after: '<p>x</p>' }), { ok: false, reason: 'stale' });
   assert.deepEqual(await h.call('pages.write', { id: 'wiki/Gone.html', before: 'a', after: 'b' }), { ok: false, reason: 'missing' });
   assert.deepEqual(landed, []);
