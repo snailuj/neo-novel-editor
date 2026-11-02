@@ -4,15 +4,15 @@
 //                     [--votes N] [--jobs N] [--pages FILE] [PAGE...]
 //   npm run blocks -- group --vault DIR --sheet SHEET.csv --judge CMD [--votes N] [--jobs N]
 //                     [--outlines DIR] [--redo] [--pages FILE] [PAGE...]
-//   npm run blocks -- apply --vault DIR --sheet SHEET.csv --out DIR [--path-prefix P] [--picks FILE]
+//   npm run blocks -- apply --vault DIR --sheet SHEET.csv --out DIR [--vault-prefix P] [--picks FILE]
 //
 // classify splits each page into blocks and writes the review sheet, after every page so
 // a stopped run loses nothing; a re-run judges only blocks the sheet lacks. group cuts
 // classified pages into entries and groups the entries by topic (see group.ts), writing
 // the sheet's entry and topic columns and an outline per page; a page already grouped is
-// left alone unless --redo. apply writes
-// the wiki pages, the Morning Pages book and the import list from the reviewed sheet, and
-// with --picks a JSONL file of line-range picks for the old vault's import to cut itself.
+// left alone unless --redo. apply writes the import list (each page to sources or the
+// wiki, cut from the vault by lines; --vault-prefix is where the vault sits on the machine
+// that imports) and the Morning Pages book from the reviewed sheet, and with --picks a JSONL file of line-range picks for the old vault's import to cut itself.
 // Summaries go to stdout, log records to stderr as JSON lines. Exit: 0 done, 1 apply
 // found blocks that changed since review, 2 usage, 3 error.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -39,12 +39,12 @@ class UsageError extends Error {}
 
 const USAGE = 'usage: blocks classify --vault DIR --out SHEET [--already LIST] [--judge CMD] [--votes N] [--jobs N] [--pages FILE] [PAGE...]\n'
   + '       blocks group --vault DIR --sheet SHEET --judge CMD [--votes N] [--jobs N] [--outlines DIR] [--redo] [--pages FILE] [PAGE...]\n'
-  + '       blocks apply --vault DIR --sheet SHEET --out DIR [--path-prefix P] [--picks FILE [--picks-kinds writing,morning-pages]]';
+  + '       blocks apply --vault DIR --sheet SHEET --out DIR [--vault-prefix P] [--picks FILE [--picks-kinds writing,morning-pages]]';
 
 const VALUES: Record<string, string[]> = {
   classify: ['--vault', '--out', '--already', '--judge', '--votes', '--jobs', '--pages'],
   group: ['--vault', '--sheet', '--judge', '--votes', '--jobs', '--outlines', '--pages'],
-  apply: ['--vault', '--sheet', '--out', '--path-prefix', '--picks', '--picks-kinds'],
+  apply: ['--vault', '--sheet', '--out', '--vault-prefix', '--picks', '--picks-kinds'],
 };
 const FLAGS: Record<string, string[]> = { group: ['--redo'] };
 const REQUIRED: Record<string, string[]> = { classify: ['--vault', '--out'], group: ['--vault', '--sheet', '--judge'], apply: ['--vault', '--sheet', '--out'] };
@@ -164,13 +164,13 @@ async function classify(values: Map<string, string>, positional: string[], io: I
 
   await eachPage(pages, jobs, one);
   const dupes = dedupeRows(order.flatMap((p) => byPage.get(p) ?? []), (r) => fresh.has(`${r.page}\0${r.block}`));
-  if (dupes) log.info(`${dupes} new rows repeat text an earlier row sends to the wiki; set to no`);
+  if (dupes) log.info(`${dupes} new rows repeat text an earlier row sends to the library; set to out`);
   save();
 
   const rows = order.flatMap((p) => byPage.get(p) ?? []);
-  const tally = (key: 'label' | 'wiki') => [...rows.reduce((m, r) => m.set(r[key], (m.get(r[key]) ?? 0) + 1), new Map<string, number>())]
+  const tally = (key: 'label' | 'dest') => [...rows.reduce((m, r) => m.set(r[key], (m.get(r[key]) ?? 0) + 1), new Map<string, number>())]
     .map(([k, n]) => `${k} ${n}`).join(', ');
-  io.stdout(`${rows.length} blocks in ${order.length} pages. Labels: ${tally('label')}. Wiki: ${tally('wiki')}. Book: ${rows.filter((r) => r.book).length}.\n`);
+  io.stdout(`${rows.length} blocks in ${order.length} pages. Labels: ${tally('label')}. Dest: ${tally('dest')}. Book: ${rows.filter((r) => r.book).length}.\n`);
   return failed ? 3 : 0;
 }
 
@@ -245,15 +245,15 @@ function apply(values: Map<string, string>, io: Io): number {
   const kinds = (values.get('--picks-kinds') ?? 'writing,morning-pages').split(',').map((k) => k.trim());
   for (const k of kinds) if (k !== 'writing' && k !== 'morning-pages') throw new UsageError(`--picks-kinds: unknown kind '${k}'`);
   const rows = readSheet(readFileSync(at(values.get('--sheet')!), 'utf8'));
-  const prefix = values.get('--path-prefix');
-  const result = applySheet(at(values.get('--vault')!), rows, at(values.get('--out')!), prefix === undefined ? {} : { pathPrefix: prefix });
+  const prefix = values.get('--vault-prefix');
+  const result = applySheet(at(values.get('--vault')!), rows, at(values.get('--out')!), prefix === undefined ? {} : { vaultPrefix: prefix });
   const picksFile = values.get('--picks');
   if (picksFile !== undefined) {
     const picks = blockPicks(at(values.get('--vault')!), rows).picks.filter((p) => kinds.includes(p.kind));
     writeAtomic(at(picksFile), picks.map((p) => JSON.stringify(p)).join('\n') + (picks.length ? '\n' : ''));
     io.stdout(`Wrote ${picks.length} picks to ${picksFile}.\n`);
   }
-  io.stdout(`Wrote ${result.written.length} files. ${result.unresolved} rows still marked check for the wiki.\n`);
+  io.stdout(`Wrote ${result.written.length} files. ${result.unresolved} rows still marked check.\n`);
   for (const m of result.missing) io.stdout(`changed since review: ${m.page} lines ${m.lines} (block ${m.block})\n`);
   return result.missing.length ? 1 : 0;
 }
