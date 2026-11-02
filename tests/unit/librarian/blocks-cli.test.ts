@@ -299,3 +299,17 @@ test('pages outside the vault are refused before they are read', async () => {
   assert.match(grouped.stderr, /outside the vault/);
   assert.equal(calls(), before);
 });
+
+test('apply refuses a sheet with no rows, and leaves the last outputs alone', async () => {
+  const { dir, vault, judge } = setup();
+  const sheet = path.join(dir, 'sheet.csv');
+  const out = path.join(dir, 'out');
+  await run(['classify', '--vault', vault, '--out', sheet, '--judge', judge, '--pages', 'pages.txt'], dir);
+  assert.equal((await run(['apply', '--vault', vault, '--sheet', sheet, '--out', out], dir)).code, 0);
+  const before = readFileSync(path.join(out, 'import-list.txt'), 'utf8');
+  writeFileSync(sheet, writeSheet([]));
+  const r = await run(['apply', '--vault', vault, '--sheet', sheet, '--out', out], dir);
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /no rows/);
+  assert.equal(readFileSync(path.join(out, 'import-list.txt'), 'utf8'), before);
+});

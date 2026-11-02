@@ -111,13 +111,14 @@ test('a page named in new writing is flagged at the next save, once, hidden on r
     const sidecar = JSON.parse(await readFile(path.join(library, '.neo', bookId, 'chapters', 'c1.json'), 'utf8'));
     expect(sidecar.marks.map((m) => m.created.who)).toEqual(['librarian']);
 
-    // its link shows the page beside the book, and the writer stays where they were
+    // its link opens the stored page it names beside the book, and the writer stays where they were
     await page.locator('.chapter-body p').nth(0).click();
     await page.evaluate(() => window.hoard.marks.show());
     const card = page.locator('.hoard-mark');
     await expect(card.locator('.hoard-who')).toContainText('Librarian');
     await card.locator('.hoard-body .hoard-wiki-link').click();
     await expect(page.locator('.hoard-wiki-pane .hoard-wiki-title')).toHaveText('Kraken');
+    expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('wiki/Kraken.html');
     expect(await page.evaluate(() => book.id)).toBe(bookId);
 
     // the same page again in that chapter, and a typed link in the other: nothing new

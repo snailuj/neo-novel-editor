@@ -78,3 +78,19 @@ test('renaming with a book open leaves that book\'s text as a rename with the sh
   assert.deepEqual(chapters.c1, paragraphTexts(closed.get('book-fox-1/chapters/c1.html')));
   assert.deepEqual(chapters.c1, paragraphTexts(rewriteHtml(html, (t) => (key(t) === 'harbour' ? 'Port' : null)).html));
 });
+
+// Rule: by the time the edits are made the rename has happened, so an edit the host throws
+// on is listed as refused like any other, and the rest still go; the rename still resolves.
+test('an edit the host throws on is listed as refused, and the rest still go', async () => {
+  const chapters = { c1: ['See [[Old]] here'], c2: ['And [[Old]] there'] };
+  const { neo } = fakeWindow(chapters);
+  const replace = neo.replace.bind(neo);
+  neo.replace = async (place, expected, text) => {
+    if (place.chId === 'c1') throw new TypeError('the chapter is not in the window');
+    return replace(place, expected, text);
+  };
+  const edit = { pIdx: 0, off: 4, len: 7, expected: '[[Old]]', replacement: '[[New]]' };
+  const done = await applyChapterEdits(neo, [{ bookId: 'book-fox-1', chId: 'c1', edits: [edit] }, { bookId: 'book-fox-1', chId: 'c2', edits: [edit] }]);
+  assert.deepEqual(done, { applied: 1, refused: [{ chId: 'c1', pIdx: 0, reason: 'the chapter is not in the window' }] });
+  assert.deepEqual(chapters, { c1: ['See [[Old]] here'], c2: ['And [[New]] there'] });
+});

@@ -58,6 +58,19 @@ export function parseId(id: unknown): PageRef {
   return { tree: tree as Tree, path: checkPath(id.slice(slash + 1)) };
 }
 
+// A title becomes the target of a [[link]], which the grammar ends at ] | # or ^; a
+// backtick starts inline code, where no link is read (librarian/links.ts maskCodeSpans).
+const UNLINKABLE = /[[\]|#^`\p{Cc}]/u;
+
+/** The path's title, or a PageRefused('title') when no link could name it. */
+export function checkTitle(p: string): string {
+  const title = titleOf(p);
+  if (title.trim() === '' || title !== title.trim() || UNLINKABLE.test(title)) {
+    throw new PageRefused('title', `${JSON.stringify(title)} cannot be a page title: it is empty, has spaces at an end, or holds one of [ ] | # ^ \``);
+  }
+  return title;
+}
+
 /** The file name without .html. */
 export function titleOf(p: string): string {
   const name = p.slice(p.lastIndexOf('/') + 1);
