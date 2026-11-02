@@ -4,7 +4,6 @@
 // that is what makes a held page theirs again. A signal that throws is logged and the other
 // still goes out.
 import type { Gate } from '../git/gate.ts';
-import type { LibrarianPairs } from '../git/pair.ts';
 import type { PageChange, PageStore } from './store.ts';
 
 type Log = (level: 'error' | 'warn' | 'info' | 'debug', message: string, data?: unknown) => void;
