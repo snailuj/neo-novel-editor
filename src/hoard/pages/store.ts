@@ -48,6 +48,21 @@ export interface PageFile extends Omit<PageEntry, 'size' | 'mtime'> {
 
 export type Written = { ok: true } | { ok: false; reason: 'missing' | 'stale' };
 
+export type Who = 'author' | 'librarian';
+
+/** One stored page that changed on disk; see PageStore.onChange. */
+export interface PageChange {
+  /** The page's id after the change. */
+  page: string;
+  /** For a rename, the id the page had. */
+  from?: string;
+  kind: 'edit' | 'create' | 'rename' | 'import';
+  who: Who;
+  /** The page's HTML before the change; empty for a new page. */
+  before: string;
+  after: string;
+}
+
 /** Link edits for one chapter of the open book, for the window to make through the host's `replace`. */
 export interface ChapterEdits {
   bookId: string;
@@ -97,6 +112,7 @@ export class PageStore {
   // a list set its walk aside (a change ran beside it), so the index may lack a page that
   // came by sync: the next title check walks again, from inside the queue
   #stale = false;
+  readonly #listeners = new Set<(change: PageChange) => void>();
 
   constructor(options: PageStoreOptions) {
     this.o = options;
@@ -219,7 +235,28 @@ export class PageStore {
     });
   }
 
-  write(id: string, before: string, after: string): Promise<Written> {
+  /**
+   * Tells `fn` of each write, create and rename that changed a page's bytes, once, from
+   * inside the queue after the file holds the new text. A listener that throws is logged
+   * and the save goes on. Returns the way to stop listening.
+   */
+  onChange(fn: (change: PageChange) => void): () => void {
+    this.#listeners.add(fn);
+    return () => { this.#listeners.delete(fn); };
+  }
+
+  #emit(change: PageChange): void {
+    this.o.log('info', 'pages.change', { page: change.page, from: change.from, kind: change.kind, who: change.who, listeners: this.#listeners.size });
+    for (const fn of [...this.#listeners]) {
+      try {
+        fn(change);
+      } catch (err) {
+        this.o.log('error', 'pages.change.listener-failed', { page: change.page, kind: change.kind, why: String(err) });
+      }
+    }
+  }
+
+  write(id: string, before: string, after: string, who: Who = 'author'): Promise<Written> {
     return this.#serial(() => this.op('write', async () => {
       const ref = parseId(id);
       const file = this.inside(ref);
@@ -236,11 +273,12 @@ export class PageStore {
         this.o.layer?.wrote(ref.tree);
       }
       this.o.log('info', 'pages.write', { id, bytes: Buffer.byteLength(after), changed: after !== now });
+      if (after !== now) this.#emit({ page: id, kind: 'edit', who, before: now, after });
       return { ok: true };
     }));
   }
 
-  create(tree: Tree, pagePath: string, html: string): Promise<PageEntry> {
+  create(tree: Tree, pagePath: string, html: string, who: Who = 'author'): Promise<PageEntry> {
     return this.#serial(() => this.op('create', async () => {
       const ref = parseId(`${tree}/${checkPath(pagePath)}`);
       const title = checkTitle(ref.path);
@@ -256,6 +294,7 @@ export class PageStore {
       const made: PageEntry = { id: idOf(ref), tree: ref.tree, path: ref.path, title, size: s.size, mtime: s.mtimeMs };
       index.add(made);
       this.o.log('info', 'pages.create', { id: made.id, bytes: s.size });
+      this.#emit({ page: made.id, kind: 'create', who, before: '', after: html });
       return made;
     }));
   }
@@ -288,7 +327,7 @@ export class PageStore {
    * the author. The plan is written to .neo/pages/.rename.json first, so a rename that
    * stops part way is finished by calling it again, or by recover() when NEO starts.
    */
-  rename(id: string, newPath: string, openBookId: string | null): Promise<Renamed> {
+  rename(id: string, newPath: string, openBookId: string | null, who: Who = 'author'): Promise<Renamed> {
     return this.#serial(() => this.op('rename', async () => this.#forgetOnFailure(async () => {
       const start = performance.now();
       const from = parseId(id);
@@ -297,7 +336,7 @@ export class PageStore {
       this.inside(to);
       const pending = await this.#journal();
       if (pending) {
-        const finished = await this.#finish(pending, openBookId, start);
+        const finished = await this.#finish(pending, openBookId, start, who);
         if (pending.from === id && pending.to === idOf(to)) return finished;
       }
       // a repeat of a rename that finished, say a request sent again: the page is already there
@@ -309,7 +348,7 @@ export class PageStore {
         if (!existsSync(this.file(from))) throw new PageRefused('missing', `${id} is not a page`);
         return { id, from: id, rewrittenFiles: 0, rewrittenLinks: 0, skipped: 0, deferred: [] };
       }
-      return this.#finish(await this.#plan(from, to), openBookId, start);
+      return this.#finish(await this.#plan(from, to), openBookId, start, who);
     })));
   }
 
@@ -483,7 +522,7 @@ export class PageStore {
   }
 
   // Carries out a plan, however much of it an earlier run did, and commits it as the author's.
-  async #finish(plan: HoardRenameV1, openBookId: string | null, start: number): Promise<Renamed> {
+  async #finish(plan: HoardRenameV1, openBookId: string | null, start: number, who: Who = 'author'): Promise<Renamed> {
     const library = this.o.library();
     const own = booksWithOwnRepo(library);
     const there = (rel: string) => existsSync(path.join(library, ...rel.split('/')));
@@ -504,8 +543,15 @@ export class PageStore {
     const inOwnRepo = (rel: string) => own.some((b) => rel.startsWith(`${b}/`));
     // a move refused part way leaves the page where the index does not have it
     const run = () => this.#execute(plan, openBookId).catch((err: unknown) => { this.#titles = null; throw err; });
+    const abs = (rel: string) => path.join(library, ...rel.split('/'));
+    const was = readNow(abs(plan.from));
     const result = this.o.layer ? (await this.o.layer.around([...named].filter((rel) => !inOwnRepo(rel)), run, 'author')).result : await run();
     this.#track(plan.from, plan.to);
+    // a repeat of a rename an earlier run moved has no old text left to give
+    if (plan.from !== plan.to) {
+      const now = readNow(abs(plan.to)) ?? '';
+      this.#emit({ page: plan.to, from: plan.from, kind: 'rename', who, before: was ?? now, after: now });
+    }
     const ms = Math.round(performance.now() - start);
     this.o.log('info', 'pages.rename', {
       from: plan.from, to: plan.to, files: result.rewrittenFiles, links: result.rewrittenLinks, deferred: result.deferred.length, skipped: result.skipped, ms,
