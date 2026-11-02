@@ -12,14 +12,14 @@
 // matching, and it is put back as it was when the wiki closes. A change to the drop cap
 // setting made while the wiki is open takes effect on the wiki's pages until it is
 // opened again.
-import type { Applied, WikiPages } from './store.ts';
+import type { WikiPages } from './store.ts';
 import { linkAt, linksIn, pageIndex } from './links.ts';
 import { startWikiPane } from './pane.ts';
 
 const REDRAW_MS = 300;
 const STATUS_MS = 4_000;
 
-interface Imported { outcome: string; bookId?: string | null; imported?: Applied['imported']; open?: boolean; openBookId?: string | null; message?: string }
+interface Imported { outcome: string; openBookId?: string | null; message?: string }
 
 const frames = (n: number) => new Promise<void>((resolve) => {
   const next = (left: number) => (left === 0 ? resolve() : requestAnimationFrame(() => next(left - 1)));
@@ -158,8 +158,7 @@ export function startWiki(neo: NeoApiV5) {
       const answer = (await neo.invoke('wiki.import', { openBookId: neo.book()?.id ?? null, from })) as Imported;
       await refresh();
       drawLinks();
-      if (answer.outcome === 'imported' && answer.open) await openWiki();
-      else if (answer.outcome === 'imported' && answer.openBookId) await openImported(answer.openBookId);
+      if (answer.outcome === 'imported' && answer.openBookId) await openImported(answer.openBookId);
       else if (pane.shown()) await pane.reload();
     } finally {
       importing = false;
