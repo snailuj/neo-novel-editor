@@ -188,8 +188,10 @@ test('topicDest is one safe path segment, named for the page as well as the topi
   assert.notEqual(topicDest('A.md', 'Otters'), topicDest('B.md', 'Otters'), 'one name on two pages is two topics');
 });
 
-test('the topic columns round-trip', () => {
+test('old sheets without the topic columns still read, and the columns round-trip', () => {
   const rows = rowsFor('Scratch.md', blocks, judged(['writing', 'writing', 'tasks', 'tasks', 'other', 'other', 'writing']), []);
+  const old = writeSheet(rows).replace(/,topic,entry,topic_by/, '').split('\n').map((l, i) => (i === 0 || !l ? l : l.replace(/^((?:[^,]*,){9})(?:[^,]*,){3}/, '$1'))).join('\n');
+  assert.deepEqual(readSheet(old).map((r) => [r.topic, r.entry, r.label]), rows.map((r) => ['', '', r.label]));
   rows[0]!.topic = 'A, "quoted"';
   assert.equal(readSheet(writeSheet(rows))[0]!.topic, 'A, "quoted"');
 });
