@@ -14,7 +14,7 @@ import { Gate, GateRefused } from '../../src/hoard/git/gate.ts';
 import { isolateGitConfig, log, tempLibrary } from './git-support.ts';
 
 const librarian = { name: 'Librarian', email: 'librarian@neo-hoard.invalid' };
-const CHAPTER = 'book-fox-1/chapters/c1.html';
+const CHAPTER = 'wiki/Harbour.html';
 const BAD = '<p data-block="b1">One.</p>\n<p data-block="b 2">Two.</p>';
 const GOOD = '<p data-block="b1">One.</p>\n<p data-block="b2">Two.</p>';
 
@@ -23,6 +23,7 @@ async function setup(t: Parameters<typeof tempLibrary>[0]) {
   const lib = tempLibrary(t);
   const logged: string[] = [];
   const gate = new Gate({ library: () => lib.library, log: (level, message) => logged.push(`${level}|${message}`) });
+  lib.write(CHAPTER, '<p data-block="b1">Old.</p>');
   await lib.git.run(lib.library, ['init', '-q']);
   await commitAll(lib.git, lib.library, { who: 'author', reason: 'start', librarian, gate });
   const changed = async () => (await lib.git.run(lib.library, ['status', '--porcelain'])).stdout.split('\n').filter(Boolean);
@@ -33,10 +34,9 @@ async function setup(t: Parameters<typeof tempLibrary>[0]) {
 test('Gate-Warns-The-Writer: a writer\'s commit with a finding still commits every change, and the finding is kept', async (t) => {
   const { library, git, write, gate, logged, changed } = await setup(t);
   write(CHAPTER, BAD);
-  write('book-fox-1/book.json', '{"id":"book-fox-1","chapterOrder":["c1"],"title":"Fox"}');
   const made = await commitAll(git, library, { who: 'author', reason: 'idle', librarian, gate });
   assert.ok(made);
-  assert.equal(made.files, 2);
+  assert.equal(made.files, 1);
   assert.deepEqual(await changed(), []);
   assert.deepEqual(gate.findings().map((f) => `${f.path}|${f.rule}`), [`${CHAPTER}|Block-Ids-Citable`]);
   assert.ok(logged.some((l) => l.startsWith('warn|') && l.includes(CHAPTER)), logged.join('\n'));
@@ -89,10 +89,10 @@ test('Refused-Edit-Held-Back: the writer\'s commits leave a refused file out unt
   write(CHAPTER, BAD);
   await assert.rejects(commitAll(git, library, { who: 'librarian', reason: 'librarian-after', librarian, gate, paths: [CHAPTER] }), GateRefused);
   assert.deepEqual(gate.held(), [CHAPTER]);
-  write('book-fox-1/chapters/c2.html', '<p>Elsewhere.</p>');
+  write('wiki/Ferry.html', '<p>Elsewhere.</p>');
   const made = await commitAll(git, library, { who: 'author', reason: 'idle', librarian, gate });
   assert.ok(made);
-  assert.deepEqual(await files('HEAD'), ['book-fox-1/chapters/c2.html']);
+  assert.deepEqual(await files('HEAD'), ['wiki/Ferry.html']);
   assert.deepEqual(await changed(), [` M ${CHAPTER}`]);
 
   gate.saved(CHAPTER);
@@ -104,13 +104,13 @@ test('Refused-Edit-Held-Back: the writer\'s commits leave a refused file out unt
 
 test('Refused-Edit-Held-Back: releasing paths frees exactly those, and the rest stay held', async (t) => {
   const { library, git, write, gate } = await setup(t);
-  const other = 'book-fox-1/chapters/c2.html';
+  const other = 'wiki/Ferry.html';
   write(CHAPTER, BAD);
   await assert.rejects(commitAll(git, library, { who: 'librarian', reason: 'librarian-after', librarian, gate, paths: [CHAPTER] }), GateRefused);
   write(other, BAD);
   await assert.rejects(commitAll(git, library, { who: 'librarian', reason: 'librarian-after', librarian, gate, paths: [other] }), GateRefused);
-  assert.deepEqual(gate.held(), [CHAPTER, other]);
-  gate.release([CHAPTER, 'book-fox-1/chapters/never-held.html']);
+  assert.deepEqual(gate.held(), [other, CHAPTER]);
+  gate.release([CHAPTER, 'wiki/Never.html']);
   assert.deepEqual(gate.held(), [other]);
 });
 

@@ -5,7 +5,7 @@
 //
 // A listing walks the folders and stats each file, never opening a body, so a library of
 // thousands of pages costs a walk. A write lands only while the file still holds what the
-// caller read (the rule wiki/write.ts keeps), so a change that arrived from another device
+// caller read (the rule pages.edit keeps), so a change that arrived from another device
 // is never written over. Every refusal is logged; every request names its page by an id
 // that identity.ts has checked, so no path leaves its tree.
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';

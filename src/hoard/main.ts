@@ -21,7 +21,7 @@ import { startCompanion } from './companion/main.ts';
 import { textconvCommand } from './git/blame.ts';
 import { startGate } from './git/gate-main.ts';
 import { GitLayer, resolveSettings } from './git/layer.ts';
-import { startLibrarianPairs } from './git/librarian-main.ts';
+import { LibrarianPairs } from './git/pair.ts';
 import { createGit } from './git/runner.ts';
 import { ATTRIBUTES } from './git/start.ts';
 import { MarkStore, targeted } from './marks/store.ts';
@@ -148,19 +148,19 @@ export function activate(host: NeoMainHost): void {
   host.handle('ping', ping);
   const layer = startHistory(host);
   const gate = startGate(host, layer);
-  const pairs = startLibrarianPairs(host, layer);
+  const pairs = new LibrarianPairs({ layer, library: () => host.paths.library(), log: host.log.bind(host) });
   // The one place the author's save of a page or a chapter is heard: a held file is theirs again, and a
   // librarian pair waiting for the save is woken.
   const authorSavedPage = authorSaved(gate, pairs);
   const marks = startMarks(host, layer);
   // The page store starts after git opens; an import that writes pages before then has no index to refresh.
   const pageHolder: { store?: { list(): Promise<unknown> } } = {};
-  const wiki = startWiki(host, layer, marks, { pagesWrote: async () => pageHolder.store?.list().catch((err: unknown) => host.log('warn', 'pages: the trees did not list after an import', String(err))) });
+  startWiki(host, layer, marks, { pagesWrote: async () => pageHolder.store?.list().catch((err: unknown) => host.log('warn', 'pages: the trees did not list after an import', String(err))) });
   startSearch(host);
   const opened = layer.open().catch((err: unknown) => host.log('error', 'git.open failed', String(err)));
   const { store: pages } = startPages(host, layer, opened, authorSavedPage);
   pageHolder.store = pages;
-  startReview(host, marks, { layer, wiki, pages, authorSavedPage });
+  startReview(host, marks, { layer, pages, authorSavedPage });
   startCompanion(host, layer, marks, pages);
   startRipple(host, layer, pages, marks);
 }

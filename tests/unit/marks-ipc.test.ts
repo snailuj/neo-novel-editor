@@ -46,7 +46,7 @@ test('a verdict on a page\'s suggestion is signed by the librarian and written t
   const store = new MarkStore({ library: () => library, log: () => {} });
   const handlers = new Map<string, (payload: unknown) => unknown>();
   const host = { handle: (name: string, fn: (payload: unknown) => unknown) => handlers.set(name, fn), log: () => {}, paths: { library: () => library } };
-  startReview(host as never, store, { layer: {} as never, wiki: {} as never, pages: {} as never });
+  startReview(host as never, store, { layer: {} as never, pages: {} as never });
   const made = await store.add({ page, kind: 'substitution', anchor, proposed: 'vessels' }, 'author');
   await handlers.get('review.verdict')!({ page, markId: made.id, state: 'flagged', reason: 'Not there.' });
   const saved = JSON.parse(readFileSync(pageSidecarPath(library, page), 'utf8')) as { marks: { history: { state: string; who: string }[]; thread: { who: string; body: string }[] }[] };
