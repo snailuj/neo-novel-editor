@@ -98,7 +98,7 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
     open: (id) => open(id),
     hold: async () => {
       await beforeLeaving();
-      held = new Promise<void>((done) => { release = () => { release = null; done(); }; });
+      held = new Promise<void>((resolve) => { release = () => { release = null; resolve(); }; });
       return () => release?.();
     },
     renamed: async (from, to) => {
