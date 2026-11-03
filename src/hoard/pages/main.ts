@@ -1,7 +1,6 @@
 // The page store's channels on the main side. The window half asks for the list, a page,
 // a write, a new page or a rename; each payload is checked against its schema (schemas/ipc)
-// before the store sees it. Nothing in the window calls these yet: pages as files sit
-// beside the Wiki book until each consumer is moved over.
+// before the store sees it.
 import {
   validateHoardPagesCreateV1, validateHoardPagesReadV1, validateHoardPagesRenameV1, validateHoardPagesWriteV1,
 } from '../../generated/validators.cjs';

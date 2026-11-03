@@ -1,7 +1,7 @@
 // Pages as files, on the main side. The library has two folders at its root, wiki/ and
 // sources/, and a page is one .html file in either (subfolders allowed); its title is
 // its file name without .html. Every reader (search, the companion, review, the git
-// layer) lists and reads pages here, and none opens the Wiki book.
+// layer) lists and reads pages here.
 //
 // A listing walks the folders and stats each file, never opening a body, so a library of
 // thousands of pages costs a walk. A write lands only while the file still holds what the

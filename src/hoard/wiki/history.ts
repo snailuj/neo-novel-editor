@@ -1,5 +1,5 @@
-// The wiki pane's trail of pages, as a browser keeps one. A stop is a Wiki book chapter id
-// or a stored page id (wiki/... or sources/...). Pure.
+// The wiki pane's trail of pages, as a browser keeps one. A stop is a stored page id
+// (wiki/... or sources/...). Pure.
 export class PageHistory {
   #trail: string[] = [];
   #at = -1;
@@ -17,9 +17,9 @@ export class PageHistory {
   }
 
   /** A new page: what was ahead goes. The page already shown is not a new stop. */
-  visit(chId: string): void {
-    if (this.current === chId) return;
-    this.#trail = [...this.#trail.slice(0, this.#at + 1), chId];
+  visit(id: string): void {
+    if (this.current === id) return;
+    this.#trail = [...this.#trail.slice(0, this.#at + 1), id];
     this.#at = this.#trail.length - 1;
   }
 
