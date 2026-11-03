@@ -20,6 +20,12 @@ import {
 export interface TreeHost {
   /** The page shown in the pane. */
   open(id: string): Promise<void>;
+  /**
+   * Before a rename or move: what was typed in the page shown is saved, and later saves
+   * wait until renamed is told (or the release is called, when the change fails), so
+   * nothing typed is written under an id that is gone.
+   */
+  hold(): Promise<() => void>;
   /** A page renamed or moved: the trail follows it and the page shown is read again. */
   renamed(from: string, to: string): Promise<void>;
   /** A page made, renamed or moved: whatever draws links by the pages' titles reads them again. */
@@ -290,6 +296,15 @@ export function startPagesTree(neo: Neo, host: TreeHost) {
   const origin = (ask: Ask) => (ask.op === 'new' ? newButton : rowButton(ask.id));
 
   const settle = async (ask: Ask, verdict: { tree: Tree; path: string }) => {
+    const release = ask.op === 'new' ? null : await host.hold();
+    try {
+      await settleHeld(ask, verdict);
+    } finally {
+      release?.();
+    }
+  };
+
+  const settleHeld = async (ask: Ask, verdict: { tree: Tree; path: string }) => {
     const to = `${verdict.tree}/${verdict.path}`;
     // told once the list is read again, which clears the lines
     let said = '';

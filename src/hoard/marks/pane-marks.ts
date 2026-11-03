@@ -1,13 +1,14 @@
-// Marks in the Wiki pane: the page shown beside the book carries its comments and
-// suggestions, drawn on its lines and listed under it, so a page looked up can be talked
-// over without leaving the manuscript. From here the writer comments on words selected in
-// the page, replies, resolves and reopens, and on the librarian's pages suggests a change,
-// which the librarian reviews as it does in the book (review/flow.ts). A change the pane
-// makes is worked out on a copy of the page (wiki/edit.ts) and written whole by the main
-// half (wiki.edit), only while the page is as the pane read it; the wiki book's own
-// window owns the page while it is open, so the pane sends the writer there then. Typing
-// in the page itself (wiki/pane-edit.ts) is saved through the same writer, as the
-// writer's, and on the librarian's pages opens the suggest composer here.
+// Marks in the Wiki pane: the stored page shown beside the book (wiki/... or sources/...)
+// carries its comments and suggestions, drawn on its lines and listed under it, so a page
+// looked up can be talked over without leaving the manuscript. They are kept by the page's
+// id (marks.* with {page}, in .neo/marks/<tree>/<path>.json). From here the writer comments
+// on words selected in the page, replies, resolves and reopens, and on the librarian's
+// pages suggests a change, which the librarian reviews as it does in the book
+// (review/flow.ts). A change the pane makes is worked out on a copy of the page
+// (wiki/edit.ts) and written whole by the main half (pages.edit), only while the file is
+// as the pane read it. Typing in the page itself (wiki/pane-edit.ts) is saved through the
+// same writer as a patch of blocks, as the writer's, and then handed to the librarian to
+// read (saved); on the librarian's pages it opens the suggest composer here.
 //
 // The lines are the pane's own, so the marks are drawn with CSS highlights of the
 // plugin's own (hoard-pane-*), not the host's, which mark the open book only. Nothing
@@ -15,26 +16,29 @@
 import type { Mark, MarkState } from '../../generated/hoard-marks-v1.js';
 import { claim, submitKey } from '../keys.ts';
 import { reviewFlow } from '../review/flow.ts';
-import { editPage, type Spot } from '../wiki/edit.ts';
+import { editPage, patchBlocks, type NowBlock, type Spot } from '../wiki/edit.ts';
 import { startPaneEdit } from '../wiki/pane-edit.ts';
+import type { ShownPage } from '../wiki/pane.ts';
 import { anchorAt, anchorPoint } from './anchor.ts';
 import { isSuggestion } from './model.ts';
 import { drawChapter, label, NAMES, orderForList, type Drawn } from './view.ts';
 
-interface PageRead { bookId: string; chId: string; title: string; html: string }
 interface Pane {
   root: HTMLDivElement;
   body: HTMLDivElement;
-  shown(): { chId: string; title: string } | null;
+  shown(): ShownPage | null;
   reload(): Promise<void>;
-  onShown(fn: (page: PageRead | null) => void): void;
+  onShown(fn: (page: ShownPage | null) => void): void;
   beforeLeave(fn: () => Promise<void>): void;
+  onRenamed(fn: (from: string, to: string) => void): void;
+  held(): Promise<void>;
   wide(on: boolean): void;
 }
 interface Pages { get(target: string): string | undefined }
-interface Listed { chapters: Record<string, Mark[]>; unreadable: string[] }
 interface Composing { kind: 'comment' | 'suggestion'; anchor: Omit<Mark['anchor'], 'commit'> }
-type Written = { ok: true } | { ok: false; reason: 'missing' | 'stale' } | { ok: false; reason: 'refused'; findings: { message: string }[] };
+type Written = { ok: true } | { ok: false; reason: 'missing' | 'stale' | 'owned' | 'held' } | { ok: false; reason: 'refused'; findings: { message: string }[] };
+/** A page the writer's own typing changed, for the librarian to read. */
+export interface PageSaved { page: string; before: string; after: string }
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] => {
   const node = document.createElement(tag);
@@ -80,14 +84,17 @@ function pointIn(lines: Element[], node: Node, offset: number): { pIdx: number; 
   return { pIdx, off: before.toString().length };
 }
 
-export function startPaneMarks(neo: NeoApiV5, pane: Pane, o: { pages: () => Pages }) {
-  let page: PageRead | null = null;
+export function startPaneMarks(neo: NeoApiV5, pane: Pane, o: { pages: () => Pages; saved?: (change: PageSaved) => void }) {
+  let page: ShownPage | null = null;
   let marks: Mark[] = [];
   let unreadable = false;
   let drawn: Drawn | null = null;
   let composing: Composing | null = null;
-  // the librarian's pages of the wiki book, read when a page is shown
+  // the librarian's pages among those shown, read when a page is shown
   let librarians = new Set<string>();
+  // whose the page shown is has been read: until it is, typing could be an edit of the
+  // librarian's page that should have been a suggestion, so nothing is written
+  let ownerKnown = false;
   // a list read that started before the file last answered is dropped
   let generation = 0;
   const busy = new Set<string>();
@@ -173,10 +180,10 @@ export function startPaneMarks(neo: NeoApiV5, pane: Pane, o: { pages: () => Page
     replyLabel.htmlFor = reply.id;
     const actions = el('div', 's-actions');
     const replyButton = button('', 'Reply');
-    const send = () => act(mark.id, async (bookId, chId) => {
+    const send = () => act(mark.id, async (id) => {
       const body = reply.value.trim();
       if (!body) return null;
-      return neo.invoke('marks.reply', { bookId, chId, markId: mark.id, body });
+      return neo.invoke('marks.reply', { page: id, markId: mark.id, body });
     }, 'Reply added.', 'Your reply was not saved');
     replyButton.addEventListener('click', send);
     reply.addEventListener('keydown', (e) => { if (submitKey(e)) { claim(e); send(); } });
@@ -184,11 +191,11 @@ export function startPaneMarks(neo: NeoApiV5, pane: Pane, o: { pages: () => Page
     const stateTo = (state: MarkState, text: string, done: string) => {
       const b = button('', text);
       b.dataset.action = text;
-      b.addEventListener('click', () => act(mark.id, (bookId, chId) => neo.invoke('marks.state', { bookId, chId, markId: mark.id, state }), done, 'It was not changed'));
+      b.addEventListener('click', () => act(mark.id, (id) => neo.invoke('marks.state', { page: id, markId: mark.id, state }), done, 'It was not changed'));
       actions.append(el('span', 's-sep', '·'), b);
     };
     if (!isSuggestion(mark.kind)) stateTo(mark.state === 'resolved' ? 'open' : 'resolved', mark.state === 'resolved' ? 'Reopen' : 'Resolve', 'Done.');
-    for (const action of flow.cardActions(mark, page!.chId)) {
+    for (const action of flow.cardActions(mark, page!.id)) {
       const b = button('', action.label);
       b.dataset.action = action.label;
       b.addEventListener('click', () => once(mark.id, action.run));
@@ -208,12 +215,12 @@ export function startPaneMarks(neo: NeoApiV5, pane: Pane, o: { pages: () => Page
     const ordered = d ? orderForList(marks, d) : marks;
     list.replaceChildren(...ordered.map((m) => card(m, d ? d.stale.includes(m.id) : false)));
     empty.hidden = ordered.length > 0;
-    alert.textContent = unreadable ? 'This page\'s comments file could not be read, so it is left untouched. neo-errors.log names the file.' : alert.textContent;
+    alert.textContent = unreadable ? 'This page\'s comments file could not be read, so it is left untouched. neo-errors.log names the file; fix or remove it, then open the page again.' : alert.textContent;
     addButton.disabled = unreadable;
   };
 
   const redraw = () => {
-    drawn = page ? drawChapter(page.chId, marks, paragraphs()) : null;
+    drawn = page ? drawChapter(page.id, marks, paragraphs()) : null;
     paint();
     render();
   };
@@ -223,24 +230,27 @@ export function startPaneMarks(neo: NeoApiV5, pane: Pane, o: { pages: () => Page
     if (!page) { marks = []; redraw(); return; }
     const forPage = page;
     try {
-      const listed = await neo.invoke('marks.list', { bookId: forPage.bookId }) as Listed;
+      const listed = await neo.invoke('marks.list', { page: forPage.id }) as Mark[];
       if (page !== forPage || asked !== generation) return;
-      marks = listed.chapters[forPage.chId] ?? [];
-      unreadable = listed.unreadable.includes(forPage.chId);
+      marks = listed;
+      unreadable = false;
     } catch (err) {
-      alert.textContent = `This page's comments could not be read: ${message(err)}.`;
+      if (page !== forPage || asked !== generation) return;
+      console.warn('hoard: pane marks: the page\'s comments did not read', err);
+      marks = [];
+      unreadable = true;
     }
     redraw();
   };
 
   // Runs one action on a mark, once at a time, and takes the file's answer.
-  async function act(id: string, run: (bookId: string, chId: string) => Promise<unknown>, done: string, failed: string) {
+  async function act(id: string, run: (page: string) => Promise<unknown>, done: string, failed: string) {
     if (!page || busy.has(id)) return;
     const forPage = page;
     busy.add(id);
     render();
     try {
-      const answer = await run(forPage.bookId, forPage.chId) as { marks: Mark[] } | null;
+      const answer = await run(forPage.id) as { marks: Mark[] } | null;
       if (answer && page === forPage) {
         generation++;
         marks = answer.marks;
@@ -271,65 +281,85 @@ export function startPaneMarks(neo: NeoApiV5, pane: Pane, o: { pages: () => Page
   }
 
   // ---- changing the page -----------------------------------------------------------
+  // Each answer of pages.edit that is not a write, in words the writer can act on.
   const REFUSED: Record<string, string> = {
-    missing: 'the page is no longer in the wiki',
+    missing: 'the page is no longer there; it may have been moved or removed outside NEO',
     stale: 'the page had changed since the pane showed it, so it is shown again as it is now',
+    owned: 'the page is not the librarian\'s, so only you can change it',
+    held: 'the library is busy with another change; try again in a moment',
     words: 'the words had changed',
   };
+  const refusal = (written: Exclude<Written, { ok: true }>) => (written.reason === 'refused'
+    ? `the library check refused it: ${written.findings.map((f) => f.message).join(' ')}`
+    : REFUSED[written.reason] ?? written.reason);
 
   // Why the pane cannot write the shown page now, or null.
   const cannotWrite = (): string | null => {
     if (!page) return 'no page is shown';
-    if (neo.book()?.id === page.bookId) return 'the wiki is open as a book; make the change there';
+    if (!ownerKnown) return 'whose page it is is still being read; try again in a moment';
     return null;
   };
 
+  const edit = (id: string, before: string, after: string, as: 'librarian' | 'author') => neo.invoke('pages.edit', { page: id, before, after, as }) as Promise<Written>;
+
   // The page written with one change, as whose it is; resolves with why not, or null.
-  async function write(chId: string, at: Spot, expected: string, text: string, as: 'librarian' | 'author'): Promise<string | null> {
+  async function write(id: string, at: Spot, expected: string, text: string, as: 'librarian' | 'author'): Promise<string | null> {
     const why = cannotWrite();
     if (why) return why;
     const shown = page!;
-    if (shown.chId !== chId) return 'another page is shown';
+    if (shown.id !== id) return 'another page is shown';
     const after = editPage(shown.html, at, expected, text);
     if (after === null) return REFUSED.words;
-    const written = await neo.invoke('wiki.edit', { chId, before: shown.html, after, as }) as Written;
+    const written = await edit(id, shown.html, after, as);
     if (written.ok || written.reason === 'stale') await pane.reload();
-    if (written.ok) return null;
-    if (written.reason === 'refused') return `the library check refused it: ${written.findings.map((f) => f.message).join(' ')}`;
-    return REFUSED[written.reason] ?? written.reason;
+    if (written.ok) {
+      if (as === 'author') o.saved?.({ page: id, before: shown.html, after });
+      return null;
+    }
+    return refusal(written);
   }
 
-  // The writer's typing saved, one paragraph's change at a time, without drawing the page
+  // The writer's typing saved as a patch of blocks (patchBlocks), without drawing the page
   // again under the caret: the page's HTML as the pane knows it takes the change. When
-  // another device changed the page meanwhile, the change is made again on the page as it
-  // is now, if that paragraph still reads as it did, and the page is shown again once the
-  // round of saves is done (settle).
+  // another device changed the page meanwhile, the patch is made again on the page as it
+  // is now, if the blocks the writer touched still read as they did, and the page is shown
+  // again once the round of saves is done (settle). A change from elsewhere is never
+  // written over.
   let readAgain = false;
-  async function saveTyped(chId: string, at: Spot, expected: string, text: string, _was: string): Promise<string | null> {
+  async function saveBlocks(id: string, now: NowBlock[]): Promise<string | null> {
     const why = cannotWrite();
     if (why) return why;
     const shown = page!;
-    if (shown.chId !== chId) return 'another page is shown';
-    const before = shown.html;
-    const after = editPage(before, at, expected, text);
-    if (after === null) return REFUSED.words;
-    const written = await neo.invoke('wiki.edit', { chId, before, after, as: 'author' }) as Written;
-    // unhooked from the pane until stage 6 rebuilds it on page files; a stale page is not read again
-    if (!written.ok && written.reason === 'stale') readAgain = true;
-    if (!written.ok) return written.reason === 'refused' ? `the library check refused it: ${written.findings.map((f) => f.message).join(' ')}` : REFUSED[written.reason] ?? written.reason;
+    if (shown.id !== id) return 'another page is shown';
+    let before = shown.html;
+    let after = patchBlocks(before, now);
+    if (after === null) return 'the page\'s paragraphs could not be told apart in its file, so the pane does not write it';
+    let written = await edit(id, before, after, 'author');
+    if (!written.ok && written.reason === 'stale') {
+      readAgain = true;
+      const fresh = await neo.invoke('pages.read', { id }) as { html: string } | null;
+      if (!fresh) return REFUSED.missing;
+      after = patchBlocks(fresh.html, now, before);
+      if (after === null) return 'a paragraph you changed was changed elsewhere meanwhile, so the page is shown as it is now';
+      before = fresh.html;
+      written = await edit(id, before, after, 'author');
+    }
+    if (!written.ok) return refusal(written);
     if (page === shown) shown.html = after;
+    o.saved?.({ page: id, before, after });
     return null;
   }
 
   const flow = reviewFlow(neo, o.pages, {
-    bookId: () => page?.bookId ?? null,
-    paragraphs: (chId) => (page?.chId === chId ? paragraphs() : null),
-    marksOf: (chId) => (page?.chId === chId ? marks : []),
-    isLibrarians: (chId) => librarians.has(chId),
-    applyAsLibrarian: (chId, at, expected, text) => write(chId, at, expected, text, 'librarian'),
-    applyAsWriter: (chId, at, expected, text) => write(chId, at, expected, text, 'author'),
-    settle: (chId, answer) => {
-      if (page?.chId !== chId) return;
+    bookId: () => null,
+    target: (key) => ({ page: key }),
+    paragraphs: (id) => (page?.id === id ? paragraphs() : null),
+    marksOf: (id) => (page?.id === id ? marks : []),
+    isLibrarians: (id) => librarians.has(id),
+    applyAsLibrarian: (id, at, expected, text) => write(id, at, expected, text, 'librarian'),
+    applyAsWriter: (id, at, expected, text) => write(id, at, expected, text, 'author'),
+    settle: (id, answer) => {
+      if (page?.id !== id) return;
       generation++;
       marks = answer.marks;
       redraw();
@@ -364,7 +394,7 @@ export function startPaneMarks(neo: NeoApiV5, pane: Pane, o: { pages: () => Page
   function suggestChange(typed?: string) {
     if (!page) return;
     if (composing) { (composing.kind === 'comment' ? composerText : changeText).focus(); return; }
-    if (!librarians.has(page.chId)) {
+    if (!librarians.has(page.id)) {
       alert.textContent = 'This page is yours, so there is nobody to review a suggestion.';
       return;
     }
@@ -395,7 +425,7 @@ export function startPaneMarks(neo: NeoApiV5, pane: Pane, o: { pages: () => Page
     if (proposed === anchor.exact) { status.textContent = 'That is what the page already says. Change it, or Esc to cancel.'; return; }
     suggestAdd.disabled = true;
     try {
-      const request: Record<string, unknown> = { bookId: forPage.bookId, chId: forPage.chId, kind, anchor };
+      const request: Record<string, unknown> = { page: forPage.id, kind, anchor };
       if (kind !== 'deletion') request.proposed = proposed;
       if (body) request.body = body;
       const answer = await neo.invoke('marks.add', request) as { id: string; marks: Mark[] };
@@ -404,7 +434,7 @@ export function startPaneMarks(neo: NeoApiV5, pane: Pane, o: { pages: () => Page
       generation++;
       marks = answer.marks;
       redraw();
-      await flow.review(forPage.chId, answer.id);
+      await flow.review(forPage.id, answer.id);
     } catch (err) {
       alert.textContent = `Your suggestion was not saved: ${message(err)}. It is still in the box; suggest it again.`;
     } finally {
@@ -441,7 +471,7 @@ export function startPaneMarks(neo: NeoApiV5, pane: Pane, o: { pages: () => Page
     const forPage = page;
     composeAdd.disabled = true;
     try {
-      const answer = await neo.invoke('marks.add', { bookId: forPage.bookId, chId: forPage.chId, kind: 'comment', anchor: composing.anchor, body }) as { marks: Mark[] };
+      const answer = await neo.invoke('marks.add', { page: forPage.id, kind: 'comment', anchor: composing.anchor, body }) as { marks: Mark[] };
       stopComposing();
       if (page === forPage) { generation++; marks = answer.marks; }
       status.textContent = 'Comment added.';
@@ -476,18 +506,20 @@ export function startPaneMarks(neo: NeoApiV5, pane: Pane, o: { pages: () => Page
     if (e.key === 'Escape' && !e.isComposing && composing && e.target instanceof Node && (composer.contains(e.target) || suggester.contains(e.target))) stopComposing();
   }, true);
 
-  // Which of the wiki's pages are the librarian's, read again with each page shown, since
-  // an import adds pages; a failure leaves the page the writer's, which nothing changes.
-  async function owners(forPage: PageRead) {
+  // Whether the page is the librarian's, read again with each page shown, since an import
+  // can change its sidecar; a failure leaves the page the writer's, which nothing changes.
+  async function owners(forPage: ShownPage) {
     try {
-      const answer = await neo.invoke('review.owners', { bookId: forPage.bookId }) as { librarian: string[] };
+      const answer = await neo.invoke('review.owners', { pages: [forPage.id] }) as { librarian: string[] };
       if (page !== forPage) return;
       librarians = new Set(answer.librarian);
     } catch (err) {
+      if (page !== forPage) return;
       librarians = new Set();
-      alert.textContent = `Which pages are the librarian's could not be read: ${message(err)}.`;
+      alert.textContent = `Whose page this is could not be read: ${message(err)}. It is treated as yours; open it again to read it again.`;
     }
-    suggestButton.hidden = !librarians.has(forPage.chId);
+    ownerKnown = true;
+    suggestButton.hidden = !librarians.has(forPage.id);
     editing.refresh();
     render();
   }
@@ -495,9 +527,10 @@ export function startPaneMarks(neo: NeoApiV5, pane: Pane, o: { pages: () => Page
   const editing = startPaneEdit(neo, pane, {
     page: () => page,
     cannotWrite,
-    isLibrarians: (chId) => librarians.has(chId),
+    isLibrarians: (id) => librarians.has(id),
     suggest: (typed) => suggestChange(typed),
-    save: saveTyped,
+    saveBlocks,
+    redraw: () => redraw(),
     settle: async () => {
       if (readAgain) {
         readAgain = false;
@@ -511,10 +544,18 @@ export function startPaneMarks(neo: NeoApiV5, pane: Pane, o: { pages: () => Page
     warn: (text) => { alert.textContent = text; },
   });
 
+  // The tree renamed or moved a page: the one shown keeps its marks and typing under its new id.
+  pane.onRenamed((from, to) => {
+    if (librarians.delete(from)) librarians.add(to);
+    editing.renamed(from, to);
+    if (page?.id === from) page.id = to;
+  });
+
   pane.onShown((shown) => {
-    const samePage = !!shown && page?.chId === shown.chId;
+    const samePage = !!shown && page?.id === shown.id;
     page = shown;
     readAgain = false;
+    if (!samePage) ownerKnown = false;
     editing.shown();
     stopComposing();
     // a page shown again after a change keeps what the writer was just told
@@ -526,10 +567,6 @@ export function startPaneMarks(neo: NeoApiV5, pane: Pane, o: { pages: () => Page
     if (shown) owners(shown);
     load();
   });
-  neo.on('book-close', () => {
-    // the page may be the wiki book's, whose marks the closing book can change
-    if (page) load();
-  });
 
   return {
     commentOnSelection,
@@ -540,6 +577,6 @@ export function startPaneMarks(neo: NeoApiV5, pane: Pane, o: { pages: () => Page
     flush: () => editing.flush(),
     reload: load,
     /** For tests and the console. */
-    state: () => structuredClone({ page: page && { bookId: page.bookId, chId: page.chId }, marks, stale: drawn?.stale ?? [], editing: editing.state() }),
+    state: () => structuredClone({ page: page && { id: page.id }, marks, stale: drawn?.stale ?? [], editing: editing.state() }),
   };
 }

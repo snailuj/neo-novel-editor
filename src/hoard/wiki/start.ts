@@ -13,7 +13,7 @@ import { checked } from '../checked.ts';
 import type { GitLayer } from '../git/layer.ts';
 import type { Tree } from '../pages/identity.ts';
 import { ListError, readImportList, type ImportList } from './import-list.ts';
-import { PageImport, type PageMarks } from './page-import.ts';
+import { PageImport, type PageImportOptions, type PageMarks } from './page-import.ts';
 import type { Pick, SortedOf } from './picks.ts';
 import { describeSort } from './summary.ts';
 
@@ -186,14 +186,16 @@ class Targets {
 
 /**
  * `pageMarks` holds the marks of imported pages; `pagesWrote` is told when an import has
- * written page files, so the page store reads its trees again (pages/store.ts).
+ * written page files, so the page store reads its trees again (pages/store.ts);
+ * `pageImported` is told of each page file an import wrote (page-import.ts).
  */
-export function startWiki(host: NeoMainHost, layer: GitLayer, o: { pageMarks?: PageMarks; pagesWrote?: () => Promise<unknown> } = {}): void {
-  const { pageMarks, pagesWrote = () => Promise.resolve() } = o;
+export function startWiki(host: NeoMainHost, layer: GitLayer, o: { pageMarks?: PageMarks; pagesWrote?: () => Promise<unknown>; pageImported?: PageImportOptions['imported'] } = {}): void {
+  const { pageMarks, pagesWrote = () => Promise.resolve(), pageImported } = o;
   const targets = new Targets((tree) => new PageImport({
     library: () => host.paths.library(),
     tree,
     ...(pageMarks ? { marks: pageMarks } : {}),
+    ...(pageImported ? { imported: pageImported } : {}),
     head: () => layer.head(),
     wrote: (name) => layer.wrote(name),
     commit: (part) => layer.commitNow(part === 'author' ? 'import-author' : 'import'),

@@ -33,7 +33,7 @@ test('the check can fail: a reader that names the Wiki book is caught', () => {
 
 // Rule: the Wiki book is gone from src/hoard: no file names its store, its manifest, its
 // schemas or the channels that served its chapters. Pages come in only as page files.
-const GONE = /WikiStore|wiki\/store|wiki\.json|wiki\.pages|wiki\.imported-book|['"`]wiki\.page['"`]|HoardWikiV1|HoardWikiPageV1|hoard-wiki-v1|hoard-wiki-page-v1|open-imported-book/;
+const GONE = /WikiStore|wiki\.edit|wiki\/store|wiki\.json|wiki\.pages|wiki\.imported-book|['"`]wiki\.page['"`]|HoardWikiV1|HoardWikiPageV1|hoard-wiki-v1|hoard-wiki-page-v1|open-imported-book/;
 
 test('nothing in src/hoard names the Wiki book store, its file, its schemas or its channels', () => {
   const files = sources('.');

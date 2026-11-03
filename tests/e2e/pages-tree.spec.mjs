@@ -6,7 +6,7 @@ import path from 'node:path';
 import { launchProfile, seedBook } from '../support/electron-profile.mjs';
 
 // Stage 5, the Pages tree in the wiki pane. Rules: a stored page (wiki/ or sources/) shows
-// in the pane read-only, beside the open book, and its links reach pages by title, wiki
+// in the pane beside the open book, and its links reach pages by title, wiki
 // first; a link in the manuscript opens its page there; Back and Forward walk the trail;
 // from the tree the writer opens, makes, renames and moves pages, by pointer or by
 // keyboard alone; and the focus stays in the manuscript unless the writer acts in the pane.
@@ -125,10 +125,10 @@ test('a link in the manuscript opens its stored page in the pane, the caret stay
   }
 });
 
-// Rule: a stored page shows read-only beside the book, marked where it is asked to be, with
-// its links reaching pages by title only (wiki first); typing there changes nothing; Back
-// and Forward walk the trail; and none of it takes the focus from the manuscript.
-test('a stored page shows read-only in the pane, and the trail walks it', async () => {
+// Rule: a stored page shows beside the book, editable (pane-edit.spec), marked where it is
+// asked to be, with its links reaching pages by title only (wiki first); Back and Forward
+// walk the trail; and none of it takes the focus from the manuscript.
+test('a stored page shows in the pane, and the trail walks it', async () => {
   const { profile, library } = await libraryProfile();
   const fixture = await launchProfile(profile);
   try {
@@ -144,14 +144,9 @@ test('a stored page shows read-only in the pane, and the trail walks it', async 
     expect(await page.evaluate(() => [...(CSS.highlights.get('hoard-wiki-found') ?? [])].map((r) => r.toString()))).toEqual(['rows']);
     expect(await inManuscript(page)).toBe(true);
     expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('wiki/People/Ada Vell.html');
-    await expect(pane.locator('.hoard-wiki-status')).toHaveText(/^Read-only/);
+    await expect(pane.locator('.hoard-wiki-status')).toHaveText('');
+    await expect(pane.locator('.hoard-wiki-page')).toHaveAttribute('contenteditable', 'true');
     await expect(pane.locator('.hoard-wiki-missing')).toHaveText('[[Vell]]');
-
-    // typing on the page changes neither the page nor its file
-    await pane.locator('.hoard-wiki-line').nth(1).click({ position: { x: 4, y: 4 } });
-    await page.keyboard.type('zz');
-    await page.keyboard.press('Enter');
-    await expect(pane.locator('.hoard-wiki-line').nth(1)).toHaveText('She rows at dawn to [[Vell]].');
     expect(fileOf(library, 'wiki/People/Ada Vell.html')).toBe(PAGES['wiki/People/Ada Vell.html']);
 
     // a link reaches the wiki page over the source of the same title

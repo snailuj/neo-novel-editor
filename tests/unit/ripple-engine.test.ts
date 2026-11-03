@@ -72,7 +72,7 @@ const answer = (lines: object[]) => [{ kind: 'preflight', brief_sha256: sha256(D
 const STORM = 'The long storm broke the [[Harbour]] wall. It was rebuilt in stone the next spring, and the [[Lighthouse]] keeper moved inland.';
 
 test('ripple carries a changed page through both trees, on the author\'s word', async (t) => {
-  const { library, ripple, arounds, page, imported, p, get, marks, lines, logged } = setup(t);
+  const { library, ripple, arounds, page, imported, p, get, marks, lines, logged, store } = setup(t);
   assert.equal((await ripple.run()).wiki, false, 'no pages yet');
   page('wiki/Harbour.html', `${p('The harbour wall is made of timber.')}${p('Boats come in at high water.')}`, 'librarian');
   page('wiki/Lighthouse.html', p('The keeper lives in the tower above the [[Harbour]].'));
@@ -117,6 +117,8 @@ test('ripple carries a changed page through both trees, on the author\'s word', 
   const [claim, topic, onSource, mint] = view.proposals;
   assert.equal((await ripple.run()).proposals, 0, 'an answer is read once');
 
+  const saves: string[] = [];
+  store.onChange((c) => { saves.push(`${c.kind} ${c.page} ${c.who}`); });
   const authors = ['wiki/Lighthouse.html', 'sources/Notes/Field Notes.html'];
   const authorBytes = authors.map((id) => get(id));
   const harbour = get('wiki/Harbour.html');
@@ -154,6 +156,7 @@ test('ripple carries a changed page through both trees, on the author\'s word', 
   assert.deepEqual([ripple.overview().applied, ripple.overview().proposals.length], [4, 0]);
   assert.ok(lines.some((l) => l.message === 'ripple.mint'));
 
+  assert.deepEqual(saves, ['edit wiki/Harbour.html librarian', 'create wiki/Stone Wall.html librarian'], 'ripple saves are the librarian\'s');
   assert.deepEqual(authors.map((id) => get(id)), authorBytes, 'no author-owned page was written');
   const fourth = await ripple.run();
   assert.equal(fourth.packeted, 2, 'the next hop gets its packets');

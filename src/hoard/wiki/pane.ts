@@ -11,8 +11,11 @@
 //
 // The pane reads a page through the main half, from its file, so it shows the page as last
 // saved, kept to its paragraphs, their wiki classes and NEO's inline formatting
-// (pageBlocks), and read-only. It never takes the focus from the manuscript: only a click or
-// a key inside the pane moves the focus, and then it stays in the pane.
+// (pageBlocks). A real link or image on the page is a locked chip in the text, kept as
+// written. The page is edited in place (wiki/pane-edit.ts), so before the pane shows
+// another page, or this one again, it waits for what was typed to be saved (beforeLeave).
+// It never takes the focus from the manuscript: only a click or a key inside the pane moves
+// the focus, and then it stays in the pane.
 import { titleIndex } from '../pages/titles.ts';
 import { PageHistory } from './history.ts';
 import { linksIn } from './links.ts';
@@ -20,6 +23,8 @@ import { startPagesTree } from './pane-tree.ts';
 import type { Listed } from './tree.ts';
 
 interface StoredRead { id: string; title: string; html: string }
+/** The page shown, as the pane's editing and marks see it. */
+export interface ShownPage { id: string; title: string; html: string }
 interface Resolver { get(target: string): string | undefined }
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] => {
@@ -38,9 +43,13 @@ const button = (className: string, text: string) => {
 // What the pane keeps of a page's HTML: the paragraphs with their wiki classes and
 // data, and NEO's own inline formatting. Anything else is left out for its text, so a
 // page read from disk can never put a script, a style or a live link in the window.
-const BLOCK_CLASS = /^(?:wiki-[a-z0-9-]+|scene-break)$/;
-const BLOCK_DATA = ['depth', 'n', 'task', 'callout', 'lang', 'head', 'block'];
-const INLINE = new Set(['B', 'I', 'U', 'S', 'EM', 'STRONG', 'CODE']);
+export const BLOCK_CLASS = /^(?:wiki-[a-z0-9-]+|scene-break)$/;
+export const BLOCK_DATA = ['depth', 'n', 'task', 'callout', 'lang', 'head', 'block', 'alias'];
+export const INLINE = new Set(['B', 'I', 'U', 'S', 'EM', 'STRONG', 'CODE']);
+// A real link or image, shown as one locked piece of the text: its HTML as the page holds
+// it rides on the chip and is written back as it was. Nothing in it loads or is followed.
+export const CHIP = 'hoard-wiki-chip';
+export const CHIP_SOURCE = 'data-hoard-source';
 // the CSS highlight on words a search found on the page shown
 const FOUND = 'hoard-wiki-found';
 
@@ -62,6 +71,14 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
   let moves = 0;
   // where to take the reader on the next page drawn: words a search found
   let showAt: { pIdx: number; off: number; len: number } | null = null;
+  const shownListeners: ((page: ShownPage | null) => void)[] = [];
+  const leaving: (() => Promise<void>)[] = [];
+  const beforeLeaving = async () => { for (const fn of leaving) await fn(); };
+  const renamedListeners: ((from: string, to: string) => void)[] = [];
+  // while the tree renames or moves a page, saves wait (held), so none goes to an id that
+  // is gone; released once everything that knows the page by id has its new one
+  let held: Promise<void> = Promise.resolve();
+  let release: (() => void) | null = null;
 
   const root = pane.element;
   root.classList.add('hoard-wiki-pane');
@@ -79,9 +96,16 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
   const empty = el('p', 'hoard-wiki-empty', 'Ctrl+click a [[link]] in your writing, or put the caret in one and choose Plugins > Follow Link, to look its page up here. Or open Pages above and pick one.');
   const tree = startPagesTree(neo, {
     open: (id) => open(id),
+    hold: async () => {
+      await beforeLeaving();
+      held = new Promise<void>((resolve) => { release = () => { release = null; resolve(); }; });
+      return () => release?.();
+    },
     renamed: async (from, to) => {
       history.rename(from, to);
       if (stored?.id === from) stored = { ...stored, id: to };
+      for (const fn of renamedListeners) fn(from, to);
+      release?.();
       // the page shown may be the one renamed, or hold a link to it
       if (history.current) await showCurrent();
     },
@@ -107,6 +131,8 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
       const words = text.slice(link.off, link.off + link.len);
       if (pages.get(link.target)) {
         const go = button('hoard-wiki-link', words);
+        // one piece while the page is edited: the link's words are typed around
+        go.contentEditable = 'false';
         go.addEventListener('click', () => {
           follow(link.target).then((got) => {
             if (got === 'missing') status.textContent = `No page is called “${link.target}” now. It may have been renamed or removed outside NEO.`;
@@ -117,6 +143,7 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
         out.push(go);
       } else {
         const gone = el('span', 'hoard-wiki-missing', words);
+        gone.contentEditable = 'false';
         gone.title = `No page is called “${link.target}”.`;
         out.push(gone);
       }
@@ -126,6 +153,27 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
     return out;
   };
 
+  // A link keeps its words, so the page's text reads as its file's does; an image has none,
+  // and says what it is through its label and the stylesheet.
+  const chipOf = (source: Element): HTMLElement => {
+    const chip = el('span', CHIP);
+    chip.contentEditable = 'false';
+    chip.setAttribute(CHIP_SOURCE, source.outerHTML);
+    if (source.tagName === 'A') {
+      chip.classList.add('hoard-wiki-chip-link');
+      chip.textContent = source.textContent;
+      chip.title = `Link to ${source.getAttribute('href') ?? 'nowhere'}, kept as written`;
+    } else {
+      const alt = source.getAttribute('alt') ?? '';
+      chip.classList.add('hoard-wiki-chip-image');
+      chip.setAttribute('role', 'img');
+      chip.setAttribute('aria-label', alt ? `Image: ${alt}` : 'Image');
+      chip.dataset.alt = alt;
+      chip.title = 'Image, kept as written';
+    }
+    return chip;
+  };
+
   const copyInline = (from: Node, to: Node, pages: Resolver, inCode: boolean) => {
     for (const child of from.childNodes) {
       if (child.nodeType === Node.TEXT_NODE) {
@@ -133,7 +181,9 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
         if (inCode) to.appendChild(document.createTextNode(text));
         else for (const node of linked(text, pages)) to.appendChild(node);
       } else if (child instanceof Element) {
-        if (INLINE.has(child.tagName)) {
+        if (child.tagName === 'A' || child.tagName === 'IMG') {
+          to.appendChild(chipOf(child));
+        } else if (INLINE.has(child.tagName)) {
           const kept = document.createElement(child.tagName.toLowerCase());
           copyInline(child, kept, pages, inCode || child.tagName === 'CODE');
           to.appendChild(kept);
@@ -222,6 +272,8 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
     if (hadFocus && !root.contains(document.activeElement)) title.focus();
     if (!id) return;
     const mine = ++asked;
+    await beforeLeaving();
+    if (mine !== asked) return;
     let page: StoredRead | null;
     // read for each page drawn, so its links reach the library as it is now; this showing's
     // own list, so one read earlier and answered later never decides them
@@ -242,10 +294,11 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
       body.replaceChildren();
       status.textContent = 'That page is no longer there. It may have been moved or removed outside NEO.';
     } else {
-      status.textContent = 'Read-only: this page can\'t be changed in the pane yet.';
+      status.textContent = '';
       render(page, resolverOf(library));
       if (at) markAt(at);
     }
+    for (const fn of shownListeners) fn(stored ? { ...stored } : null);
     tree.markShown(stored?.id ?? null);
     refreshNav();
     // a page opened from the tree leaves the focus on its row, and a writer gone back to the
@@ -293,7 +346,20 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
     tree: { refresh: () => tree.refresh(), state: () => tree.state() },
     /** The page shown again, as saved now (after an import, say). */
     reload: () => showCurrent(),
-    /** The pane's section. */
+    /** The pane's section, and the element holding the page's lines, one per paragraph in order. */
     root,
+    body,
+    /** The page shown, as last drawn; null while none is. */
+    shown: (): ShownPage | null => (stored ? { ...stored } : null),
+    /** Told after each page is drawn in the pane, with null when it is gone. */
+    onShown(fn: (page: ShownPage | null) => void) { shownListeners.push(fn); },
+    /** Waited for before the pane shows a page, this one again too. */
+    beforeLeave(fn: () => Promise<void>) { leaving.push(fn); },
+    /** Told when the tree renames or moves a page, before the pane reads it again. */
+    onRenamed(fn: (from: string, to: string) => void) { renamedListeners.push(fn); },
+    /** Resolves once no rename or move is under way; a save waits for it. */
+    held: () => held,
+    /** A wider right-hand pane while on (host API 5). */
+    wide: (on: boolean) => pane.wide(on),
   };
 }

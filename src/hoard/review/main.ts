@@ -5,7 +5,6 @@
 import type { GitLayer } from '../git/layer.ts';
 import { targeted, type MarkStore } from '../marks/store.ts';
 import type { PageStore } from '../pages/store.ts';
-import type { AuthorSaved } from './saved.ts';
 import { editPage, librarianAmong, librarianInTree } from './edit.ts';
 import { validateHoardPagesEditV1, validateHoardReviewOwnersV1, validateHoardReviewVerdictV1 } from '../../generated/validators.cjs';
 
@@ -19,14 +18,13 @@ function checked<T>(name: string, validate: Validator<T>, payload: unknown): T {
   return payload;
 }
 
-export function startReview(host: NeoMainHost, marks: MarkStore, o: { layer: GitLayer; pages: PageStore; authorSavedPage?: AuthorSaved }): void {
+export function startReview(host: NeoMainHost, marks: MarkStore, o: { layer: GitLayer; pages: PageStore }): void {
   const log = host.log.bind(host);
   host.handle('pages.edit', (payload) => editPage({
     library: () => host.paths.library(),
     store: o.pages,
     layer: o.layer,
     log,
-    saved: o.authorSavedPage,
   }, checked('pages.edit', validateHoardPagesEditV1, payload)));
   host.handle('review.owners', async (payload) => {
     const ask = checked('review.owners', validateHoardReviewOwnersV1, payload);
