@@ -144,26 +144,64 @@
     return n > 0 ? n : 1;
   };
 
+  // Pinned panes dock beside the book and the column. Where the book and the column cannot keep
+  // their minimums, the pane pinned earlier floats, then the other (rules.floating), and only
+  // then does the column lie over the book. The order of the pins is the order of pressing them.
+  const paneSeq = (id) => Number(document.getElementById(`${id}-pane`).dataset.pinSeq) || 0;
   function measure() {
     const uiZoom = zoomOf('--ui-zoom');
     const pageZoom = zoomOf('--page-zoom');
     const viewWidth = view.clientWidth;
-    const side = px('--side-dock');
-    const room = viewWidth - px('--dock-left') - side;
+    const panes = [
+      { id: 'nav', width: px('--nav-w'), pinned: view.classList.contains('nav-pinned'), order: paneSeq('nav') },
+      // the snapshots on the Darlings tab keep the right pane docked, pin or no pin
+      { id: 'side', width: px('--side-w'), pinned: view.classList.contains('side-pinned'), forced: view.classList.contains('darlings-tab'), order: paneSeq('side') },
+    ];
+    // a closed column needs no room
+    const floats = new Set(open ? floating({ viewWidth, panes, uiZoom, pageZoom }) : []);
+    const docked = (pane) => (pane.pinned || pane.forced) && !floats.has(pane.id) ? pane.width : 0;
+    const side = docked(panes[1]);
+    const room = viewWidth - docked(panes[0]) - side;
     const lim = limits({ room, uiZoom, pageZoom });
     const usual = defaultWidth({ viewWidth, uiZoom });
-    return { uiZoom, viewWidth, side, room, lim, usual };
+    return { uiZoom, viewWidth, side, room, lim, usual, floats };
   }
 
-  // TODO(split-view-design.md, "When there is not room for everything", steps 3 and 4): with both
-  // panes pinned and no room, the pane pinned earlier should float (dashed ring on its pin) so the
-  // one pinned last docks. Until then the column overlays the book below 960px of room, whatever
-  // the pins.
+  // A pane that starts to float is shut, as an unpinned pane is, unless the pointer or the
+  // keyboard is in it; one that docks again opens, if it is still pinned. Its pin carries the
+  // reason, for the pointer and for a screen reader.
+  const FLOATING_TIP = 'Kept open where there is room. Floating now: the page column needs the room.';
+  const floatNow = { nav: false, side: false };
+  function applyFloating(floats, say) {
+    for (const id of ['nav', 'side']) {
+      const on = floats.has(id);
+      view.classList.toggle(`${id}-floating`, on);
+      if (on === floatNow[id]) continue;
+      floatNow[id] = on;
+      const pane = document.getElementById(`${id}-pane`);
+      const pin = document.getElementById(`${id}-pin`);
+      pane.classList.toggle('floating', on);
+      pin.classList.toggle('floating', on);
+      if (on) {
+        pin.dataset.restTitle = pin.title;
+        pin.title = say(FLOATING_TIP);
+        pin.setAttribute('aria-description', pin.title);
+        if (!pane.matches(':hover') && !pane.contains(document.activeElement)) pane.classList.remove('open');
+      } else {
+        if (pin.dataset.restTitle !== undefined) pin.title = pin.dataset.restTitle;
+        delete pin.dataset.restTitle;
+        pin.removeAttribute('aria-description');
+        if (pane.dataset.pinned === '1') pane.classList.add('open');
+      }
+    }
+  }
 
   // Sets the width, the classes and the divider's values from the window as it is now.
   function layout() {
     if (view.hidden || !view.clientWidth) return;
     const m = measure();
+    const say = window.NeoI18n ? NeoI18n.t : (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k]);
+    applyFloating(m.floats, say);
     const next = clamp((kept === null ? m.usual : kept * m.uiZoom) - m.side, m.lim);
     // a column that is opening is not resizing: the plugin tells its own width at opening
     const changed = view.classList.contains('split-open') && open && Math.abs(next - width) > 0.01;
@@ -175,7 +213,6 @@
     divider.setAttribute('aria-valuemin', String(bookShare(m.room, m.lim.max)));
     divider.setAttribute('aria-valuemax', String(bookShare(m.room, m.lim.min)));
     divider.setAttribute('aria-valuenow', String(now));
-    const say = window.NeoI18n ? NeoI18n.t : (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k]);
     divider.setAttribute('aria-valuetext', say('Book {book} percent, page {page} percent', { book: String(now), page: String(100 - now) }));
     if (changed) emit('resize', { width });
   }

@@ -510,7 +510,7 @@ function popMenu(x, y, items, { title = '', from = null } = {}) {
       window.removeEventListener('blur', cancel);
       // the Chapters pane it kept open closes if the pointer has left it
       const nav = $('#nav-pane');
-      if (nav && nav.dataset.pinned !== '1' && !nav.matches(':hover')) nav.classList.remove('open');
+      if (nav && !pinnedOpen(nav) && !nav.matches(':hover')) nav.classList.remove('open');
       if (value === null && back && back.isConnected && back.focus) back.focus({ preventScroll: true });
       resolve(value);
     };
@@ -7439,7 +7439,7 @@ function renderStickies() {
       if (e.key !== 'Enter' || e.shiftKey) return; // Shift+Enter: another line in the note
       e.preventDefault();
       const pane = $('#side-pane');
-      if (pane.dataset.autoOpened === '1' && pane.dataset.pinned !== '1') pane.classList.remove('open');
+      if (pane.dataset.autoOpened === '1' && !pinnedOpen(pane)) pane.classList.remove('open');
       pane.dataset.autoOpened = '0';
       returnToMark(s.id);
     });
@@ -7678,7 +7678,7 @@ function renderNav() {
         const sec = document.querySelector(`.chapter[data-id="${chId}"]`);
         focusChapterStart(chId);
         if (sec) sec.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
-        if ($('#nav-pane').dataset.pinned !== '1') $('#nav-pane').classList.remove('open');
+        if (!pinnedOpen($('#nav-pane'))) $('#nav-pane').classList.remove('open');
         return;
       }
       focusChapter(chId);
@@ -7819,7 +7819,7 @@ function finishChapterDrag(e) {
   // to keep the pane available after an in-pane drop, even before focus returns.
   const pane = $('#nav-pane');
   const r = pane.getBoundingClientRect();
-  if (pane.dataset.pinned !== '1' && (e.clientX < r.left || e.clientX >= r.right || e.clientY < r.top || e.clientY >= r.bottom)) {
+  if (!pinnedOpen(pane) && (e.clientX < r.left || e.clientX >= r.right || e.clientY < r.top || e.clientY >= r.bottom)) {
     pane.classList.remove('open');
   }
   if (navRefreshPending) renderNav();
@@ -8001,7 +8001,7 @@ function navHeld() {
 // Hover behavior for both side panes:
 function wireHoverPane(hotzone, pane, isPinnable) {
   // (a menu opened from the Chapters pane keeps it open while it's up)
-  const pinned = () => (isPinnable && pane.dataset.pinned === '1') ||
+  const pinned = () => (isPinnable && pinnedOpen(pane)) ||
     (pane.id === 'nav-pane' && (chapterDragActive || !!document.querySelector('.pop-menu') || navHeld())) ||
     (pane.id === 'side-pane' && $('#editor-view').classList.contains('darlings-tab')); // the snapshots stay
   hotzone.addEventListener('mouseenter', (e) => {
@@ -8025,7 +8025,7 @@ $('#nav-pane').addEventListener('focusout', (e) => {
   const pane = $('#nav-pane');
   if (pane.contains(e.relatedTarget)) return;
   setTimeout(() => {
-    if (pane.dataset.pinned === '1' || chapterDragActive || navHeld() || document.querySelector('.pop-menu')) return;
+    if (pinnedOpen(pane) || chapterDragActive || navHeld() || document.querySelector('.pop-menu')) return;
     if (pane.matches(':hover') || $('#nav-hotzone').matches(':hover')) return;
     pane.classList.remove('open');
   }, 0);
@@ -8037,7 +8037,7 @@ $('#nav-hotzone').addEventListener('dragenter', (e) => {
 });
 $('#nav-pane').addEventListener('dragleave', (e) => {
   const pane = $('#nav-pane');
-  if (!navFileDrag(e) || pane.dataset.pinned === '1') return;
+  if (!navFileDrag(e) || pinnedOpen(pane)) return;
   if (e.relatedTarget && (pane.contains(e.relatedTarget) || e.relatedTarget.id === 'nav-hotzone')) return;
   pane.classList.remove('open');
 });
@@ -8046,8 +8046,8 @@ wireHoverPane($('#side-hotzone'), $('#side-pane'), true);
 // leaving the window closes unpinned panes (they used to stick open)
 function closeUnpinnedPanes() {
   // Wayland can blur the window as a native chapter drag begins.
-  if (!chapterDragActive && $('#nav-pane').dataset.pinned !== '1' && !navHeld()) $('#nav-pane').classList.remove('open');
-  if ($('#side-pane').dataset.pinned !== '1' && !$('#editor-view').classList.contains('darlings-tab')) $('#side-pane').classList.remove('open');
+  if (!chapterDragActive && !pinnedOpen($('#nav-pane')) && !navHeld()) $('#nav-pane').classList.remove('open');
+  if (!pinnedOpen($('#side-pane')) && !$('#editor-view').classList.contains('darlings-tab')) $('#side-pane').classList.remove('open');
 }
 document.documentElement.addEventListener('mouseleave', closeUnpinnedPanes);
 window.addEventListener('blur', closeUnpinnedPanes);
@@ -8066,9 +8066,14 @@ $('#editor-view').addEventListener('wheel', (e) => {
 
 // Keep Open, on either pane: the page moves over to make room, and the
 // choice stays for next time (on this computer)
+// Pinned and docked: a pinned pane that floats (the page column needs the room) is shut by the
+// pointer leaving, like an unpinned one
+function pinnedOpen(pane) { return pane.dataset.pinned === '1' && !pane.classList.contains('floating'); }
+let pinSeq = 0; // which pane was pinned last: the page column floats the earlier one first (split-column.js)
 function pinPane(side, on, key = side) {
   const pane = $(side === 'nav' ? '#nav-pane' : '#side-pane');
   const pin = $(side === 'nav' ? '#nav-pin' : '#side-pin');
+  if (on && pane.dataset.pinned !== '1') pane.dataset.pinSeq = String(++pinSeq);
   pane.dataset.pinned = on ? '1' : '0';
   pin.classList.toggle('pinned', on);
   pin.setAttribute('aria-pressed', on ? 'true' : 'false');
@@ -11585,7 +11590,7 @@ function sidePaneForTab(name) {
   const dar = name === 'darlings' && !!book && snapsCan() && !IS_POCKET; // (Pocket's own list: later)
   $('#editor-view').classList.toggle('darlings-tab', dar);
   if (dar) { snapList(); $('#side-pane').classList.add('open'); }
-  else if (was && $('#side-pane').dataset.pinned !== '1') $('#side-pane').classList.remove('open');
+  else if (was && !pinnedOpen($('#side-pane'))) $('#side-pane').classList.remove('open');
 }
 
 // ---- the note walks ahead ----
@@ -17986,7 +17991,7 @@ for (const pane of [$('#nav-pane'), $('#side-pane')]) {
     setTimeout(() => {
       if (pane.contains(document.activeElement) || pane.dataset.kbd !== '1') return;
       pane.dataset.kbd = '0';
-      if (pane.dataset.pinned !== '1' && !chapterDragActive) pane.classList.remove('open');
+      if (!pinnedOpen(pane) && !chapterDragActive) pane.classList.remove('open');
     }, 0);
   });
 }
