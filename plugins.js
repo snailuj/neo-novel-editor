@@ -13,7 +13,9 @@
 //   book(), chapter(chId)     copies of the open book and of a chapter
 //   addPane({ id, title })    a tab of its own beside Notes; for API 3,
 //                             with side: true, a section of the right-hand
-//                             pane beside the manuscript instead
+//                             pane beside the manuscript instead; for API 6,
+//                             with nav: true, a tab of the left-hand pane
+//                             beside Chapters
 //   addCommand(id, run)       the handler for a command in the Plugins menu
 //   status(text)              a quiet line among the counters
 //   invoke(channel, payload)  a call to its own main half (plugins-main.js)
@@ -808,25 +810,34 @@
   // one set of ids.
   const PANE_ID = /^[a-z][a-z0-9-]{0,31}$/;
   const PANE_KEYS = ['id', 'title', 'side'];
+  const PANE_KEYS_V6 = [...PANE_KEYS, 'nav'];
   function addPane(entry, spec, apiVersion) {
-    const { id, title, side } = spec || {};
+    const { id, title, side, nav } = spec || {};
     if (typeof id !== 'string' || !PANE_ID.test(id)) throw new TypeError(`a pane's id is a lower-case name such as "notes-index", not ${text(id)}`);
     if (typeof title !== 'string' || !title.trim()) throw new TypeError(`pane ${id} needs a title`);
     if (entry.panes.has(id)) throw new TypeError(`pane ${id} is added already`);
     // API 1 and 2 took any other keys and ignored them, and still do
     const v3 = apiVersion >= 3;
     if (v3) {
-      const odd = Object.keys(spec).find((key) => !PANE_KEYS.includes(key));
-      if (odd !== undefined) throw new TypeError(`pane ${id} takes id, title and side, not ${text(odd)}`);
+      const odd = Object.keys(spec).find((key) => !(apiVersion >= 6 ? PANE_KEYS_V6 : PANE_KEYS).includes(key));
+      if (odd !== undefined) throw new TypeError(`pane ${id} takes ${apiVersion >= 6 ? 'id, title, side and nav' : 'id, title and side'}, not ${text(odd)}`);
       if (side !== undefined && typeof side !== 'boolean') throw new TypeError(`pane ${id}'s side is true or false, not ${shown(side)}`);
     }
+    // API 6: nav: true makes the pane a tab of the left-hand pane, beside Chapters
+    if (apiVersion >= 6) {
+      if (nav !== undefined && typeof nav !== 'boolean') throw new TypeError(`pane ${id}'s nav is true or false, not ${shown(nav)}`);
+      if (nav && side) throw new TypeError(`pane ${id} is either a nav tab or a side section, not both`);
+    }
     const element = document.createElement('div');
-    const pane = { name: `plugin:${entry.id}:${id}`, title, element, tab: null, section: null };
+    const pane = { name: `plugin:${entry.id}:${id}`, title, element, tab: null, section: null, nav: null };
     const show = () => showPane(entry, pane);
     const made = apiVersion >= 5 ? Object.freeze({ element, show, wide: (on) => wide(entry, pane, on) })
       : v3 ? Object.freeze({ element, show }) : Object.freeze({ element });
     if (entry.disposed) return made;
-    if (v3 && side) {
+    if (nav) {
+      element.className = 'plugin-nav-body';
+      pane.nav = get.navTabs.add({ id: `${entry.id}-${id}`, label: title, panel: element });
+    } else if (v3 && side) {
       const section = document.createElement('section');
       section.className = 'plugin-side';
       section.dataset.plugin = entry.id;
@@ -870,11 +881,17 @@
   // switched to, and a section's pane opened with the section scrolled into
   // view. A section is shown only where styles.css shows it, so on the
   // Notes, Outline and Darlings tabs nothing moves and the answer is false;
-  // so too with no book open, or once the plugin is disposed.
+  // so too with no book open, or once the plugin is disposed. A nav tab
+  // (API 6) opens the left-hand pane and selects the tab.
   function showPane(entry, pane) {
     if (entry.disposed || !openedBook()) return false;
     if (pane.tab) {
       get.switchTab(pane.name);
+      return true;
+    }
+    if (pane.nav) {
+      document.getElementById('nav-pane').classList.add('open');
+      pane.nav.select();
       return true;
     }
     if (getComputedStyle(pane.section).display === 'none') return false;
@@ -1112,6 +1129,10 @@
       markHolds();
     }
     for (const pane of entry.panes.values()) {
+      if (pane.nav) {
+        pane.nav.remove(); // back to Chapters if the writer was on it
+        continue;
+      }
       if (pane.section) {
         pane.section.remove();
         if (wideAsks.delete(pane)) markWide();

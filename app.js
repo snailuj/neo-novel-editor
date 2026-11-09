@@ -7903,6 +7903,94 @@ function scheduleNavRefresh() {
   saveTimers.nav = setTimeout(renderNav, 1200);
 }
 
+/* ------------------------------------------------------------------ */
+/*  Left pane tabs                                                      */
+/*                                                                      */
+/*  The view's own list (Chapters; Elements in a script; Notes on the   */
+/*  Notes tab) is the first tab, and keeps #nav-list, #notes-nav and    */
+/*  #nav-add inside #nav-own whatever the mode. A plugin's tabs         */
+/*  (plugins.js, addPane with nav: true) follow it, each a panel of     */
+/*  its own in the pane. The ARIA tabs pattern: arrows, Home and End    */
+/*  move between tabs and select, one tab is in the tab order.          */
+/* ------------------------------------------------------------------ */
+
+const navTabs = (() => {
+  const strip = $('#nav-tabs');
+  const tabs = [{ button: $('#nav-tab-own'), panel: $('#nav-own') }];
+  const selectedTab = () => tabs.find((tab) => tab.button.getAttribute('aria-selected') === 'true') || tabs[0];
+
+  function select(tab) {
+    for (const other of tabs) {
+      const on = other === tab;
+      other.button.setAttribute('aria-selected', on ? 'true' : 'false');
+      other.button.tabIndex = on ? 0 : -1;
+      other.panel.hidden = !on;
+    }
+  }
+  const sync = () => strip.classList.toggle('multi', tabs.length > 1);
+
+  strip.addEventListener('click', (e) => {
+    const tab = tabs.find((t) => t.button === e.target.closest('[role="tab"]'));
+    if (tab) select(tab);
+  });
+  strip.addEventListener('keydown', (e) => {
+    if (e.altKey || e.ctrlKey || e.metaKey || e.isComposing) return;
+    const at = tabs.findIndex((t) => t.button === e.target.closest('[role="tab"]'));
+    if (at < 0) return;
+    const rtl = getComputedStyle(strip).direction === 'rtl';
+    let to;
+    if (e.key === 'ArrowRight') to = at + (rtl ? -1 : 1);
+    else if (e.key === 'ArrowLeft') to = at + (rtl ? 1 : -1);
+    else if (e.key === 'Home') to = 0;
+    else if (e.key === 'End') to = tabs.length - 1;
+    else return;
+    e.preventDefault();
+    const tab = tabs[(to + tabs.length) % tabs.length];
+    select(tab);
+    tab.button.focus();
+  });
+
+  return {
+    // A plugin's tab. panel is the element the plugin fills; the handle selects and removes it.
+    add({ id, label, panel }) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'nav-tab';
+      button.id = `nav-tab-${id}`;
+      button.setAttribute('role', 'tab');
+      button.setAttribute('aria-selected', 'false');
+      button.tabIndex = -1;
+      button.textContent = label;
+      panel.id = `nav-panel-${id}`;
+      panel.setAttribute('role', 'tabpanel');
+      panel.setAttribute('aria-labelledby', button.id);
+      button.setAttribute('aria-controls', panel.id);
+      panel.hidden = true;
+      const tab = { button, panel };
+      tabs.push(tab);
+      strip.appendChild(button);
+      $('#nav-pane').appendChild(panel);
+      sync();
+      return {
+        select: () => select(tab),
+        remove() {
+          const at = tabs.indexOf(tab);
+          if (at < 0) return;
+          const was = selectedTab() === tab;
+          tabs.splice(at, 1);
+          button.remove();
+          panel.remove();
+          if (was) select(tabs[0]);
+          sync();
+        }
+      };
+    },
+    // where F6 lands: the first row of the view's own list, or the selected tab of a plugin's
+    isOwnSelected: () => selectedTab() === tabs[0],
+    focusSelected: () => selectedTab().button.focus()
+  };
+})();
+
 // Hover behavior for both side panes:
 function wireHoverPane(hotzone, pane, isPinnable) {
   // (a menu opened from the Chapters pane keeps it open while it's up)
@@ -8043,7 +8131,7 @@ function notesLabel(chId) {
 function notesNavList() {
   let list = $('#notes-nav');
   if (list) return list;
-  const head = $('#nav-head > span');
+  const head = $('#nav-tab-own > span');
   if (head && !$('#nav-head .nav-title-notes')) {
     head.classList.add('nav-title-chapters');
     const alt = document.createElement('span');
@@ -17894,6 +17982,11 @@ const REGIONS = [
   {
     box: () => $('#nav-pane'),
     enter: () => {
+      if (!navTabs.isOwnSelected()) {
+        // a plugin's tab is showing: the keyboard goes to its tab, from which Tab reaches its panel
+        openPaneFromKeyboard($('#nav-pane'), $('#nav-tabs [aria-selected="true"]'));
+        return;
+      }
       const rows = $$('#nav-list .n-row');
       const cur = $('#nav-list .nav-item.current .n-row');
       openPaneFromKeyboard($('#nav-pane'), cur || rows[0] || $('#nav-add'));
@@ -18070,4 +18163,4 @@ if (window.NeoSplit && NeoSplit.attach) NeoSplit.attach({ focusBook: focusPage, 
 // decides what a plugin reads (openedBook), only the book the plugins heard
 // open. typewriterRest ends the page's following of the caret by keyboard
 // (until the next key), for an edit that moved the selection and put it back.
-if (window.NeoPlugins) NeoPlugins.attach({ book: () => book, chapterHTML: (id) => chapterHTML[id], currentTab: () => currentTab, switchTab, captureCaret, restoreCaret, resumePosition, typewriterRest: () => { typewriterByKeyboard = false; }, openBook: openForPlugin });
+if (window.NeoPlugins) NeoPlugins.attach({ navTabs, book: () => book, chapterHTML: (id) => chapterHTML[id], currentTab: () => currentTab, switchTab, captureCaret, restoreCaret, resumePosition, typewriterRest: () => { typewriterByKeyboard = false; }, openBook: openForPlugin });
