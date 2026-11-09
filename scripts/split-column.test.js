@@ -66,17 +66,17 @@ test('the divider reports the book\'s share of the room, so a wider column reads
 
 test('the divider\'s keys: arrows 16px, Shift 64px, Home widest, End narrowest, none past a limit', () => {
   const lim = { min: 400, max: 880, overlay: false };
-  const next = (key, width, shiftKey = false) => S.keyWidth({ key, shiftKey, width, limits: lim, uiZoom: 1, usual: 576 });
+  const next = (key, width, shiftKey = false) => S.keyWidth({ key, shiftKey, width, limits: lim, uiZoom: 1 });
   assert.equal(next('ArrowLeft', 576), 592);
   assert.equal(next('ArrowRight', 576), 560);
   assert.equal(next('ArrowLeft', 576, true), 640);
   assert.equal(next('ArrowRight', 576, true), 512);
   assert.equal(next('Home', 576), 880);
   assert.equal(next('End', 576), 400);
-  assert.equal(next('Enter', 700), 576);
+  assert.equal(next('Enter', 700), null); // the region's own: it forgets the kept width
   assert.equal(next('ArrowLeft', 880), 880);
   assert.equal(next('ArrowRight', 400), 400);
   assert.equal(next('ArrowLeft', 870), 880);
   assert.equal(next('a', 576), null);
-  assert.equal(S.keyWidth({ key: 'ArrowLeft', shiftKey: false, width: 600, limits: lim, uiZoom: 1.25, usual: 576 }), 620);
+  assert.equal(S.keyWidth({ key: 'ArrowLeft', shiftKey: false, width: 600, limits: lim, uiZoom: 1.25 }), 620);
 });

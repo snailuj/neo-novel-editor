@@ -111,6 +111,13 @@
       </div>
     </main>
 
+    <!-- The page column: a plugin's region beside the manuscript (split-column.js). The
+         divider is its left edge; #split-body is what the plugin fills. -->
+    <aside id="split-column" data-i18n-label="Page column">
+      <div id="split-divider" role="separator" aria-orientation="vertical" tabindex="0" data-i18n-label="Resize page column"><span class="split-grip" aria-hidden="true"></span></div>
+      <div id="split-body" tabindex="-1"></div>
+    </aside>
+
     <!-- Bottom bar: tabs + counters -->
     <footer id="bottombar">
       <button id="back-to-shelf" data-i18n-title title="Back to your bookshelf" data-i18n-label="Back to your bookshelf"><span aria-hidden="true">&#8676;</span> <span data-i18n>Shelf</span></button>
@@ -149,6 +156,7 @@
   <script src="covers.js"></script>
   <script src="manuscript.js"></script>
   <script src="plugins.js"></script>
+  <script src="split-column.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
