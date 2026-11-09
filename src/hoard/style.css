@@ -114,7 +114,8 @@ body:not(.night):not(.light) .hoard-page-column { --pc-accent: color-mix(in srgb
   display: flex; align-items: center; min-block-size: 44px; margin-block-end: 20px;
   background: var(--paper); border-block-end: 1px solid var(--pc-rule);
 }
-.hoard-page-column button { font: inherit; cursor: pointer; }
+/* no weight of its own, so each button's size below wins */
+:where(.hoard-page-column) button { font: inherit; cursor: pointer; }
 .hoard-col-button {
   display: inline-grid; place-items: center; flex: none; min-inline-size: 44px; min-block-size: 44px;
   padding: 0; background: none; border: none; border-radius: 6px; color: var(--pc-muted);
@@ -288,7 +289,7 @@ body.light .hoard-tree-error { color: var(--red); }
 ::highlight(hoard-pane-flagged) { background-color: color-mix(in srgb, var(--red) 26%, transparent); }
 .hoard-pane-marks { margin-block-start: 40px; padding-block-start: 16px; border-block-start: 1px solid var(--pc-rule); font-size: 13px; }
 .hoard-pane-marks-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; margin-block-end: 8px; }
-.hoard-pane-marks-title { flex: 1; margin: 0; font-size: 12px; font-weight: 400; text-transform: uppercase; letter-spacing: 2px; color: var(--pc-muted); }
+.hoard-pane-marks-title { flex: 1 0 auto; margin: 0; font-size: 12px; font-weight: 400; text-transform: uppercase; letter-spacing: 2px; color: var(--pc-muted); }
 .hoard-pane-add, .hoard-pane-suggest {
   min-block-size: 44px; padding-inline: 6px; background: none; border: none; border-radius: 4px;
   font-size: 12px; color: var(--pc-muted);
@@ -305,7 +306,7 @@ body.light .hoard-tree-error { color: var(--red); }
 #split-body .sticky.hoard-mark.active { border-inline-start-width: 6px; }
 #split-body .sticky.hoard-mark.resolved { border-inline-start-color: var(--pc-muted); }
 #split-body .sticky .s-ch { font-size: 12px; font-style: italic; text-transform: none; letter-spacing: 0; color: var(--pc-muted); }
-#split-body .sticky .hoard-quote { min-block-size: 44px; }
+#split-body .sticky .hoard-quote { display: flex; align-items: center; min-block-size: 44px; margin-block: -10px -4px; }
 #split-body .sticky :is(.hoard-who, .hoard-label) { font-size: 12px; color: var(--pc-muted); }
 #split-body .sticky textarea { color: var(--ink); }
 #split-body .sticky .s-actions button { font-size: 12px; color: var(--pc-muted); }
