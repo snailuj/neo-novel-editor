@@ -170,9 +170,8 @@
   // A pane that starts to float is shut, as an unpinned pane is, unless the pointer or the
   // keyboard is in it; one that docks again opens, if it is still pinned. Its pin carries the
   // reason, for the pointer and for a screen reader.
-  const FLOATING_TIP = 'Kept open where there is room. Floating now: the page column needs the room.';
   const floatNow = { nav: false, side: false };
-  function applyFloating(floats, say) {
+  function applyFloating(floats, t) {
     for (const id of ['nav', 'side']) {
       const on = floats.has(id);
       view.classList.toggle(`${id}-floating`, on);
@@ -184,7 +183,7 @@
       pin.classList.toggle('floating', on);
       if (on) {
         pin.dataset.restTitle = pin.title;
-        pin.title = say(FLOATING_TIP);
+        pin.title = t('Kept open where there is room. Floating now: the page column needs the room.');
         pin.setAttribute('aria-description', pin.title);
         if (!pane.matches(':hover') && !pane.contains(document.activeElement)) pane.classList.remove('open');
       } else {
@@ -200,8 +199,8 @@
   function layout() {
     if (view.hidden || !view.clientWidth) return;
     const m = measure();
-    const say = window.NeoI18n ? NeoI18n.t : (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k]);
-    applyFloating(m.floats, say);
+    const t = window.NeoI18n ? NeoI18n.t : (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k]);
+    applyFloating(m.floats, t);
     const next = clamp((kept === null ? m.usual : kept * m.uiZoom) - m.side, m.lim);
     // a column that is opening is not resizing: the plugin tells its own width at opening
     const changed = view.classList.contains('split-open') && open && Math.abs(next - width) > 0.01;
@@ -213,7 +212,7 @@
     divider.setAttribute('aria-valuemin', String(bookShare(m.room, m.lim.max)));
     divider.setAttribute('aria-valuemax', String(bookShare(m.room, m.lim.min)));
     divider.setAttribute('aria-valuenow', String(now));
-    divider.setAttribute('aria-valuetext', say('Book {book} percent, page {page} percent', { book: String(now), page: String(100 - now) }));
+    divider.setAttribute('aria-valuetext', t('Book {book} percent, page {page} percent', { book: String(now), page: String(100 - now) }));
     if (changed) emit('resize', { width });
   }
   let queued = 0;
