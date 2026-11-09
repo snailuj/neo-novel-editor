@@ -56,3 +56,27 @@ test('the check can fail: a file naming a removed piece is caught', () => {
   }
   assert.ok(!GONE.test("host.handle('wiki.import', f)"));
 });
+
+// Rule: src/hoard describes the library as it is, so no code or style sheet tells a reader
+// that a Wiki book exists. Pages live only as files under wiki/ and sources/.
+const SAYS_WIKI_BOOK = /wiki book/i;
+
+function hoardFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((d) => {
+    const full = path.join(dir, d.name);
+    return d.isDirectory() ? hoardFiles(full) : /\.(ts|css)$/.test(d.name) ? [full] : [];
+  });
+}
+
+test('nothing in src/hoard speaks of a Wiki book', () => {
+  const files = hoardFiles(hoard);
+  assert.ok(files.some((f) => f.endsWith('.css')) && files.length > 40, `src/hoard was found: ${files.length} files`);
+  const named = files.filter((f) => SAYS_WIKI_BOOK.test(readFileSync(f, 'utf8'))).map((f) => path.relative(hoard, f));
+  assert.deepEqual(named, []);
+});
+
+test('the check can fail: a comment about the Wiki book is caught', () => {
+  assert.ok(SAYS_WIKI_BOOK.test('// opens the Wiki book'));
+  assert.ok(SAYS_WIKI_BOOK.test('/* in the wiki book */'));
+  assert.ok(!SAYS_WIKI_BOOK.test('// a wiki page beside the book'));
+});

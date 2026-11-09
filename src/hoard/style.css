@@ -50,7 +50,7 @@
 ::highlight(plugin-hoard-wiki-link) { color: var(--accent); text-decoration: underline solid var(--accent); }
 ::highlight(plugin-hoard-wiki-missing) { color: var(--muted); text-decoration: underline dotted var(--muted); }
 
-/* A wiki page's blocks, in the wiki book and in the pane alike: each is a paragraph whose
+/* A page's blocks, in a chapter and in the pane alike: each is a paragraph whose
    class names what it is (wiki/convert.ts). Markers are drawn, so they are never text. */
 :is(.chapter-body, .hoard-wiki-page) p:is(.wiki-h1, .wiki-h2, .wiki-h3, .wiki-h4, .wiki-h5, .wiki-h6) {
   font-weight: 700; line-height: 1.25; margin-block: 0.9em 0.3em;
@@ -89,8 +89,8 @@
 :is(.chapter-body, .hoard-wiki-page) code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.9em; }
 .hoard-wiki-page p.scene-break { text-align: center; color: var(--muted); }
 
-/* The wiki pane beside the book: a page looked up, with Back, Forward and a way into
-   the wiki book. Links on the page are buttons that look like links. */
+/* The wiki pane beside the book: a page looked up, with Back and Forward.
+   Links on the page are buttons that look like links. */
 .hoard-wiki-pane { margin-inline: 12px; }
 .hoard-wiki-nav { display: flex; flex-wrap: wrap; gap: 4px; }
 .hoard-wiki-nav button {
