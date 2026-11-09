@@ -74,13 +74,13 @@ test('an attachment the vault lacks is found in the further folders, the vault f
   const own = put(path.join(vault, 'Quay.jpg'), 'own quay');
   put(path.join(old, 'Media', 'Quay.jpg'), 'old quay');
   const rooted = put(path.join(old, 'Media', 'Cabin.pdf'), 'cabin');
-  const byName = put(path.join(old, '_attachments', 'deep', 'Levin.png'), 'levin');
+  const byName = put(path.join(old, '_attachments', 'deep', 'Lantern.png'), 'lantern');
   const page = path.join(vault, 'lore', 'Harbour.md');
   const plain = new AttachmentFinder(vault);
-  assert.equal(plain.find('Levin.png', page), null, 'baseline: the vault alone lacks it');
+  assert.equal(plain.find('Lantern.png', page), null, 'baseline: the vault alone lacks it');
   const finder = new AttachmentFinder(vault, [old]);
   assert.equal(finder.find('Quay.jpg', page), own);
   assert.equal(finder.find('Media/Cabin.pdf', page), rooted);
-  assert.equal(finder.find('levin.PNG', page), byName);
+  assert.equal(finder.find('lantern.PNG', page), byName);
   assert.equal(finder.find('Nowhere.png', page), null);
 });
