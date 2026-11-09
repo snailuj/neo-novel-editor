@@ -1,4 +1,4 @@
-// The review of the writer's suggestions on a page shown in the Wiki pane
+// The review of the writer's suggestions on a page shown in the page column
 // (marks/pane-marks.ts), which passes in how its page is read and changed.
 //
 // The librarian reviews a suggestion against the page as it is now (rules.ts): it

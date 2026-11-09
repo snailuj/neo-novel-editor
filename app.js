@@ -253,6 +253,9 @@ function applyDeviceLook(lib) {
 }
 
 const $ = (sel) => document.querySelector(sel);
+// The page column (split-column.js) holds a plugin's own editor. A key or action that acts on the
+// book does nothing to the book while the caret is there, so each of them asks this first.
+const inPageColumn = (node) => !!(window.NeoSplit && NeoSplit.contains && NeoSplit.contains(node));
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
 // The counters change as the writer types. Swapping their text node (what
@@ -507,7 +510,7 @@ function popMenu(x, y, items, { title = '', from = null } = {}) {
       window.removeEventListener('blur', cancel);
       // the Chapters pane it kept open closes if the pointer has left it
       const nav = $('#nav-pane');
-      if (nav && nav.dataset.pinned !== '1' && !nav.matches(':hover')) nav.classList.remove('open');
+      if (nav && !pinnedOpen(nav) && !nav.matches(':hover')) nav.classList.remove('open');
       if (value === null && back && back.isConnected && back.focus) back.focus({ preventScroll: true });
       resolve(value);
     };
@@ -5060,7 +5063,7 @@ window.addEventListener('keydown', (e) => {
   const cmd = IS_POCKET ? (e.metaKey !== e.ctrlKey) : (IS_MAC ? e.metaKey : e.ctrlKey);
   if (arrows && (!cmd || !e.altKey || e.shiftKey)) return;
   if (pages && ((IS_MAC && !IS_POCKET) || !e.ctrlKey || e.metaKey || e.altKey || e.shiftKey)) return;
-  if ($('#editor-view').hidden || document.querySelector('.modal-backdrop:not([hidden])')) return;
+  if ($('#editor-view').hidden || document.querySelector('.modal-backdrop:not([hidden])') || inPageColumn(e.target)) return;
   e.preventDefault();
   e.stopPropagation();
   gotoChapter(e.key === 'ArrowDown' || e.key === 'PageDown' ? 1 : -1);
@@ -7436,7 +7439,7 @@ function renderStickies() {
       if (e.key !== 'Enter' || e.shiftKey) return; // Shift+Enter: another line in the note
       e.preventDefault();
       const pane = $('#side-pane');
-      if (pane.dataset.autoOpened === '1' && pane.dataset.pinned !== '1') pane.classList.remove('open');
+      if (pane.dataset.autoOpened === '1' && !pinnedOpen(pane)) pane.classList.remove('open');
       pane.dataset.autoOpened = '0';
       returnToMark(s.id);
     });
@@ -7675,7 +7678,7 @@ function renderNav() {
         const sec = document.querySelector(`.chapter[data-id="${chId}"]`);
         focusChapterStart(chId);
         if (sec) sec.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
-        if ($('#nav-pane').dataset.pinned !== '1') $('#nav-pane').classList.remove('open');
+        if (!pinnedOpen($('#nav-pane'))) $('#nav-pane').classList.remove('open');
         return;
       }
       focusChapter(chId);
@@ -7816,7 +7819,7 @@ function finishChapterDrag(e) {
   // to keep the pane available after an in-pane drop, even before focus returns.
   const pane = $('#nav-pane');
   const r = pane.getBoundingClientRect();
-  if (pane.dataset.pinned !== '1' && (e.clientX < r.left || e.clientX >= r.right || e.clientY < r.top || e.clientY >= r.bottom)) {
+  if (!pinnedOpen(pane) && (e.clientX < r.left || e.clientX >= r.right || e.clientY < r.top || e.clientY >= r.bottom)) {
     pane.classList.remove('open');
   }
   if (navRefreshPending) renderNav();
@@ -7900,11 +7903,106 @@ function scheduleNavRefresh() {
   saveTimers.nav = setTimeout(renderNav, 1200);
 }
 
+/* ------------------------------------------------------------------ */
+/*  Left pane tabs                                                      */
+/*                                                                      */
+/*  The view's own list (Chapters; Elements in a script; Notes on the   */
+/*  Notes tab) is the first tab, and keeps #nav-list, #notes-nav and    */
+/*  #nav-add inside #nav-own whatever the mode. A plugin's tabs         */
+/*  (plugins.js, addPane with nav: true) follow it, each a panel of     */
+/*  its own in the pane. The ARIA tabs pattern: arrows, Home and End    */
+/*  move between tabs and select, one tab is in the tab order.          */
+/* ------------------------------------------------------------------ */
+
+const navTabs = (() => {
+  const strip = $('#nav-tabs');
+  const tabs = [{ button: $('#nav-tab-own'), panel: $('#nav-own') }];
+  const selectedTab = () => tabs.find((tab) => tab.button.getAttribute('aria-selected') === 'true') || tabs[0];
+
+  function select(tab) {
+    for (const other of tabs) {
+      const on = other === tab;
+      other.button.setAttribute('aria-selected', on ? 'true' : 'false');
+      other.button.tabIndex = on ? 0 : -1;
+      other.panel.hidden = !on;
+    }
+  }
+  const sync = () => strip.classList.toggle('multi', tabs.length > 1);
+
+  strip.addEventListener('click', (e) => {
+    const tab = tabs.find((t) => t.button === e.target.closest('[role="tab"]'));
+    if (tab) select(tab);
+  });
+  strip.addEventListener('keydown', (e) => {
+    if (e.altKey || e.ctrlKey || e.metaKey || e.isComposing) return;
+    const at = tabs.findIndex((t) => t.button === e.target.closest('[role="tab"]'));
+    if (at < 0) return;
+    const rtl = getComputedStyle(strip).direction === 'rtl';
+    let to;
+    if (e.key === 'ArrowRight') to = at + (rtl ? -1 : 1);
+    else if (e.key === 'ArrowLeft') to = at + (rtl ? 1 : -1);
+    else if (e.key === 'Home') to = 0;
+    else if (e.key === 'End') to = tabs.length - 1;
+    else return;
+    e.preventDefault();
+    const tab = tabs[(to + tabs.length) % tabs.length];
+    select(tab);
+    tab.button.focus();
+  });
+
+  return {
+    // A plugin's tab. panel is the element the plugin fills; the handle selects and removes it.
+    add({ id, label, panel }) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'nav-tab';
+      button.id = `nav-tab-${id}`;
+      button.setAttribute('role', 'tab');
+      button.setAttribute('aria-selected', 'false');
+      button.tabIndex = -1;
+      button.textContent = label;
+      panel.id = `nav-panel-${id}`;
+      panel.setAttribute('role', 'tabpanel');
+      panel.setAttribute('aria-labelledby', button.id);
+      button.setAttribute('aria-controls', panel.id);
+      panel.hidden = true;
+      const tab = { button, panel };
+      tabs.push(tab);
+      strip.appendChild(button);
+      $('#nav-pane').appendChild(panel);
+      sync();
+      return {
+        select: () => select(tab),
+        remove() {
+          const at = tabs.indexOf(tab);
+          if (at < 0) return;
+          const was = selectedTab() === tab;
+          tabs.splice(at, 1);
+          button.remove();
+          panel.remove();
+          if (was) select(tabs[0]);
+          sync();
+        }
+      };
+    },
+    // where F6 lands: the first row of the view's own list, or the selected tab of a plugin's
+    isOwnSelected: () => selectedTab() === tabs[0],
+    focusSelected: () => selectedTab().button.focus()
+  };
+})();
+
+// The left pane holds open, even unpinned, while the keyboard is in it or a form is open in it:
+// the pointer leaving must not close a rename form, or the field a writer is typing in, under them.
+function navHeld() {
+  const pane = $('#nav-pane');
+  return pane.contains(document.activeElement) || [...pane.querySelectorAll('form')].some((form) => !form.closest('[hidden]'));
+}
+
 // Hover behavior for both side panes:
 function wireHoverPane(hotzone, pane, isPinnable) {
   // (a menu opened from the Chapters pane keeps it open while it's up)
-  const pinned = () => (isPinnable && pane.dataset.pinned === '1') ||
-    (pane.id === 'nav-pane' && (chapterDragActive || !!document.querySelector('.pop-menu'))) ||
+  const pinned = () => (isPinnable && pinnedOpen(pane)) ||
+    (pane.id === 'nav-pane' && (chapterDragActive || !!document.querySelector('.pop-menu') || navHeld())) ||
     (pane.id === 'side-pane' && $('#editor-view').classList.contains('darlings-tab')); // the snapshots stay
   hotzone.addEventListener('mouseenter', (e) => {
     if (e.buttons) return; // dragging something — stand down
@@ -7921,6 +8019,17 @@ function wireHoverPane(hotzone, pane, isPinnable) {
   });
 }
 wireHoverPane($('#nav-hotzone'), $('#nav-pane'), true);
+// What held the pane may let go after the pointer has already left: the keyboard moves out and
+// nothing else keeps it, so it closes then, as it would have when the pointer left.
+$('#nav-pane').addEventListener('focusout', (e) => {
+  const pane = $('#nav-pane');
+  if (pane.contains(e.relatedTarget)) return;
+  setTimeout(() => {
+    if (pinnedOpen(pane) || chapterDragActive || navHeld() || document.querySelector('.pop-menu')) return;
+    if (pane.matches(':hover') || $('#nav-hotzone').matches(':hover')) return;
+    pane.classList.remove('open');
+  }, 0);
+});
 // a drag from Finder fires no mouseenter: files over the hot zone open the
 // Chapters pane, so they can be dropped between chapters
 $('#nav-hotzone').addEventListener('dragenter', (e) => {
@@ -7928,7 +8037,7 @@ $('#nav-hotzone').addEventListener('dragenter', (e) => {
 });
 $('#nav-pane').addEventListener('dragleave', (e) => {
   const pane = $('#nav-pane');
-  if (!navFileDrag(e) || pane.dataset.pinned === '1') return;
+  if (!navFileDrag(e) || pinnedOpen(pane)) return;
   if (e.relatedTarget && (pane.contains(e.relatedTarget) || e.relatedTarget.id === 'nav-hotzone')) return;
   pane.classList.remove('open');
 });
@@ -7937,8 +8046,8 @@ wireHoverPane($('#side-hotzone'), $('#side-pane'), true);
 // leaving the window closes unpinned panes (they used to stick open)
 function closeUnpinnedPanes() {
   // Wayland can blur the window as a native chapter drag begins.
-  if (!chapterDragActive && $('#nav-pane').dataset.pinned !== '1') $('#nav-pane').classList.remove('open');
-  if ($('#side-pane').dataset.pinned !== '1' && !$('#editor-view').classList.contains('darlings-tab')) $('#side-pane').classList.remove('open');
+  if (!chapterDragActive && !pinnedOpen($('#nav-pane')) && !navHeld()) $('#nav-pane').classList.remove('open');
+  if (!pinnedOpen($('#side-pane')) && !$('#editor-view').classList.contains('darlings-tab')) $('#side-pane').classList.remove('open');
 }
 document.documentElement.addEventListener('mouseleave', closeUnpinnedPanes);
 window.addEventListener('blur', closeUnpinnedPanes);
@@ -7950,14 +8059,21 @@ $('#editor-view').addEventListener('wheel', (e) => {
   if (e.ctrlKey) return; // pinch-zoom gesture, not a scroll
   if (scroller.contains(e.target)) return; // native scrolling handles it
   if ($('#nav-pane').contains(e.target) || $('#side-pane').contains(e.target)) return;
+  // the page column scrolls itself; the book beside it must not follow
+  if (pageColumn && pageColumn.contains(e.target)) return;
   scroller.scrollTop += e.deltaY;
 }, { passive: true });
 
 // Keep Open, on either pane: the page moves over to make room, and the
 // choice stays for next time (on this computer)
+// Pinned and docked: a pinned pane that floats (the page column needs the room) is shut by the
+// pointer leaving, like an unpinned one
+function pinnedOpen(pane) { return pane.dataset.pinned === '1' && !pane.classList.contains('floating'); }
+let pinSeq = 0; // which pane was pinned last: the page column floats the earlier one first (split-column.js)
 function pinPane(side, on, key = side) {
   const pane = $(side === 'nav' ? '#nav-pane' : '#side-pane');
   const pin = $(side === 'nav' ? '#nav-pin' : '#side-pin');
+  if (on && pane.dataset.pinned !== '1') pane.dataset.pinSeq = String(++pinSeq);
   pane.dataset.pinned = on ? '1' : '0';
   pin.classList.toggle('pinned', on);
   pin.setAttribute('aria-pressed', on ? 'true' : 'false');
@@ -8038,7 +8154,7 @@ function notesLabel(chId) {
 function notesNavList() {
   let list = $('#notes-nav');
   if (list) return list;
-  const head = $('#nav-head > span');
+  const head = $('#nav-tab-own > span');
   if (head && !$('#nav-head .nav-title-notes')) {
     head.classList.add('nav-title-chapters');
     const alt = document.createElement('span');
@@ -11474,7 +11590,7 @@ function sidePaneForTab(name) {
   const dar = name === 'darlings' && !!book && snapsCan() && !IS_POCKET; // (Pocket's own list: later)
   $('#editor-view').classList.toggle('darlings-tab', dar);
   if (dar) { snapList(); $('#side-pane').classList.add('open'); }
-  else if (was && $('#side-pane').dataset.pinned !== '1') $('#side-pane').classList.remove('open');
+  else if (was && !pinnedOpen($('#side-pane'))) $('#side-pane').classList.remove('open');
 }
 
 // ---- the note walks ahead ----
@@ -13499,11 +13615,11 @@ function rejoinAtCaret() {
 // ⇧⌘Z (Ctrl+Shift+Z, and Ctrl+Y outside the Mac) puts back what ⌘Z took back
 // outside the engine's history. Any typing, anywhere, ends it: a redo never
 // lands over writing made after the undo.
-document.addEventListener('input', () => { redoStack = []; }, true);
+document.addEventListener('input', (e) => { if (!inPageColumn(e.target)) redoStack = []; }, true);
 document.addEventListener('keydown', (e) => {
   const key = e.key.toLowerCase();
   const redo = (e.metaKey || e.ctrlKey) && ((e.shiftKey && key === 'z') || (e.ctrlKey && !e.metaKey && !e.shiftKey && key === 'y' && !IS_MAC));
-  if (!redo || $('#editor-view').hidden || !book || !redoStack.length) return;
+  if (!redo || $('#editor-view').hidden || !book || !redoStack.length || inPageColumn(e.target)) return;
   e.preventDefault();
   structuralRedo();
 }, true);
@@ -13691,7 +13807,7 @@ document.addEventListener('keydown', (e) => {
   // on Linux, Ctrl+Shift+U belongs to the input method (it types a Unicode
   // character by its code), so Read Aloud there is Ctrl+Shift+K (#287)
   if (cmd && e.shiftKey && !e.altKey && e.code === (IS_LINUX ? 'KeyK' : 'KeyU')) {
-    if (!book || $('#editor-view').hidden || !moreOn()) return;
+    if (!book || $('#editor-view').hidden || !moreOn() || inPageColumn(e.target)) return;
     e.preventDefault();
     e.stopPropagation();
     toggleReadAloud();
@@ -13722,9 +13838,11 @@ function editableOf(range) {
 function openSearch(fromVim = false) {
   if ($('#editor-view').hidden || !book) { toast(t('Open a book first')); return; }
   const sel = window.getSelection();
-  const preset = sel && !sel.isCollapsed ? sel.toString().slice(0, 80).trim() : '';
+  // a selection in the page column is not the book's words: Find opens, but takes nothing from it
+  const inColumn = !!(sel && inPageColumn(sel.anchorNode));
+  const preset = sel && !sel.isCollapsed && !inColumn ? sel.toString().slice(0, 80).trim() : '';
   // ⌘F again from the bar itself keeps the place it first came from
-  if (sel && sel.rangeCount && editableOf(sel.getRangeAt(0))) searchHome = sel.getRangeAt(0).cloneRange();
+  if (sel && sel.rangeCount && !inColumn && editableOf(sel.getRangeAt(0))) searchHome = sel.getRangeAt(0).cloneRange();
   searchFromVim = fromVim;
   $('#searchbar').hidden = false;
   const inp = $('#search-input');
@@ -17873,15 +17991,25 @@ for (const pane of [$('#nav-pane'), $('#side-pane')]) {
     setTimeout(() => {
       if (pane.contains(document.activeElement) || pane.dataset.kbd !== '1') return;
       pane.dataset.kbd = '0';
-      if (pane.dataset.pinned !== '1' && !chapterDragActive) pane.classList.remove('open');
+      if (!pinnedOpen(pane) && !chapterDragActive) pane.classList.remove('open');
     }, 0);
   });
 }
+// Pocket has no page column (split-column.js is not on its page)
+const pageColumn = window.NeoSplit && window.NeoSplit.region ? window.NeoSplit : null;
 const REGIONS = [
   { box: () => $('#paper-scroll'), enter: focusPage },
+  // the page column, second, when a plugin has opened it (split-column.js). Esc is its own:
+  // the plugin may have a menu open to close first, so the Esc below waits for the bubble.
+  ...(pageColumn ? [{ box: () => pageColumn.region, enter: () => pageColumn.focus(), when: () => pageColumn.isOpen(), ownEsc: true }] : []),
   {
     box: () => $('#nav-pane'),
     enter: () => {
+      if (!navTabs.isOwnSelected()) {
+        // a plugin's tab is showing: the keyboard goes to its tab, from which Tab reaches its panel
+        openPaneFromKeyboard($('#nav-pane'), $('#nav-tabs [aria-selected="true"]'));
+        return;
+      }
       const rows = $$('#nav-list .n-row');
       const cur = $('#nav-list .nav-item.current .n-row');
       openPaneFromKeyboard($('#nav-pane'), cur || rows[0] || $('#nav-add'));
@@ -17910,20 +18038,43 @@ document.addEventListener('keydown', (e) => {
     SHELF_REGIONS[at < 0 ? 0 : (at + 1) % SHELF_REGIONS.length].enter();
     return;
   }
-  const here = REGIONS.findIndex((r) => r.box().contains(document.activeElement));
+  const regions = REGIONS.filter((r) => !r.when || r.when());
+  const here = regions.findIndex((r) => r.box().contains(document.activeElement));
   if (regionKey(e)) {
     e.preventDefault();
     // from nowhere in particular (a book just opened), forward starts at the page
-    if (here < 0) { REGIONS[e.shiftKey ? REGIONS.length - 1 : 0].enter(); return; }
-    REGIONS[(here + (e.shiftKey ? REGIONS.length - 1 : 1)) % REGIONS.length].enter();
+    if (here < 0) { regions[e.shiftKey ? regions.length - 1 : 0].enter(); return; }
+    regions[(here + (e.shiftKey ? regions.length - 1 : 1)) % regions.length].enter();
     return;
   }
   // Esc from a pane or the bottom bar: back to the words, not to the shelf
-  if (e.key === 'Escape' && !e.isComposing && here > 0 && $('#searchbar').hidden) {
+  if (e.key === 'Escape' && !e.isComposing && here > 0 && !regions[here].ownEsc && $('#searchbar').hidden) {
     e.preventDefault();
     e.stopPropagation();
     focusPage();
   }
+}, true);
+// Esc in the page column: back to the book's caret, the column staying open. The column's own
+// element listens, so the plugin's handlers inside it have the event first: a menu or form it has
+// open takes the Esc and says so by cancelling the event. Either way the Esc stops here, for the
+// document's Esc (above) would send the book back to the shelf.
+if (pageColumn) {
+  pageColumn.region.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || e.isComposing || !$('#searchbar').hidden || document.querySelector('.modal-backdrop:not([hidden])')) return;
+    e.stopPropagation();
+    if (e.defaultPrevented) return;
+    e.preventDefault();
+    focusPage();
+  });
+}
+// Ctrl+Backslash (Cmd on a Mac) opens or closes the page column, wherever the keyboard is in the
+// book. With no plugin in the column there is nothing to open: the key is left alone.
+window.addEventListener('keydown', (e) => {
+  if (e.key !== '\\' || e.altKey || e.shiftKey || e.isComposing || !(IS_MAC ? e.metaKey : e.ctrlKey)) return;
+  if ($('#editor-view').hidden || document.querySelector('.modal-backdrop:not([hidden])')) return;
+  if (!pageColumn || !pageColumn.toggle()) return;
+  e.preventDefault();
+  e.stopPropagation();
 }, true);
 // up and down the chapter list
 $('#nav-list').addEventListener('keydown', (e) => {
@@ -18025,10 +18176,14 @@ function applyLook() {
   applyFocus();
 }
 
+// the page column keeps the reader's place as it opens, closes and resizes, and gives the keyboard
+// back to the page when it goes (split-column.js)
+if (window.NeoSplit && NeoSplit.attach) NeoSplit.attach({ focusBook: focusPage, keepPlace: keepReadingPlace });
+
 // Plugins (plugins.js) come last, once all of NEO is defined. Getters,
 // because book, chapterHTML and currentTab are reassigned. book is handed
 // over as it stands, a book a shelf export borrowed included: plugins.js
 // decides what a plugin reads (openedBook), only the book the plugins heard
 // open. typewriterRest ends the page's following of the caret by keyboard
 // (until the next key), for an edit that moved the selection and put it back.
-if (window.NeoPlugins) NeoPlugins.attach({ book: () => book, chapterHTML: (id) => chapterHTML[id], currentTab: () => currentTab, switchTab, captureCaret, restoreCaret, resumePosition, typewriterRest: () => { typewriterByKeyboard = false; }, openBook: openForPlugin });
+if (window.NeoPlugins) NeoPlugins.attach({ navTabs, book: () => book, chapterHTML: (id) => chapterHTML[id], currentTab: () => currentTab, switchTab, captureCaret, restoreCaret, resumePosition, typewriterRest: () => { typewriterByKeyboard = false; }, openBook: openForPlugin });

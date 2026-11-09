@@ -11,7 +11,7 @@ import { launchProfile } from '../support/electron-profile.mjs';
 // at the next run; the judge's answer, read at the next run, shows as a card in the
 // Ripple section; Apply writes the librarian's wiki page in its own file and the ruling
 // goes in the log, with the next hop's job for the page it changed. Ripple This Page with
-// no page open in the side pane says so, and with one open makes its job and packet.
+// no page open in the page column says so, and with one open makes its job and packet.
 
 const SIDECAR = JSON.stringify({
   version: 1, source: { path: '/v/Harbour.md', name: 'Harbour', sha256: 'a'.repeat(64) }, frontmatter: { type: 'lore' }, imported: '2026-11-01T12:00:00.000Z',
@@ -106,7 +106,7 @@ test('a page that comes in ripples to the wiki page it touches, on the author\'s
   }
 });
 
-test('Ripple This Page with no page open in the side pane says so and makes no job', async () => {
+test('Ripple This Page with no page open in the page column says so and makes no job', async () => {
   const { profile, library } = await profileWithPages();
   const fixture = await launchProfile(profile);
   try {
@@ -114,7 +114,7 @@ test('Ripple This Page with no page open in the side pane says so and makes no j
     await page.waitForFunction(() => !!window.hoard);
     await openANovel(page);
     await menu(app, 'Ripple This Page');
-    await expect(page.locator('.hoard-ripple .hoard-alert')).toContainText('No page is open in the side pane');
+    await expect(page.locator('.hoard-ripple .hoard-alert')).toContainText('No page is open in the page column');
     await expect(page.locator('.hoard-ripple-jobs li')).toHaveCount(0);
     await expect(readFile(path.join(library, '.neo', 'ripple', 'rulings.jsonl'), 'utf8')).rejects.toThrow();
   } finally {
@@ -122,10 +122,10 @@ test('Ripple This Page with no page open in the side pane says so and makes no j
   }
 });
 
-// Rule: Ripple This Page asks about the stored page open in the side pane, which the pane's
+// Rule: Ripple This Page asks about the stored page open in the page column, which the column's
 // currentPage() names: a job for that page, asked for at hop 0, and its packet, whose path
 // the section says.
-test('Ripple This Page packets the page open in the side pane', async () => {
+test('Ripple This Page packets the page open in the page column', async () => {
   const { profile, library } = await profileWithPages();
   const fixture = await launchProfile(profile);
   try {
@@ -133,7 +133,7 @@ test('Ripple This Page packets the page open in the side pane', async () => {
     await page.waitForFunction(() => !!window.hoard);
     await openANovel(page);
     await page.evaluate(() => window.hoard.wiki.pane.open('sources/Field Notes.html'));
-    await expect(page.locator('.hoard-wiki-title')).toHaveText('Field Notes');
+    await expect(page.locator('#split-column .hoard-wiki-title')).toHaveText('Field Notes');
     await menu(app, 'Ripple This Page');
     const said = page.locator('.hoard-ripple .hoard-status');
     await expect(said).toContainText('The packet for Field Notes is in the packets folder');

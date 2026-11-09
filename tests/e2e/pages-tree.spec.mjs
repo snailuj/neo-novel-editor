@@ -1,15 +1,18 @@
 import { test, expect } from '@playwright/test';
-import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { existsSync } from 'node:fs';
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { launchProfile, seedBook } from '../support/electron-profile.mjs';
+import {
+  caretInBook, columnSettled, fileOf as readPage, followLink, inManuscript, libraryProfile as library, pagesTab, rowNames, rowOf,
+} from '../support/library-pages.mjs';
 
-// Stage 5, the Pages tree in the wiki pane. Rules: a stored page (wiki/ or sources/) shows
-// in the pane beside the open book, and its links reach pages by title, wiki
-// first; a link in the manuscript opens its page there; Back and Forward walk the trail;
-// from the tree the writer opens, makes, renames and moves pages, by pointer or by
-// keyboard alone; and the focus stays in the manuscript unless the writer acts in the pane.
+// Stage 5, the Pages tree, now on the Pages tab of the left pane, and the stored page in the
+// page column. Rules: a stored page (wiki/ or sources/) shows in the column beside the open
+// book, and its links reach pages by title, wiki first; a link in the manuscript opens its
+// page there; Back and Forward walk the trail; from the tree the writer opens, makes, renames
+// and moves pages, by pointer or by keyboard alone; and the focus stays in the manuscript
+// unless the writer acts in the column or the tab.
 
 const PAGES = {
   'wiki/People/Ada Vell.html': '<p data-block="a1">Ada keeps the [[Harbour]] light.</p><p data-block="a2">She rows at dawn to [[Vell]].</p>',
@@ -18,52 +21,14 @@ const PAGES = {
   'sources/Notes/Tides.html': '<p data-block="t1">High water at noon, says [[Ada Vell]], not [[Lost]].</p>',
 };
 
-async function libraryProfile() {
-  const profile = await mkdtemp(path.join(tmpdir(), 'neo-test-'));
-  const library = path.join(profile, 'documents', 'NEO Library');
-  await mkdir(library, { recursive: true });
-  await mkdir(path.join(profile, 'userData'), { recursive: true });
-  await writeFile(path.join(library, 'library.json'), JSON.stringify({
-    firstRunDone: true, authorName: 'Test author', penNames: [], pageTheme: 'night', outlineView: 'list',
-    hintShown: true, shelves: [{ id: 'shelf-1', name: 'Synthetic shelf', bookIds: [] }],
-  }));
-  for (const [id, html] of Object.entries(PAGES)) {
-    await mkdir(path.dirname(path.join(library, id)), { recursive: true });
-    await writeFile(path.join(library, id), html);
-  }
-  return { profile, library };
-}
-
-const fileOf = (library, id) => readFileSync(path.join(library, ...id.split('/')), 'utf8');
-
-// The side pane slides in, and a click aimed while it moves lands outside the window.
-async function paneSettled(page) {
-  await expect(page.locator('#side-pane')).toHaveClass(/\bopen\b/);
-  await page.waitForFunction(() => {
-    const pane = document.getElementById('side-pane');
-    return pane.getAnimations().length === 0 && pane.getBoundingClientRect().right <= innerWidth + 0.5;
-  });
-}
-
-const inManuscript = (page) => page.evaluate(() => !!document.activeElement?.closest('#chapters .chapter-body'));
-
-async function caretInBook(page) {
-  await page.evaluate(() => {
-    const p = document.querySelector('#chapters .chapter-body p');
-    p.closest('.chapter-body').focus();
-    const range = document.createRange();
-    range.setStart(p.firstChild, 2);
-    getSelection().removeAllRanges();
-    getSelection().addRange(range);
-  });
-  await expect.poll(() => inManuscript(page)).toBe(true);
-}
+const libraryProfile = () => library(PAGES);
+const fileOf = readPage;
+const paneSettled = columnSettled;
+const BACK = { name: /^Back/ };
+const FORWARD = { name: /^Forward/ };
 
 // The words of the manuscript drawn with one of hoard's highlights.
 const drawnText = (page, name) => page.evaluate((key) => [...(CSS.highlights.get(key) ?? [])].map((r) => r.toString()), `plugin-hoard-${name}`);
-
-// Follow Link, as its Plugins menu item runs it.
-const followLink = (page) => page.evaluate(() => NeoPlugins.runCommand('hoard', 'follow-link'));
 
 // Where the words are in the manuscript: the caret put inside them, or their middle on screen.
 const caretAt = (page, words) => page.evaluate((words) => {
@@ -86,22 +51,23 @@ const middleOf = (page, words) => page.evaluate((words) => {
 
 // Rule: a [[link]] in the manuscript is drawn as one when a stored page has its title, and
 // as missing when none does; followed with Follow Link or Ctrl+click, it opens that page (a
-// wiki page before a source, case aside) in the pane, and the writer's caret and book stay
-// as they were; a link no page has is said so, and the pane stays where it was.
-test('a link in the manuscript opens its stored page in the pane, the caret staying put', async () => {
+// wiki page before a source, case aside) in the page column, and the writer's caret and book
+// stay as they were; a link no page has is said so, and the column stays where it was.
+test('a link in the manuscript opens its stored page in the column, the caret staying put', async () => {
   const { profile } = await libraryProfile();
   const fixture = await launchProfile(profile);
   try {
     const { page } = fixture;
     await page.waitForFunction(() => !!window.hoard);
     const novel = await seedBook(page, '<p>Meet at the [[Harbour]] with [[ada vell]], not by [[Nowhere]].</p>');
-    const pane = page.locator('.hoard-wiki-pane');
+    const pane = page.locator('#split-column');
     await expect.poll(() => drawnText(page, 'wiki-link')).toEqual(['[[Harbour]]', '[[ada vell]]']);
     expect(await drawnText(page, 'wiki-missing')).toEqual(['[[Nowhere]]']);
 
     await caretAt(page, '[[Harbour]]');
     const before = await page.evaluate(() => captureCaret());
     await followLink(page);
+    await paneSettled(page);
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Harbour');
     await expect(pane.locator('.hoard-wiki-line')).toHaveText(['The wiki harbour faces east.']);
     expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('wiki/Harbour.html');
@@ -128,7 +94,7 @@ test('a link in the manuscript opens its stored page in the pane, the caret stay
 // Rule: a stored page shows beside the book, editable (pane-edit.spec), marked where it is
 // asked to be, with its links reaching pages by title only (wiki first); Back and Forward
 // walk the trail; and none of it takes the focus from the manuscript.
-test('a stored page shows in the pane, and the trail walks it', async () => {
+test('a stored page shows in the column, and the trail walks it', async () => {
   const { profile, library } = await libraryProfile();
   const fixture = await launchProfile(profile);
   try {
@@ -136,7 +102,7 @@ test('a stored page shows in the pane, and the trail walks it', async () => {
     await page.waitForFunction(() => !!window.hoard);
     await seedBook(page, '<p>A line of the book.</p>');
     await caretInBook(page);
-    const pane = page.locator('.hoard-wiki-pane');
+    const pane = page.locator('#split-column');
 
     await page.evaluate(() => window.hoard.wiki.pane.open('wiki/People/Ada Vell.html', { pIdx: 1, off: 4, len: 4 }));
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Ada Vell');
@@ -172,13 +138,11 @@ test('a stored page shows in the pane, and the trail walks it', async () => {
   }
 });
 
-const rowNames = (tree) => tree.locator('.hoard-tree-name').allTextContents();
-
-// Rule: the tree is worked by keyboard alone: the Pages button unfolds it, Tab reaches the
-// rows, arrows walk and open folders, Enter opens a page in the pane with the focus left on
-// its row, F2 opens Rename and Esc puts the focus back; a click opens a page too; and
-// nothing the tree does on its own (reading the list, the pane showing a page) takes the
-// focus from the manuscript.
+// Rule: the tree is worked by keyboard alone: the Pages tab opens with the focus on the row
+// of the page shown, arrows walk and open folders, Enter opens a page in the column with the
+// focus left on its row, F2 opens Rename and Shift+F10 the row's menu, and Esc puts the focus
+// back from either; a click opens a page too; and nothing the tree does on its own (reading
+// the list, the column showing a page) takes the focus from the manuscript.
 test('the tree opens pages by keyboard alone and by pointer, and leaves the focus where the writer is', async () => {
   const { profile } = await libraryProfile();
   const fixture = await launchProfile(profile);
@@ -187,34 +151,31 @@ test('the tree opens pages by keyboard alone and by pointer, and leaves the focu
     await page.waitForFunction(() => !!window.hoard);
     await seedBook(page, '<p>A line of the book.</p>');
     await caretInBook(page);
-    const pane = page.locator('.hoard-wiki-pane');
-    const tree = pane.locator('.hoard-tree');
-    const fold = tree.getByRole('button', { name: 'Pages' });
-    await expect(fold).toHaveAttribute('aria-expanded', 'false');
-    await expect(tree.locator('.hoard-tree-list')).toBeHidden();
+    const pane = page.locator('#split-column');
 
     // reading the list and showing a page from code leave the caret in the book
     await page.evaluate(() => window.hoard.wiki.pane.tree.refresh());
     await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tides');
     expect(await inManuscript(page)).toBe(true);
+    await expect(page.locator('#nav-pane')).not.toHaveClass(/\bopen\b/);
 
-    await fold.focus();
-    await page.keyboard.press('Enter');
-    await expect(fold).toHaveAttribute('aria-expanded', 'true');
-    expect(await rowNames(tree)).toEqual(['wiki', 'People', 'Harbour', 'sources', 'Notes', 'Harbour']);
+    const tree = await pagesTab(page);
+    const row = rowOf(tree);
+    expect(await rowNames(tree)).toEqual(['Wiki', 'People', 'Harbour', 'Sources', 'Notes', 'Tides', 'Harbour']);
+    await expect(row('Tides')).toBeFocused();
+    await expect(row('Tides')).toHaveAttribute('aria-current', 'page');
     await expect(tree.getByRole('button', { name: 'New page' })).toBeVisible();
-    await page.keyboard.press('Tab');
-    await page.keyboard.press('Tab');
-    await page.keyboard.press('Tab');
-    const row = (name, n = 0) => tree.locator('.hoard-tree-name', { hasText: new RegExp(`^${name}`) }).nth(n);
-    await expect(row('wiki')).toBeFocused();
+    await page.keyboard.press('Home');
+    await expect(row('Wiki')).toBeFocused();
+    await expect(tree.locator('.hoard-tree-name[tabindex="0"]')).toHaveCount(1);
     await page.keyboard.press('ArrowDown');
     await expect(row('People')).toBeFocused();
     await expect(row('People')).toHaveAttribute('aria-expanded', 'false');
+    await expect(row('People')).toHaveAccessibleName('People, 1 page');
     await page.keyboard.press('ArrowRight');
     await expect(row('People')).toHaveAttribute('aria-expanded', 'true');
-    expect(await rowNames(tree)).toEqual(['wiki', 'People', 'Ada Vell', 'Harbour', 'sources', 'Notes', 'Harbour']);
+    expect(await rowNames(tree)).toEqual(['Wiki', 'People', 'Ada Vell', 'Harbour', 'Sources', 'Notes', 'Tides', 'Harbour']);
     await page.keyboard.press('ArrowRight');
     await expect(row('Ada Vell')).toBeFocused();
     await page.keyboard.press('Enter');
@@ -231,10 +192,15 @@ test('the tree opens pages by keyboard alone and by pointer, and leaves the focu
     await expect(field).toHaveCount(0);
     await expect(row('Ada Vell')).toBeFocused();
 
-    // the row's own actions follow it in the Tab order
-    await page.keyboard.press('Tab');
-    await expect(tree.getByRole('button', { name: 'Rename Ada Vell' })).toBeFocused();
-    await page.keyboard.press('Shift+Tab');
+    // the row's menu opens on Shift+F10, on its first item, and Esc gives the focus back to the row
+    await page.keyboard.press('Shift+F10');
+    const menu = page.locator('.pop-menu');
+    await expect(menu.getByRole('menuitem')).toHaveText(['Open', 'Rename page…', 'Move page…']);
+    await expect(menu.getByRole('menuitem', { name: 'Open' })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+    await expect(row('Ada Vell')).toBeFocused();
+    await expect(page.locator('#nav-pane')).toHaveClass(/\bopen\b/);
     await page.keyboard.press('ArrowLeft');
     await expect(row('People')).toBeFocused();
     await page.keyboard.press('ArrowLeft');
@@ -242,10 +208,8 @@ test('the tree opens pages by keyboard alone and by pointer, and leaves the focu
     await page.keyboard.press('End');
     await expect(row('Harbour', 1)).toBeFocused();
     await page.keyboard.press('Home');
-    await expect(row('wiki')).toBeFocused();
-    // Alt+Left still walks the trail from the tree
-    await page.keyboard.press('Alt+ArrowLeft');
-    await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tides');
+    await expect(row('Wiki')).toBeFocused();
+    expect(await inManuscript(page)).toBe(false);
 
     // a click opens the source page of the same title as a wiki page
     await row('Harbour', 1).click();
@@ -258,10 +222,55 @@ test('the tree opens pages by keyboard alone and by pointer, and leaves the focu
   }
 });
 
+// Rule: the tree filter keeps every folder above a match drawn and open and hides the rest,
+// case and accents aside; nothing matching is said in words; and clearing it gives back the
+// tree as the writer had it, the folders they had shut still shut.
+test('the filter narrows the tree to the titles holding the words, the folders above them kept', async () => {
+  const { profile } = await libraryProfile();
+  const fixture = await launchProfile(profile);
+  try {
+    const { page } = fixture;
+    await page.waitForFunction(() => !!window.hoard);
+    await seedBook(page, '<p>A line of the book.</p>');
+    await page.evaluate(() => window.hoard.wiki.pane.open('wiki/Harbour.html'));
+    await paneSettled(page);
+    const tree = await pagesTab(page);
+    const row = rowOf(tree);
+    const filter = tree.getByRole('searchbox', { name: 'Filter' });
+    const before = ['Wiki', 'People', 'Harbour', 'Sources', 'Notes', 'Harbour'];
+    expect(await rowNames(tree)).toEqual(before);
+
+    await filter.fill('TID');
+    await expect.poll(() => rowNames(tree)).toEqual(['Sources', 'Notes', 'Tides']);
+    await expect(row('Notes')).toHaveAttribute('aria-expanded', 'true');
+    await filter.press('ArrowDown');
+    await expect(row('Sources')).toBeFocused();
+    // a folder of the filtered tree shuts and opens like any other
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowLeft');
+    await expect.poll(() => rowNames(tree)).toEqual(['Sources', 'Notes']);
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(() => rowNames(tree)).toEqual(['Sources', 'Notes', 'Tides']);
+
+    await filter.fill('vél');
+    await expect.poll(() => rowNames(tree)).toEqual(['Wiki', 'People', 'Ada Vell']);
+    await filter.fill('kraken');
+    await expect.poll(() => rowNames(tree)).toEqual([]);
+    await expect(tree.getByText(/^No page title holds/)).toHaveText('No page title holds “kraken”. Clear the filter to see every page.');
+
+    await filter.fill('');
+    await expect.poll(() => rowNames(tree)).toEqual(before);
+    await expect(row('Notes')).toHaveAttribute('aria-expanded', 'false');
+    await expect(tree.getByText(/^No page title holds/)).toHaveCount(0);
+  } finally {
+    await fixture.close();
+  }
+});
+
 // Rule: from the tree a writer makes a page in the folder they are in, renames a page so
-// that every [[link]] to it follows (the open book's chapter too, and the pane's trail),
-// and moves a page to another folder of its tree; what the store would refuse is said next
-// to the field, in words, and what was typed stays.
+// that every [[link]] to it follows (the open book's chapter too, and the column's trail),
+// and moves a page to another folder of its tree, from a row's menu; what the store would
+// refuse is said next to the field, in words, and what was typed stays.
 test('new page, rename and move from the tree, with refusals next to the field', async () => {
   const { profile, library } = await libraryProfile();
   const fixture = await launchProfile(profile);
@@ -269,26 +278,30 @@ test('new page, rename and move from the tree, with refusals next to the field',
     const { page } = fixture;
     await page.waitForFunction(() => !!window.hoard);
     await seedBook(page, '<p>Meet at the [[Harbour]] at noon.</p>');
-    const pane = page.locator('.hoard-wiki-pane');
-    const tree = pane.locator('.hoard-tree');
-    const row = (name, n = 0) => tree.locator('.hoard-tree-name', { hasText: new RegExp(`^${name}`) }).nth(n);
+    const pane = page.locator('#split-column');
     // the error a field names first among the texts that describe it
     const errorOf = async (field) => page.locator(`#${(await field.getAttribute('aria-describedby')).split(' ')[0]}`);
+    // a row's menu, opened by the pointer on the Pages tab, and one of its items chosen
+    const fromMenu = async (name, item) => {
+      await rowOf(await pagesTab(page))(name).click({ button: 'right' });
+      await page.locator('.pop-menu').getByRole('menuitem', { name: item }).click();
+    };
     await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
     await paneSettled(page);
-    await tree.getByRole('button', { name: 'Pages' }).click();
+    const tree = await pagesTab(page);
+    const row = rowOf(tree);
     await row('Harbour').click();
     await expect(pane.locator('.hoard-wiki-line')).toHaveText(['The wiki harbour faces east.']);
-    await expect(pane.locator('.hoard-wiki-where')).toHaveText('wiki');
+    await expect(pane.locator('.hoard-crumb')).toHaveText(['Wiki']);
     // a page linking to it is shown while it is renamed
     await row('People').click();
     await row('Ada Vell').click();
-    await expect(pane.locator('.hoard-wiki-where')).toHaveText('wiki / People');
+    await expect(pane.locator('.hoard-crumb')).toHaveText(['Wiki', 'People']);
 
     // rename: a title the other tree holds is refused next to the field, and the value stays
-    await row('Harbour').hover();
-    await tree.getByRole('button', { name: 'Rename Harbour' }).first().click();
+    await fromMenu('Harbour', 'Rename page…');
     const field = tree.getByLabel('New title for “Harbour”');
+    await expect(field).toBeFocused();
     await field.fill('Tides');
     await field.press('Enter');
     await expect(field).toHaveAttribute('aria-invalid', 'true');
@@ -309,13 +322,13 @@ test('new page, rename and move from the tree, with refusals next to the field',
     // the page shown is read again, its link reaching the page by its new title, and the
     // trail follows the rename
     await expect(pane.getByRole('button', { name: '[[Quay]]' })).toBeVisible();
-    await pane.getByRole('button', { name: '‹ Back' }).click();
+    await expect(pane.getByRole('button', { name: 'Back to Quay' })).toBeVisible();
+    await pane.getByRole('button', BACK).click();
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Quay');
     expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('wiki/Quay.html');
 
     // move: into a folder typed, made for it, inside the same tree
-    await row('Ada Vell').hover();
-    await tree.getByRole('button', { name: 'Move Ada Vell' }).click();
+    await fromMenu('Ada Vell', 'Move page…');
     const folder = tree.getByLabel('Folder in wiki to move “Ada Vell” to');
     await expect(folder).toHaveValue('People');
     await folder.fill('../Out');
@@ -327,9 +340,7 @@ test('new page, rename and move from the tree, with refusals next to the field',
     await expect(row('Ada Vell')).toBeFocused();
     expect(fileOf(library, 'wiki/Places/Coast/Ada Vell.html')).toContain('Ada keeps');
     // People held only that page, and a folder with no pages is not listed
-    expect(await page.evaluate(() => [...document.querySelectorAll('.hoard-tree-name')].map((b) => b.textContent))).toEqual(
-      ['wiki', 'Places', 'Coast', 'Ada Vell', 'Quay', 'sources', 'Notes', 'Harbour'],
-    );
+    expect(await rowNames(tree)).toEqual(['Wiki', 'Places', 'Coast', 'Ada Vell', 'Quay', 'Sources', 'Notes', 'Tides', 'Harbour']);
 
     // new page: in the folder of the row the writer is on; a title taken is refused
     await tree.getByRole('button', { name: 'New page' }).click();
@@ -361,19 +372,17 @@ test('a rename the library changed under is refused in words, from the list read
     const { page } = fixture;
     await page.waitForFunction(() => !!window.hoard);
     await seedBook(page, '<p>A line of the book.</p>');
-    const pane = page.locator('.hoard-wiki-pane');
-    const tree = pane.locator('.hoard-tree');
-    const row = (name, n = 0) => tree.locator('.hoard-tree-name', { hasText: new RegExp(`^${name}`) }).nth(n);
     await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
     await paneSettled(page);
-    await tree.getByRole('button', { name: 'Pages' }).click();
+    const tree = await pagesTab(page);
+    const row = rowOf(tree);
     await row('People').click();
     await expect(row('Ada Vell')).toBeVisible();
 
     // taken: a file came in under the new title after the list was read
     await writeFile(path.join(library, 'wiki', 'Quay.html'), '<p data-block="q1">A quay.</p>');
-    await row('Harbour').hover();
-    await tree.getByRole('button', { name: 'Rename Harbour' }).first().click();
+    await row('Harbour').focus();
+    await page.keyboard.press('F2');
     const field = tree.getByLabel('New title for “Harbour”');
     await field.fill('Quay');
     await field.press('Enter');
@@ -387,17 +396,17 @@ test('a rename the library changed under is refused in words, from the list read
 
     // missing: the page was removed after the list was read
     await rm(path.join(library, 'wiki', 'People', 'Ada Vell.html'));
-    await row('Ada Vell').hover();
-    await tree.getByRole('button', { name: 'Rename Ada Vell' }).click();
+    await row('Ada Vell').click({ button: 'right' });
+    await page.locator('.pop-menu').getByRole('menuitem', { name: 'Rename page…' }).click();
     const gone = tree.getByLabel('New title for “Ada Vell”');
     await gone.fill('Ada Brook');
     await gone.press('Enter');
     await expect(tree.locator('.hoard-tree-alert')).toHaveText('“Ada Vell” is no longer there, so nothing was changed. It may have been moved or removed outside NEO. Look for it in the list, which now shows the pages as they are.');
     await expect(gone).toHaveCount(0);
     await expect(row('Ada Vell')).toHaveCount(0);
-    // People held only that page, so its folder went too and the focus is on wiki
+    // People held only that page, so its folder went too and the focus is on Wiki
     await expect(row('People')).toHaveCount(0);
-    await expect(row('wiki')).toBeFocused();
+    await expect(row('Wiki')).toBeFocused();
     expect(existsSync(path.join(library, 'wiki', 'People', 'Ada Brook.html'))).toBe(false);
   } finally {
     await fixture.close();
@@ -414,7 +423,7 @@ test('a stored page\'s links follow the library as it is when drawn and when fol
     const { page } = fixture;
     await page.waitForFunction(() => !!window.hoard);
     await seedBook(page, '<p>A line of the book.</p>');
-    const pane = page.locator('.hoard-wiki-pane');
+    const pane = page.locator('#split-column');
     await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
     await paneSettled(page);
     await expect(pane.locator('.hoard-wiki-missing')).toHaveText('[[Lost]]');
@@ -431,8 +440,8 @@ test('a stored page\'s links follow the library as it is when drawn and when fol
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Ada Vell');
     expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('wiki/Archive/Ada Vell.html');
 
-    // one removed since is said to be gone, and the pane stays where it was
-    await pane.getByRole('button', { name: '‹ Back' }).click();
+    // one removed since is said to be gone, and the column stays where it was
+    await pane.getByRole('button', BACK).click();
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tides');
     await rm(path.join(library, 'wiki', 'Archive', 'Ada Vell.html'));
     await pane.getByRole('button', { name: '[[Ada Vell]]' }).click();
@@ -498,14 +507,14 @@ async function letAllThrough(app) {
 // Rule: a link followed from a stored page leads nowhere if the writer moved on (Back,
 // another link) while the list was read: the newer navigation stands and the trail gains
 // no stop.
-test('a link followed while the writer moves on does not take the pane back', async () => {
+test('a link followed while the writer moves on does not take the column back', async () => {
   const { profile } = await libraryProfile();
   const fixture = await launchProfile(profile);
   try {
     const { app, page } = fixture;
     await page.waitForFunction(() => !!window.hoard);
     await seedBook(page, '<p>A line of the book.</p>');
-    const pane = page.locator('.hoard-wiki-pane');
+    const pane = page.locator('#split-column');
     await page.evaluate(() => window.hoard.wiki.pane.open('wiki/Harbour.html'));
     await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
     await paneSettled(page);
@@ -513,13 +522,13 @@ test('a link followed while the writer moves on does not take the pane back', as
 
     await hold(app, ['pages.list']);
     await pane.getByRole('button', { name: '[[Ada Vell]]' }).click();
-    await pane.getByRole('button', { name: '‹ Back' }).click();
+    await pane.getByRole('button', BACK).click();
     await letAllThrough(app);
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Harbour');
     await page.waitForTimeout(300);
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Harbour');
     expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('wiki/Harbour.html');
-    await pane.getByRole('button', { name: 'Forward ›' }).click();
+    await pane.getByRole('button', FORWARD).click();
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tides');
   } finally {
     await fixture.close();
@@ -536,7 +545,7 @@ test('the link clicked last is the page shown', async () => {
     const { app, page } = fixture;
     await page.waitForFunction(() => !!window.hoard);
     await seedBook(page, '<p>A line of the book.</p>');
-    const pane = page.locator('.hoard-wiki-pane');
+    const pane = page.locator('#split-column');
     await page.evaluate(() => window.hoard.wiki.pane.open('wiki/Hub.html'));
     await paneSettled(page);
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Hub');
@@ -550,27 +559,27 @@ test('the link clicked last is the page shown', async () => {
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tides');
     await page.waitForTimeout(300);
     expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('sources/Notes/Tides.html');
-    await pane.getByRole('button', { name: '‹ Back' }).click();
+    await pane.getByRole('button', BACK).click();
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Hub');
   } finally {
     await fixture.close();
   }
 });
 
-// Rule: a page made from the tree opens in the pane only if the writer has not gone to
+// Rule: a page made from the tree opens in the column only if the writer has not gone to
 // another page while it was made; the page they went to stays.
-test('a page made while the writer reads another leaves the pane where they went', async () => {
+test('a page made while the writer reads another leaves the column where they went', async () => {
   const { profile, library } = await libraryProfile();
   const fixture = await launchProfile(profile);
   try {
     const { app, page } = fixture;
     await page.waitForFunction(() => !!window.hoard);
     await seedBook(page, '<p>A line of the book.</p>');
-    const pane = page.locator('.hoard-wiki-pane');
-    const tree = pane.locator('.hoard-tree');
+    const pane = page.locator('#split-column');
     await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
     await paneSettled(page);
-    await tree.getByRole('button', { name: 'Pages' }).click();
+    const tree = await pagesTab(page);
+    await rowOf(tree)('Wiki').focus();
     await tree.getByRole('button', { name: 'New page' }).click();
     const field = tree.getByLabel('Title of the new page in wiki');
     await field.fill('Bea Lund');
@@ -598,14 +607,14 @@ test('a list read earlier that answers later does not decide a page\'s links', a
     const { app, page } = fixture;
     await page.waitForFunction(() => !!window.hoard);
     await seedBook(page, '<p>A line of the book.</p>');
-    const pane = page.locator('.hoard-wiki-pane');
-    const tree = pane.locator('.hoard-tree');
+    const pane = page.locator('#split-column');
     await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
     await paneSettled(page);
     await expect(pane.locator('.hoard-wiki-missing')).toHaveText('[[Lost]]');
 
+    // the Pages tab, first shown since the book opened, reads the list
     await hold(app, ['pages.list', 'pages.read']);
-    await tree.getByRole('button', { name: 'Pages' }).click();
+    const tree = await pagesTab(page, { read: false });
     await heldOn(app, 'pages.list');
     await writeFile(path.join(library, 'wiki', 'Lost.html'), '<p data-block="l1">Found again.</p>');
     await page.evaluate(() => { window.hoard.wiki.pane.reload(); });
@@ -630,11 +639,9 @@ test('typing in the field keeps the focus there, key after key', async () => {
     const { page } = fixture;
     await page.waitForFunction(() => !!window.hoard);
     await seedBook(page, '<p>A line of the book.</p>');
-    const pane = page.locator('.hoard-wiki-pane');
-    const tree = pane.locator('.hoard-tree');
     await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
     await paneSettled(page);
-    await tree.getByRole('button', { name: 'Pages' }).click();
+    const tree = await pagesTab(page);
     await tree.locator('.hoard-tree-name[data-key="wiki/Harbour.html"]').focus();
     await page.keyboard.press('F2');
     const rename = tree.getByLabel('New title for “Harbour”');
@@ -667,11 +674,9 @@ test('a new page whose folder is removed outside NEO moves up, title kept', asyn
     const { page } = fixture;
     await page.waitForFunction(() => !!window.hoard);
     await seedBook(page, '<p>A line of the book.</p>');
-    const pane = page.locator('.hoard-wiki-pane');
-    const tree = pane.locator('.hoard-tree');
     await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
     await paneSettled(page);
-    await tree.getByRole('button', { name: 'Pages' }).click();
+    const tree = await pagesTab(page);
     await tree.locator('.hoard-tree-name[data-key="wiki/People"]').click();
     await tree.getByRole('button', { name: 'New page' }).click();
     await tree.getByLabel('Title of the new page in wiki/People').fill('Bea Lund');
@@ -694,7 +699,7 @@ test('a new page whose folder is removed outside NEO moves up, title kept', asyn
 });
 
 // Rule: after a change, the tree puts the focus on the page's row only if the writer is
-// still in the pane once the list is back; a writer gone back to the book stays there.
+// still in the Pages tab once the list is back; a writer gone back to the book stays there.
 test('a writer back in the book while the list is read again keeps the focus there', async () => {
   const { profile } = await libraryProfile();
   const fixture = await launchProfile(profile);
@@ -702,11 +707,9 @@ test('a writer back in the book while the list is read again keeps the focus the
     const { app, page } = fixture;
     await page.waitForFunction(() => !!window.hoard);
     await seedBook(page, '<p>A line of the book.</p>');
-    const pane = page.locator('.hoard-wiki-pane');
-    const tree = pane.locator('.hoard-tree');
     await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
     await paneSettled(page);
-    await tree.getByRole('button', { name: 'Pages' }).click();
+    const tree = await pagesTab(page);
     await tree.locator('.hoard-tree-name[data-key="wiki/Harbour.html"]').focus();
     await page.keyboard.press('F2');
     await page.keyboard.type('Quay');
@@ -724,7 +727,7 @@ test('a writer back in the book while the list is read again keeps the focus the
 });
 
 // Rule: a page shown after a slow read takes the focus to its title only if the writer is
-// still in the pane; a writer gone back to the book stays there.
+// still in the column; a writer gone back to the book stays there.
 test('a page read slowly does not take the writer out of the book', async () => {
   const { profile } = await libraryProfile();
   const fixture = await launchProfile(profile);
@@ -732,13 +735,13 @@ test('a page read slowly does not take the writer out of the book', async () => 
     const { app, page } = fixture;
     await page.waitForFunction(() => !!window.hoard);
     await seedBook(page, '<p>A line of the book.</p>');
-    const pane = page.locator('.hoard-wiki-pane');
+    const pane = page.locator('#split-column');
     await page.evaluate(() => window.hoard.wiki.pane.open('wiki/Harbour.html'));
     await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
     await paneSettled(page);
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tides');
 
-    await pane.getByRole('button', { name: '‹ Back' }).focus();
+    await pane.getByRole('button', BACK).focus();
     await hold(app, ['pages.list']);
     await page.keyboard.press('Enter');
     await heldOn(app, 'pages.list');
@@ -748,8 +751,8 @@ test('a page read slowly does not take the writer out of the book', async () => 
     await page.waitForTimeout(300);
     expect(await inManuscript(page)).toBe(true);
 
-    // still in the pane, the writer is taken to the title of the page shown
-    await pane.getByRole('button', { name: 'Forward ›' }).focus();
+    // still in the column, the writer is taken to the title of the page shown
+    await pane.getByRole('button', FORWARD).focus();
     await page.keyboard.press('Enter');
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tides');
     await expect(pane.locator('.hoard-wiki-title')).toBeFocused();
@@ -767,7 +770,7 @@ test('a link left behind that fails to read says nothing on the page gone to', a
     const { app, page } = fixture;
     await page.waitForFunction(() => !!window.hoard);
     await seedBook(page, '<p>A line of the book.</p>');
-    const pane = page.locator('.hoard-wiki-pane');
+    const pane = page.locator('#split-column');
     await page.evaluate(() => window.hoard.wiki.pane.open('wiki/Harbour.html'));
     await page.evaluate(() => window.hoard.wiki.pane.open('sources/Notes/Tides.html'));
     await paneSettled(page);
@@ -775,7 +778,7 @@ test('a link left behind that fails to read says nothing on the page gone to', a
 
     await hold(app, ['pages.list']);
     await pane.getByRole('button', { name: '[[Ada Vell]]' }).click();
-    await pane.getByRole('button', { name: '‹ Back' }).click();
+    await pane.getByRole('button', BACK).click();
     await heldOn(app, 'pages.list', 2);
     await letThrough(app, 'pages.list', true);
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Harbour');
@@ -787,7 +790,7 @@ test('a link left behind that fails to read says nothing on the page gone to', a
 
     // the link the writer is still waiting on says so
     await letAllThrough(app);
-    await pane.getByRole('button', { name: 'Forward ›' }).click();
+    await pane.getByRole('button', FORWARD).click();
     await expect(pane.locator('.hoard-wiki-title')).toHaveText('Tides');
     await hold(app, ['pages.list']);
     await pane.getByRole('button', { name: '[[Ada Vell]]' }).click();

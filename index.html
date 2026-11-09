@@ -75,11 +75,16 @@
     <div id="nav-hotzone"></div>
     <nav id="nav-pane" data-i18n-label="Chapters">
       <div id="nav-head">
-        <span data-i18n>Chapters</span>
+        <!-- the view's own list first (Chapters, Elements in a script, Notes), then a plugin's tabs (plugins.js, addPane with nav) -->
+        <div id="nav-tabs" role="tablist" aria-orientation="horizontal" data-i18n-label="Left pane tabs">
+          <button type="button" id="nav-tab-own" class="nav-tab" role="tab" aria-selected="true" aria-controls="nav-own" tabindex="0"><span data-i18n>Chapters</span></button>
+        </div>
         <button id="nav-pin" data-i18n-title title="Keep this pane open" data-i18n-label="Keep this pane open" aria-pressed="false">&#9737;</button>
       </div>
-      <div id="nav-list"></div>
-      <button id="nav-add" data-i18n-title title="Add a chapter at the end" data-i18n-label="Add a chapter at the end"><span aria-hidden="true">+</span> <span data-i18n>Chapter</span></button>
+      <div id="nav-own" role="tabpanel" aria-labelledby="nav-tab-own">
+        <div id="nav-list"></div>
+        <button id="nav-add" data-i18n-title title="Add a chapter at the end" data-i18n-label="Add a chapter at the end"><span aria-hidden="true">+</span> <span data-i18n>Chapter</span></button>
+      </div>
     </nav>
 
     <!-- Right hover zone: notes & comments -->
@@ -110,6 +115,13 @@
         <div id="darlings-list" hidden></div>
       </div>
     </main>
+
+    <!-- The page column: a plugin's region beside the manuscript (split-column.js). The
+         divider is its left edge; #split-body is what the plugin fills. -->
+    <aside id="split-column" data-i18n-label="Page column">
+      <div id="split-divider" role="separator" aria-orientation="vertical" tabindex="0" data-i18n-label="Resize page column"><span class="split-grip" aria-hidden="true"></span></div>
+      <div id="split-body" tabindex="-1"></div>
+    </aside>
 
     <!-- Bottom bar: tabs + counters -->
     <footer id="bottombar">
@@ -149,6 +161,7 @@
   <script src="covers.js"></script>
   <script src="manuscript.js"></script>
   <script src="plugins.js"></script>
+  <script src="split-column.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

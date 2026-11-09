@@ -1,4 +1,4 @@
-// Editing in the Wiki pane: the stored page shown beside the book is edited in place, on
+// Editing in the page column: the stored page shown beside the book is edited in place, on
 // the browser's own editing (contenteditable), so the writer can put a fact right in their
 // world-building without leaving their place in the manuscript. Enter splits a paragraph,
 // Backspace and Delete join two, Ctrl+B and Ctrl+I format, a paste comes in through NEO's
@@ -17,7 +17,6 @@
 // data-alias (Join-Keeps-Both-Ids); words joined into an empty block keep their own id.
 // The ids are set as attributes after the browser's edit, which the undo stack does not
 // record, so after an undo or redo they are worked out again from the lines as they are.
-// While the writer edits, the pane asks the host for more room (host API 5's wide).
 import { blockKeys, joinedIds, readBlocks, type NowBlock, type Was } from './edit.ts';
 import { BLOCK_CLASS, BLOCK_DATA, CHIP, CHIP_SOURCE, INLINE, type ShownPage } from './pane.ts';
 
@@ -25,11 +24,9 @@ import { BLOCK_CLASS, BLOCK_DATA, CHIP, CHIP_SOURCE, INLINE, type ShownPage } fr
 declare function cleanPasteHtml(html: string, dashes?: unknown): string;
 
 interface Pane {
-  root: HTMLDivElement;
   body: HTMLDivElement;
   beforeLeave(fn: () => Promise<void>): void;
   held(): Promise<void>;
-  wide(on: boolean): void;
 }
 
 export interface PaneEditOptions {
@@ -53,7 +50,7 @@ export interface PaneEditOptions {
 }
 
 const SAVE_AFTER = 800;
-const STRUCTURE = 'A page in the pane keeps paragraphs, bold and italic. Line breaks inside a paragraph, lists and dropped content are not taken: press Enter for a new paragraph, or paste instead of dropping.';
+const STRUCTURE = 'A page in the page column keeps paragraphs, bold and italic. Line breaks inside a paragraph, lists and dropped content are not taken: press Enter for a new paragraph, or paste instead of dropping.';
 const SUGGEST_STRUCTURE = 'On the librarian\'s page, typing suggests a change to words within one paragraph. To make, join or format paragraphs, choose Edit directly.';
 const LIBRARIANS = 'This is the librarian\'s page: select words and type to suggest a change, or choose Edit directly.';
 // what direct editing never takes
@@ -192,7 +189,6 @@ export function startPaneEdit(neo: Pick<NeoApiV5, 'on'>, pane: Pane, o: PaneEdit
     const on = editable();
     body.contentEditable = on ? 'true' : 'false';
     body.setAttribute('aria-label', on ? 'Page text, editable' : 'Page text');
-    if (!on && body.contains(document.activeElement)) pane.wide(false);
     mode.hidden = !on || !page || !o.isLibrarians(page.id);
     if (mode.hidden || !page) return;
     const isDirect = direct.has(page.id);
@@ -338,8 +334,8 @@ export function startPaneEdit(neo: Pick<NeoApiV5, 'on'>, pane: Pane, o: PaneEdit
     if (timer) clearTimeout(timer);
     timer = null;
     saving = saving.then(saveRound).catch((err: unknown) => {
-      console.warn('hoard: wiki pane: a save did not finish', err);
-      o.warn(`Your change was not saved: ${err instanceof Error ? err.message : String(err)}. It is still in the pane; type again to retry.`);
+      console.warn('hoard: page column: a save did not finish', err);
+      o.warn(`Your change was not saved: ${err instanceof Error ? err.message : String(err)}. It is still in the page column; type again to retry.`);
     });
     return saving;
   }
@@ -477,13 +473,7 @@ export function startPaneEdit(neo: Pick<NeoApiV5, 'on'>, pane: Pane, o: PaneEdit
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => { flush(); }, SAVE_AFTER);
   });
-  // wider once the writer types, not on the click that puts the caret in: a pane that
-  // grew under a press would move a link from under the pointer before it lets go
-  body.addEventListener('keydown', () => { if (editable()) pane.wide(true); });
   body.addEventListener('focusout', () => { if (timer) flush(); });
-  pane.root.addEventListener('focusout', (e) => {
-    if (!(e.relatedTarget instanceof Node) || !pane.root.contains(e.relatedTarget)) pane.wide(false);
-  });
   window.addEventListener('blur', () => { if (timer) flush(); });
 
   directButton.addEventListener('click', () => {

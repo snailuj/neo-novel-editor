@@ -1,7 +1,7 @@
 // The wiki in the window. Import to Wiki and Import List ask the main half, which runs the
 // file picker and the questions. [[links]] are drawn on the page of any book, as links when
 // a stored page has their title and as missing when none does, and followed with
-// Ctrl+click (Cmd+click on a Mac) or Follow Link: the page shows in the wiki pane beside the
+// Ctrl+click (Cmd+click on a Mac) or Follow Link: the page shows in the page column beside the
 // book (pane.ts), so the writer keeps their place. Nothing here runs while the writer types
 // but a redraw of the links, once typing pauses.
 import { titleIndex } from '../pages/titles.ts';
@@ -12,7 +12,7 @@ import type { Listed } from './tree.ts';
 const REDRAW_MS = 300;
 const STATUS_MS = 4_000;
 
-export function startWiki(neo: NeoApiV5) {
+export function startWiki(neo: NeoApiV6) {
   let importing = false;
   let redrawTimer: ReturnType<typeof setTimeout> | undefined;
   let statusTimer: ReturnType<typeof setTimeout> | undefined;
@@ -56,7 +56,7 @@ export function startWiki(neo: NeoApiV5) {
     changed: () => { reindex().catch((err: unknown) => console.warn('hoard: wiki: the links were not drawn again', err)); },
   });
 
-  // The stored page a link names, by title, shown in the pane beside the book.
+  // The stored page a link names, by title, shown in the column beside the book.
   const follow = async (target: string) => {
     try {
       if ((await pane.follow(target)) === 'missing') say(`No page is called “${target}”.`);

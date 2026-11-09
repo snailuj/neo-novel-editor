@@ -7,8 +7,8 @@ import { launchProfile, seedBook } from '../support/electron-profile.mjs';
 // Rules: Plugins > Search Library… opens a Search section beside the book with the focus
 // in its field; a phrase is found in the library's wiki and sources pages, in the open
 // book (as it stands on the page) and in other books, in groups, the Wiki pages first
-// and then the Sources pages; a page result asks the Wiki section to show that page id
-// at the words; a result in the open book selects its words; one in another book opens
+// and then the Sources pages; a page result shows that page in the page column with its
+// words marked, the book's caret left where it was; a result in the open book selects its words; one in another book opens
 // it at the words; the pages scope keeps a search to the two page folders; and nothing
 // found says where it looked.
 
@@ -71,16 +71,12 @@ test('a phrase is found in the pages, the open book and other books, and each re
     await expect(pane.locator('.hoard-status')).toHaveText('5 matches in 4 groups.');
     await expect(pane.locator('.hoard-search-hit').first()).toContainText('Harbour (title)');
 
-    // a page result asks the Wiki section to show that page id, at the words; the writer stays put
-    // (the section takes page ids with stage 5; until then only the request is checked)
-    await page.evaluate(() => {
-      const pane = window.hoard.wiki.pane;
-      window.__asked = [];
-      pane.open = (id, at) => { window.__asked.push([id, at ? at.len : null]); return Promise.resolve(); };
-    });
+    // a page result shows that page in the page column with its words marked; the writer stays put
     const caret = await page.evaluate(() => captureCaret());
     await pane.locator('.hoard-search-group').nth(1).locator('.hoard-search-hit').click();
-    expect(await page.evaluate(() => window.__asked)).toEqual([['sources/Logs/Dock.html', 7]]);
+    await expect(page.locator('#split-column .hoard-wiki-title')).toHaveText('Dock');
+    expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('sources/Logs/Dock.html');
+    await expect.poll(() => page.evaluate(() => [...(CSS.highlights.get('hoard-wiki-found') ?? [])].map((r) => r.toString()))).toEqual(['harbour']);
     expect(await page.evaluate(() => [book.id, captureCaret()])).toEqual([novel, caret]);
 
     // a result in the open book selects its words

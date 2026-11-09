@@ -3,7 +3,9 @@
 // and stylesheet. The script calls NeoPlugins.register, and its activate(neo)
 // is handed these calls (apiFor):
 //   on(event, fn)             book-open, book-close, chapter-change,
-//                             chapter-saved, selection and rendered;
+//                             chapter-saved, selection and rendered; and
+//                             column-open and column-close, as the page
+//                             column opens and closes (API 6);
 //                             chapter-saved carries html, the text the
 //                             write put in the file, and previous, what
 //                             the file held before it as this window knew
@@ -11,7 +13,9 @@
 //   book(), chapter(chId)     copies of the open book and of a chapter
 //   addPane({ id, title })    a tab of its own beside Notes; for API 3,
 //                             with side: true, a section of the right-hand
-//                             pane beside the manuscript instead
+//                             pane beside the manuscript instead; for API 6,
+//                             with nav: true, a tab of the left-hand pane
+//                             beside Chapters
 //   addCommand(id, run)       the handler for a command in the Plugins menu
 //   status(text)              a quiet line among the counters
 //   invoke(channel, payload)  a call to its own main half (plugins-main.js)
@@ -31,6 +35,11 @@
 // and, for a plugin written for API 5, on each side section addPane makes:
 //   wide(on)                  the right-hand pane made wider while on, for
 //                             work in the section (see wide)
+// and, for a plugin written for API 6:
+//   column()                  the page column, beside the manuscript: one
+//                             host-owned region, so every call gives the same
+//                             element. { element, open(), close(), isOpen(),
+//                             onClose(fn), onResize(fn) } (see column)
 // None of them writes a file: replace edits the page as typing does, and a
 // chapter reaches the disk through persistChapter alone. That is no wall.
 // A plugin's script runs in NEO's page, where window.neo, NEO's own way to
@@ -46,8 +55,9 @@
 'use strict';
 
 (() => {
-  const API_VERSIONS = Object.freeze([1, 2, 3, 4, 5]);
-  const EVENTS = ['book-open', 'book-close', 'chapter-change', 'chapter-saved', 'selection', 'rendered'];
+  const API_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6]);
+  // column-open and column-close come from the page column (see column)
+  const EVENTS = ['book-open', 'book-close', 'chapter-change', 'chapter-saved', 'selection', 'rendered', 'column-open', 'column-close'];
 
   // One entry per plugin that registered: { id, listeners, panes, commands,
   // highlights, status, told, disposed }. listeners maps an event name to a
@@ -800,25 +810,34 @@
   // one set of ids.
   const PANE_ID = /^[a-z][a-z0-9-]{0,31}$/;
   const PANE_KEYS = ['id', 'title', 'side'];
+  const PANE_KEYS_V6 = [...PANE_KEYS, 'nav'];
   function addPane(entry, spec, apiVersion) {
-    const { id, title, side } = spec || {};
+    const { id, title, side, nav } = spec || {};
     if (typeof id !== 'string' || !PANE_ID.test(id)) throw new TypeError(`a pane's id is a lower-case name such as "notes-index", not ${text(id)}`);
     if (typeof title !== 'string' || !title.trim()) throw new TypeError(`pane ${id} needs a title`);
     if (entry.panes.has(id)) throw new TypeError(`pane ${id} is added already`);
     // API 1 and 2 took any other keys and ignored them, and still do
     const v3 = apiVersion >= 3;
     if (v3) {
-      const odd = Object.keys(spec).find((key) => !PANE_KEYS.includes(key));
-      if (odd !== undefined) throw new TypeError(`pane ${id} takes id, title and side, not ${text(odd)}`);
+      const odd = Object.keys(spec).find((key) => !(apiVersion >= 6 ? PANE_KEYS_V6 : PANE_KEYS).includes(key));
+      if (odd !== undefined) throw new TypeError(`pane ${id} takes ${apiVersion >= 6 ? 'id, title, side and nav' : 'id, title and side'}, not ${text(odd)}`);
       if (side !== undefined && typeof side !== 'boolean') throw new TypeError(`pane ${id}'s side is true or false, not ${shown(side)}`);
     }
+    // API 6: nav: true makes the pane a tab of the left-hand pane, beside Chapters
+    if (apiVersion >= 6) {
+      if (nav !== undefined && typeof nav !== 'boolean') throw new TypeError(`pane ${id}'s nav is true or false, not ${shown(nav)}`);
+      if (nav && side) throw new TypeError(`pane ${id} is either a nav tab or a side section, not both`);
+    }
     const element = document.createElement('div');
-    const pane = { name: `plugin:${entry.id}:${id}`, title, element, tab: null, section: null };
+    const pane = { name: `plugin:${entry.id}:${id}`, title, element, tab: null, section: null, nav: null };
     const show = () => showPane(entry, pane);
     const made = apiVersion >= 5 ? Object.freeze({ element, show, wide: (on) => wide(entry, pane, on) })
       : v3 ? Object.freeze({ element, show }) : Object.freeze({ element });
     if (entry.disposed) return made;
-    if (v3 && side) {
+    if (nav) {
+      element.className = 'plugin-nav-body';
+      pane.nav = get.navTabs.add({ id: `${entry.id}-${id}`, label: title, panel: element });
+    } else if (v3 && side) {
       const section = document.createElement('section');
       section.className = 'plugin-side';
       section.dataset.plugin = entry.id;
@@ -862,11 +881,17 @@
   // switched to, and a section's pane opened with the section scrolled into
   // view. A section is shown only where styles.css shows it, so on the
   // Notes, Outline and Darlings tabs nothing moves and the answer is false;
-  // so too with no book open, or once the plugin is disposed.
+  // so too with no book open, or once the plugin is disposed. A nav tab
+  // (API 6) opens the left-hand pane and selects the tab.
   function showPane(entry, pane) {
     if (entry.disposed || !openedBook()) return false;
     if (pane.tab) {
       get.switchTab(pane.name);
+      return true;
+    }
+    if (pane.nav) {
+      document.getElementById('nav-pane').classList.add('open');
+      pane.nav.select();
       return true;
     }
     if (getComputedStyle(pane.section).display === 'none') return false;
@@ -1006,6 +1031,8 @@
     if (apiVersion >= 3) api.hold = (chIds) => hold(entry, chIds);
     // nor opens anything
     if (apiVersion >= 4) api.open = (bookId) => open(entry, bookId);
+    // nor takes the page column
+    if (apiVersion >= 6) api.column = () => columnOf(entry);
     return Object.freeze(api);
   }
 
@@ -1021,6 +1048,69 @@
       log(entry.id, `open ${bookId} failed: ${err && err.message !== undefined ? err.message : text(err)}`);
       return false;
     });
+  }
+
+  // API 6: the page column, a region of the host's beside the manuscript (split-column.js).
+  // There is one, so every plugin's column() answers with its handle on the same element; a plugin
+  // that takes it makes the column's shortcut work, and gives the column back (closed, emptied)
+  // when it is disposed. onClose and onResize hang off the plugin's entry and go with it.
+  function columnOf(entry) {
+    if (entry.column) return entry.column.handle;
+    const split = window.NeoSplit;
+    if (!split || !split.element) throw new TypeError('this window has no page column');
+    const watch = { closers: new Set(), resizers: new Set() };
+    const listener = (set, name) => (fn) => {
+      if (typeof fn !== 'function') throw new TypeError(`${name} takes a function, not ${shown(fn)}`);
+      if (entry.disposed) return () => {};
+      set.add(fn);
+      return () => { set.delete(fn); };
+    };
+    const handle = Object.freeze({
+      element: split.element,
+      open() {
+        if (entry.disposed) return false;
+        split.open();
+        return split.isOpen();
+      },
+      close() { if (!entry.disposed) split.close(); },
+      isOpen: () => !entry.disposed && split.isOpen(),
+      onClose: listener(watch.closers, 'onClose'),
+      onResize: listener(watch.resizers, 'onResize')
+    });
+    entry.column = { handle, ...watch };
+    if (!entry.disposed) split.setAvailable(true);
+    return handle;
+  }
+
+  // What the column tells the plugins that took it, and every plugin that listens for the events
+  function columnHeard(kind, detail) {
+    for (const entry of registry.values()) {
+      if (entry.disposed || !entry.column) continue;
+      const set = kind === 'close' ? entry.column.closers : entry.column.resizers;
+      for (const fn of [...set]) call(fn, detail, (err) => logFailure(entry.id, fn, err, 'listener', `column-${kind}`));
+    }
+  }
+  function watchColumn() {
+    const split = window.NeoSplit;
+    if (!split || !split.on) return;
+    split.on('open', () => dispatch(listenersOf('column-open'), {}));
+    split.on('close', () => {
+      dispatch(listenersOf('column-close'), {});
+      columnHeard('close', {});
+    });
+    split.on('resize', (detail) => columnHeard('resize', { width: detail.width }));
+  }
+
+  // A disposed plugin that held the column hands it back: when no live plugin holds it, it is
+  // closed, emptied and its shortcut does nothing.
+  function releaseColumn(entry) {
+    if (!entry.column) return;
+    entry.column.closers.clear();
+    entry.column.resizers.clear();
+    if ([...registry.values()].some((e) => e !== entry && !e.disposed && e.column)) return;
+    const split = window.NeoSplit;
+    split.setAvailable(false);
+    split.element.replaceChildren();
   }
 
   function dropStyle(id) {
@@ -1039,6 +1129,10 @@
       markHolds();
     }
     for (const pane of entry.panes.values()) {
+      if (pane.nav) {
+        pane.nav.remove(); // back to Chapters if the writer was on it
+        continue;
+      }
       if (pane.section) {
         pane.section.remove();
         if (wideAsks.delete(pane)) markWide();
@@ -1057,6 +1151,7 @@
       }
     }
     entry.panes.clear();
+    releaseColumn(entry);
     if (entry.status) entry.status.remove();
     entry.status = null;
     dropStyle(entry.id);
@@ -1115,6 +1210,7 @@
   function attach(getters) {
     if (get) return;
     get = getters;
+    watchColumn();
     document.addEventListener('selectionchange', () => {
       if (!heard('selection')) return;
       selectionMoved = true;
