@@ -226,3 +226,64 @@ test('a nav tab that cannot be made is refused with a TypeError, and wide() is r
     expect((await strip(page)).map((tab) => tab.label)).toEqual(['Chapters', 'Pages', 'Extra']);
   } finally { await close(); }
 });
+
+// ---- Left-Pane-Stays-Open: the pane an unpinned reader opens by hovering stays while the
+// keyboard is in it or a form is open in it, and closes once neither holds it ----
+
+const paneOpen = (page) => page.evaluate(() => document.querySelector('#nav-pane').classList.contains('open'));
+// away from both edges, where a hover zone would wake a pane
+const pointerAway = (page) => page.mouse.move(700, 500);
+async function openPagesTab(page) {
+  await hoverOpen(page);
+  await page.getByRole('tab', { name: 'Pages' }).click();
+  expect(await strip(page)).toEqual(selectOne(1));
+}
+
+test('the left pane stays open, unpinned, while the keyboard is in an input in a tab, and closes when it leaves', async () => {
+  const { page, close } = await withNavTabs();
+  try {
+    expect(await page.evaluate(() => document.querySelector('#nav-pane').dataset.pinned !== '1'), 'not pinned').toBe(true);
+    await openPagesTab(page);
+    await page.locator('#nav-fixture-input').click();
+    expect(await page.evaluate(() => document.activeElement.id), 'the keyboard really is in the input').toBe('nav-fixture-input');
+    await pointerAway(page);
+    await page.waitForTimeout(300);
+    expect(await paneOpen(page), 'the pointer has left, the keyboard has not').toBe(true);
+    await page.keyboard.type('Harbour');
+    expect(await page.inputValue('#nav-fixture-input')).toBe('Harbour');
+
+    // the keyboard goes back to the book: nothing holds the pane any more
+    await page.locator('#paper-scroll .chapter-body p').click();
+    expect(await page.evaluate(() => !!document.activeElement.closest('#paper-scroll'))).toBe(true);
+    await expect.poll(() => paneOpen(page)).toBe(false);
+  } finally { await close(); }
+});
+
+test('the left pane stays open, unpinned, while a form is open in it even with the keyboard elsewhere', async () => {
+  const { page, close } = await withNavTabs();
+  try {
+    await openPagesTab(page);
+    await page.evaluate(() => window.__nav.openForm());
+    await page.locator('#paper-scroll .chapter-body p').click();
+    await pointerAway(page);
+    await page.waitForTimeout(300);
+    expect(await page.evaluate(() => !!document.activeElement.closest('#nav-pane')), 'the keyboard is out of the pane').toBe(false);
+    expect(await page.evaluate(() => !!document.querySelector('#nav-fixture-form')), 'the form is open').toBe(true);
+    expect(await paneOpen(page), 'so the pane holds').toBe(true);
+
+    // with the form gone the next pointer leaving closes it
+    await page.evaluate(() => window.__nav.closeForm());
+    await hoverOpen(page);
+    await pointerAway(page);
+    await expect.poll(() => paneOpen(page)).toBe(false);
+  } finally { await close(); }
+});
+
+test('an unpinned left pane the pointer leaves closes as it always did when nothing is in it', async () => {
+  const { page, close } = await withNavTabs();
+  try {
+    await hoverOpen(page);
+    await pointerAway(page);
+    await expect.poll(() => paneOpen(page)).toBe(false);
+  } finally { await close(); }
+});

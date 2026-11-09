@@ -7991,11 +7991,18 @@ const navTabs = (() => {
   };
 })();
 
+// The left pane holds open, even unpinned, while the keyboard is in it or a form is open in it:
+// the pointer leaving must not close a rename form, or the field a writer is typing in, under them.
+function navHeld() {
+  const pane = $('#nav-pane');
+  return pane.contains(document.activeElement) || [...pane.querySelectorAll('form')].some((form) => !form.closest('[hidden]'));
+}
+
 // Hover behavior for both side panes:
 function wireHoverPane(hotzone, pane, isPinnable) {
   // (a menu opened from the Chapters pane keeps it open while it's up)
   const pinned = () => (isPinnable && pane.dataset.pinned === '1') ||
-    (pane.id === 'nav-pane' && (chapterDragActive || !!document.querySelector('.pop-menu'))) ||
+    (pane.id === 'nav-pane' && (chapterDragActive || !!document.querySelector('.pop-menu') || navHeld())) ||
     (pane.id === 'side-pane' && $('#editor-view').classList.contains('darlings-tab')); // the snapshots stay
   hotzone.addEventListener('mouseenter', (e) => {
     if (e.buttons) return; // dragging something — stand down
@@ -8012,6 +8019,17 @@ function wireHoverPane(hotzone, pane, isPinnable) {
   });
 }
 wireHoverPane($('#nav-hotzone'), $('#nav-pane'), true);
+// What held the pane may let go after the pointer has already left: the keyboard moves out and
+// nothing else keeps it, so it closes then, as it would have when the pointer left.
+$('#nav-pane').addEventListener('focusout', (e) => {
+  const pane = $('#nav-pane');
+  if (pane.contains(e.relatedTarget)) return;
+  setTimeout(() => {
+    if (pane.dataset.pinned === '1' || chapterDragActive || navHeld() || document.querySelector('.pop-menu')) return;
+    if (pane.matches(':hover') || $('#nav-hotzone').matches(':hover')) return;
+    pane.classList.remove('open');
+  }, 0);
+});
 // a drag from Finder fires no mouseenter: files over the hot zone open the
 // Chapters pane, so they can be dropped between chapters
 $('#nav-hotzone').addEventListener('dragenter', (e) => {
@@ -8028,7 +8046,7 @@ wireHoverPane($('#side-hotzone'), $('#side-pane'), true);
 // leaving the window closes unpinned panes (they used to stick open)
 function closeUnpinnedPanes() {
   // Wayland can blur the window as a native chapter drag begins.
-  if (!chapterDragActive && $('#nav-pane').dataset.pinned !== '1') $('#nav-pane').classList.remove('open');
+  if (!chapterDragActive && $('#nav-pane').dataset.pinned !== '1' && !navHeld()) $('#nav-pane').classList.remove('open');
   if ($('#side-pane').dataset.pinned !== '1' && !$('#editor-view').classList.contains('darlings-tab')) $('#side-pane').classList.remove('open');
 }
 document.documentElement.addEventListener('mouseleave', closeUnpinnedPanes);
