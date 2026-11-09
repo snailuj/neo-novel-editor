@@ -276,6 +276,36 @@ test('with less than 960px of room the column lies over the book, which keeps th
   } finally { await close(); }
 });
 
+test('pinning the side pane narrows the column and leaves the manuscript\'s centre where it was', async () => {
+  const { app, page, close } = await start();
+  try {
+    await setWindow(app, page, 1800);
+    await pin(page, {});
+    await openColumn(page);
+    await dragTo(page, 1800 - 700);
+    const before = await measure(page);
+    // the baseline: a 700px column, nothing docked on the right
+    expect(before.column.width).toBeCloseTo(700, 0);
+    expect(before.column.right).toBe(1800);
+
+    await pin(page, { side: true });
+    const after = await measure(page);
+    expect(after.side.left, 'the side pane really is docked').toBeLessThan(1800 - SIDE + 5);
+    expect(after.column.right, 'the column sits left of the pane').toBe(after.side.left);
+    expect(after.column.width, 'and gives it the room').toBeCloseTo(700 - SIDE, 0);
+    expect(after.column.left, 'the divider has not moved').toBeCloseTo(before.column.left, 0);
+    expect((after.paper.left + after.paper.right) / 2, 'the book stays put').toBeCloseTo((before.paper.left + before.paper.right) / 2, 0);
+
+    // at its minimum the column goes no narrower; the book gives way instead
+    await pin(page, { side: false });
+    await dragTo(page, 1800 - 450);
+    await pin(page, { side: true });
+    const least = await measure(page);
+    expect(least.column.width).toBeCloseTo(COLUMN_MIN, 0);
+    expect(least.column.right).toBe(least.side.left);
+  } finally { await close(); }
+});
+
 test('the divider is a focusable vertical separator with a name, a value and a 44px grab area', async () => {
   const { app, page, close } = await start();
   try {

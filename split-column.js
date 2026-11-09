@@ -7,7 +7,8 @@
 //
 // Every pixel here is a pixel on screen, Interface size and page zoom already applied, except the
 // width kept in localStorage, which is in pixels at Interface size 1 so it means the same after
-// the size changes.
+// the size changes. What is kept is the divider's distance from the window's right edge, so a
+// pinned right pane (which the column sits left of) takes its width from the column, not the book.
 
 (() => {
   const COLUMN_MIN = 400; // about 42 characters of the page's text at Interface size 1
@@ -88,7 +89,7 @@
   let hooks = { focusBook() {}, keepPlace: (change) => change() };
   let available = false; // a plugin has put something in the column
   let open = false;
-  let kept = null; // the writer's width, px at Interface size 1; null: the usual one
+  let kept = null; // the divider's distance from the right edge, px at Interface size 1; null: the usual one
   let width = 0; // as laid out now, px on screen
   let lastFocus = null; // where the keyboard was in the column when it left
 
@@ -143,7 +144,7 @@
   function layout() {
     if (view.hidden || !view.clientWidth) return;
     const m = measure();
-    const next = clamp(kept === null ? m.usual : kept * m.uiZoom, m.lim);
+    const next = clamp((kept === null ? m.usual : kept * m.uiZoom) - m.side, m.lim);
     // a column that is opening is not resizing: the plugin tells its own width at opening
     const changed = view.classList.contains('split-open') && open && Math.abs(next - width) > 0.01;
     width = next;
@@ -164,9 +165,10 @@
   new MutationObserver(relayout).observe(view, { attributes: true, attributeFilter: ['class'] });
   new MutationObserver(relayout).observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
 
+  // The column's width as asked; what is kept is the divider's distance from the right edge.
   function setWidth(next) {
     const m = measure();
-    kept = clamp(next, m.lim) / m.uiZoom;
+    kept = (clamp(next, m.lim) + m.side) / m.uiZoom;
     hooks.keepPlace(layout);
   }
 
@@ -183,7 +185,8 @@
   divider.addEventListener('pointermove', (e) => {
     if (!drag || e.pointerId !== drag.pointer) return;
     const edge = e.clientX - drag.grab;
-    setWidth(measure().viewWidth - measure().side - edge);
+    const m = measure();
+    setWidth(m.viewWidth - m.side - edge);
   });
   const endDrag = (e) => {
     if (!drag || e.pointerId !== drag.pointer) return;
