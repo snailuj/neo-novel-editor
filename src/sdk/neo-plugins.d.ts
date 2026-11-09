@@ -1,4 +1,4 @@
-// The plugin API, versions 1 to 4, as types. plugins.js implements the window half
+// The plugin API, versions 1 to 6, as types. plugins.js implements the window half
 // (what activate(neo) receives) and plugins-main.js the main half (what a manifest's
 // `main` entry's activate(host) receives); this file follows them.
 
@@ -43,6 +43,9 @@ interface NeoEvents {
   selection: { readonly place: Readonly<NeoPlace> | null };
   /** The chapters were drawn anew; the host has already rebuilt every highlight. */
   rendered: { readonly bookId: string };
+  /** API 6: the page column opened, or closed by the writer or by a plugin. */
+  'column-open': Record<string, never>;
+  'column-close': Record<string, never>;
 }
 
 type NeoEventName = keyof NeoEvents;
@@ -246,6 +249,35 @@ interface NeoApiV5 extends NeoApiV4 {
   addPane(pane: { id: string; title: string; side?: boolean }): NeoPaneV5;
 }
 
+/**
+ * The page column (API 6): the host's one region beside the manuscript, full height, with a
+ * divider the writer drags. Every call of column() hands back the same element. Taking it makes
+ * the column's shortcut (Ctrl+Backslash, View > Page Column) work; a plugin that fails gives it back,
+ * closed and emptied.
+ */
+interface NeoColumn {
+  readonly element: HTMLDivElement;
+  /** Opens the column; true once it is open, false once the plugin failed to activate. */
+  open(): boolean;
+  /** Closes it; the keyboard goes back to the book's caret if it was in the column. */
+  close(): void;
+  isOpen(): boolean;
+  /** Told each time it closes, whoever closed it. Returns the unsubscribe. */
+  onClose(fn: (detail: Record<string, never>) => void): () => void;
+  /** Told when its width changes while it is open. Returns the unsubscribe. */
+  onResize(fn: (detail: { readonly width: number }) => void): () => void;
+}
+
+/** What activate(neo) receives for API 6: API 5, with nav tabs and the page column. */
+interface NeoApiV6 extends NeoApiV5 {
+  /**
+   * As API 5's addPane, and with nav: true a tab of the left-hand pane, beside Chapters, whose
+   * show() opens that pane on the tab. A pane is a nav tab or a side section, not both.
+   */
+  addPane(pane: { id: string; title: string; side?: boolean; nav?: boolean }): NeoPaneV5;
+  column(): NeoColumn;
+}
+
 interface NeoPluginBase {
   /** The id in the plugin's plugin.json. */
   id: string;
@@ -288,10 +320,15 @@ interface NeoPluginV5 extends NeoPluginBase {
   activate(neo: NeoApiV5): void | Promise<void>;
 }
 
-type NeoPlugin = NeoPluginV1 | NeoPluginV2 | NeoPluginV3 | NeoPluginV4 | NeoPluginV5;
+interface NeoPluginV6 extends NeoPluginBase {
+  apiVersion: 6;
+  activate(neo: NeoApiV6): void | Promise<void>;
+}
+
+type NeoPlugin = NeoPluginV1 | NeoPluginV2 | NeoPluginV3 | NeoPluginV4 | NeoPluginV5 | NeoPluginV6;
 
 declare const NeoPlugins: {
-  readonly apiVersions: readonly (1 | 2 | 3 | 4 | 5)[];
+  readonly apiVersions: readonly (1 | 2 | 3 | 4 | 5 | 6)[];
   register(plugin: NeoPlugin): void;
   /**
    * true when a value is a place: an object with chId a non-empty string, pIdx, off and
