@@ -1,4 +1,4 @@
-// The Pages tree in the wiki pane, as data: folders and pages from pages.list, the rows
+// The Pages tree of the left pane, as data: folders and pages from pages.list, the rows
 // drawn, the paths a rename, a move or a new page asks for, and the row editor's states.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';

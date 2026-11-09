@@ -1,7 +1,7 @@
 // A wiki page's attachments: the images and PDFs a Markdown page embeds or links. Each
 // one is copied byte for byte into the attachments folder of a folder of the library (sources or wiki), so nothing the
 // page shows is left behind in the old vault. NEO draws no image in a chapter, so the
-// page keeps its embed as written until the wiki pane draws attachments.
+// page keeps its embed as written until the page column draws attachments.
 //
 // An attachment is found as Obsidian finds it: the path from the vault's root, then
 // from the page's folder, then by its name anywhere in the vault outside dot-folders.
