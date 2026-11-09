@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Tree } from '../../src/hoard/pages/identity.ts';
-import { buildTree, CLOSED, explain, foldersIn, judge, newPageHtml, sharedReads, step, visibleRows, type Editor, type EditorEvent } from '../../src/hoard/wiki/tree.ts';
+import { allFolders, buildTree, CLOSED, explain, filterPages, foldersIn, judge, newPageHtml, rowLabel, rowName, sharedReads, step, visibleRows, type Editor, type EditorEvent } from '../../src/hoard/wiki/tree.ts';
 
 const page = (id: string) => {
   const tree = id.slice(0, id.indexOf('/')) as Tree;
@@ -286,4 +286,39 @@ test('a read after a change starts after any read already out', async () => {
   assert.equal(calls, 3, 'with nothing out it reads at once');
   answers[2]!('x');
   await idle;
+});
+
+// Rule: the tree filter keeps every ancestor folder of a match visible and hides the rest:
+// a page shows when its title holds the words typed (case and accents aside), every folder
+// above it shows open, and folders and pages with no match do not show at all.
+test('the filter keeps the folders above each match and hides the rest', () => {
+  const entries = [
+    'wiki/Places/Coast/Harbour.html', 'wiki/Places/Coast/Tide Tables.html', 'wiki/Places/Inland/Kraken Reef.html',
+    'wiki/People/Gull.html', 'sources/Notes/Tides.html', 'sources/Harbour log.html',
+  ].map(page);
+  const roots = buildTree(filterPages(entries, '  TIDE '));
+  assert.deepEqual(shape(visibleRows(roots, allFolders(roots))), [
+    'wiki/',
+    '  Places/',
+    '    Coast/',
+    '      Tide Tables',
+    'sources/',
+    '  Notes/',
+    '    Tides',
+  ]);
+  assert.deepEqual(roots.map((r) => r.count), [1, 1], 'a folder counts only the pages that match');
+  assert.deepEqual(filterPages(entries, 'kraken reef').map((e) => e.id), ['wiki/Places/Inland/Kraken Reef.html']);
+  assert.deepEqual(filterPages([page('wiki/Café Mör.html')], 'cafe mor').length, 1, 'accents aside');
+  assert.equal(filterPages(entries, '').length, entries.length, 'an empty filter keeps every page');
+  assert.equal(filterPages(entries, 'zzz').length, 0);
+});
+
+// Rule: a folder row is named with how many pages it holds, as a screen reader hears it;
+// a tree's own folder goes by its capitalised name, and a page row by its title.
+test('a row is named for a screen reader with its page count', () => {
+  const roots = buildTree(['wiki/Places/Coast/Harbour.html', 'wiki/Places/Coast/Gull Rock.html', 'wiki/Places/Inland.html'].map(page));
+  const rows = visibleRows(roots, allFolders(roots));
+  assert.deepEqual(rows.map(rowName), ['Wiki', 'Places', 'Coast', 'Gull Rock', 'Harbour', 'Inland', 'Sources']);
+  assert.deepEqual(rows.map(rowLabel), ['Wiki, 3 pages', 'Places, 3 pages', 'Coast, 2 pages', 'Gull Rock', 'Harbour', 'Inland', 'Sources, 0 pages']);
+  assert.equal(rowLabel(visibleRows(buildTree([page('wiki/A.html')]), new Set())[0]!), 'Wiki, 1 page');
 });

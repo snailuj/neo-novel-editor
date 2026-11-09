@@ -144,6 +144,29 @@ export function visibleRows(roots: readonly Folder[], open: ReadonlySet<string>)
   return rows;
 }
 
+// a title as the filter compares it: case and accents aside
+const plain = (text: string) => text.normalize('NFD').replace(/\p{M}/gu, '').toLocaleLowerCase().trim();
+
+/** The pages whose title holds the words typed; all of them for no words. Built into a tree, only their folders show. */
+export function filterPages<T extends Listed>(entries: readonly T[], query: string): T[] {
+  const words = plain(query);
+  return words ? entries.filter((e) => plain(e.title).includes(words)) : [...entries];
+}
+
+/** Every folder's key, so a filtered tree draws each match with the folders above it open. */
+export function allFolders(roots: readonly Folder[]): Set<string> {
+  const keys = new Set<string>();
+  const walk = (f: Folder) => { keys.add(f.key); f.folders.forEach(walk); };
+  roots.forEach(walk);
+  return keys;
+}
+
+const ROOT_NAMES: Record<Tree, string> = { wiki: 'Wiki', sources: 'Sources' };
+/** What a row shows: a tree's own folder by its capitalised name, anything else as it is. */
+export const rowName = (row: Row) => (row.parent === null ? ROOT_NAMES[row.tree] : row.name);
+/** A row's accessible name: a folder's says how many pages it holds. */
+export const rowLabel = (row: Row) => (row.kind === 'folder' ? `${rowName(row)}, ${row.count} page${row.count === 1 ? '' : 's'}` : row.name);
+
 /** Every folder of one tree, as paths inside it, the top of the tree ('') first. */
 export function foldersIn(roots: readonly Folder[], tree: Tree): string[] {
   const out: string[] = [];
