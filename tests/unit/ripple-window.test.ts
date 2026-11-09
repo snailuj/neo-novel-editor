@@ -1,5 +1,5 @@
 // Rules for Ripple This Page (ripple/window.ts):
-// - it asks about the page open in the side pane, by its id, and about nothing else;
+// - it asks about the page open in the page column, by its id, and about nothing else;
 // - with no page open it says so and asks nothing;
 // - a page ripple already has the words of is said to be known, with its packet.
 import assert from 'node:assert/strict';
@@ -23,11 +23,11 @@ function fakeNeo(asked: { made: boolean; packet: string | null } | Error) {
 test('with no page open it says so and asks nothing', async () => {
   const { neo, calls } = fakeNeo({ made: true, packet: '/p.md' });
   const said = await rippleThisPage(neo, () => null);
-  assert.deepEqual(said, { text: 'No page is open in the side pane. Open one there, then choose Ripple This Page.', bad: true });
+  assert.deepEqual(said, { text: 'No page is open in the page column. Open one from Pages in the left pane, then choose Ripple This Page.', bad: true });
   assert.deepEqual(calls, []);
 });
 
-test('it asks about the page open in the pane, by id, whichever tree', async () => {
+test('it asks about the page open in the column, by id, whichever tree', async () => {
   for (const page of ['wiki/People/Name.html', 'sources/Notes/Field.html']) {
     const { neo, calls } = fakeNeo({ made: true, packet: '/lib/.neo/ripple/packets/j.md' });
     const said = await rippleThisPage(neo, () => page);

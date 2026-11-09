@@ -35,10 +35,10 @@ const KIND: Record<Overview['proposals'][number]['kind'], string> = {
   claim: 'Change', topic: 'Add a line', mint: 'New page', nothing: 'Leave alone',
 };
 
-/** What Ripple This Page says, asking about the page open in the pane (its id), if any. */
+/** What Ripple This Page says, asking about the page open in the page column (its id), if any. */
 export async function rippleThisPage(neo: Pick<NeoApiV4, 'invoke'>, currentPage: () => string | null): Promise<{ text: string; bad: boolean }> {
   const page = currentPage();
-  if (!page) return { text: 'No page is open in the side pane. Open one there, then choose Ripple This Page.', bad: true };
+  if (!page) return { text: 'No page is open in the page column. Open one from Pages in the left pane, then choose Ripple This Page.', bad: true };
   try {
     const asked = await neo.invoke('ripple.ask', { page }) as { made: boolean; packet: string | null };
     const title = page.slice(page.lastIndexOf('/') + 1).replace(/\.html$/, '');
@@ -50,7 +50,7 @@ export async function rippleThisPage(neo: Pick<NeoApiV4, 'invoke'>, currentPage:
 }
 
 export function startRipple(neo: NeoApiV4, o: {
-  /** The id of the page open in the side pane, or null when none is (a chapter of a book is no page). */
+  /** The id of the page open in the page column, or null when none is (a chapter of a book is no page). */
   currentPage: () => string | null;
 }) {
   const pane = neo.addPane({ id: 'ripple', title: 'Ripple', side: true });

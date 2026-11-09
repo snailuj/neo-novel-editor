@@ -3,7 +3,7 @@ import {
   blocksOf, caretAt, LINES, pageBeside, pageFile, selectIn, shownBlocks,
 } from '../support/pane-page.mjs';
 
-// The wiki pane as a full editor of a stored page, on the browser's own contenteditable
+// The page column as a full editor of a stored page, on the browser's own contenteditable
 // editing. Rules (one sentence each, true for every path):
 //  1 Enter makes a block whose id is new, six hex digits and never used on the page this
 //    session; the block that keeps the words keeps its id and class.
@@ -232,7 +232,7 @@ test('NEO\'s resetNativeUndo in the book leaves the pane\'s undo whole', async (
 });
 
 // Rule 4: NEO's structural redo listens for Ctrl+Shift+Z and Ctrl+Y on the whole document
-// while its redo list holds anything (app.js); in the pane those keys are the pane's.
+// while its redo list holds anything (app.js); in the page column those keys are the column's.
 test('Ctrl+Shift+Z and Ctrl+Y redo in the pane while NEO has a structural redo waiting', async () => {
   await withPane(async ({ page, shown, caret, bookNow }) => {
     await caret('keeper');
@@ -248,8 +248,9 @@ test('Ctrl+Shift+Z and Ctrl+Y redo in the pane while NEO has a structural redo w
     await page.keyboard.press('Control+Shift+z');
     await expect.poll(async () => (await shown())[2][2]).toBe('Its keeper old rows at dawn.');
     expect(await bookNow()).toBe(book);
-    // the pane's typing ends NEO's redo, as any typing does (app.js)
-    expect(await page.evaluate(() => redoStack.length)).toBe(0);
+    // typing in the page column leaves the book's redo waiting: the host keeps it for the book
+    // (split-column.spec, Book-Shortcuts)
+    expect(await page.evaluate(() => redoStack.length)).toBe(1);
 
     // once more with Ctrl+Y
     await page.keyboard.press('Control+z');
