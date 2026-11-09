@@ -377,17 +377,17 @@ test('open and close show and hide the plugin\'s element in the host\'s one colu
     await page.waitForFunction(() => window.__column?.handle);
     await setWindow(app, page, 1440);
     await pin(page, {});
-    const handle = (expr) => page.evaluate((e) => new Function('h', `return ${e}`)(window.__column.handle), expr);
+    const isOpen = () => page.evaluate(() => window.__column.handle.isOpen());
     // the column's content root is the host's own element, the same on every call
     expect(await page.evaluate(() => window.__column.handle.element === document.querySelector('#split-body'))).toBe(true);
     expect(await page.evaluate(() => window.__column.neo.column().element === window.__column.handle.element)).toBe(true);
-    expect(await handle('h.isOpen()')).toBe(false);
+    expect(await isOpen()).toBe(false);
     expect((await measure(page)).shown).toBe(false);
 
     await page.evaluate(() => { window.__column.handle.open(); window.__column.handle.open(); });
     let m = await measure(page);
     expect(m.shown).toBe(true);
-    expect(await handle('h.isOpen()')).toBe(true);
+    expect(await isOpen()).toBe(true);
     await expect(page.locator('#split-body')).toContainText('What the fixture shows in the column.');
     // opening twice is the same as once
     expect(await page.evaluate(() => window.__column.events)).toEqual(['column-open']);
@@ -395,7 +395,7 @@ test('open and close show and hide the plugin\'s element in the host\'s one colu
     await page.evaluate(() => { window.__column.handle.close(); window.__column.handle.close(); });
     m = await measure(page);
     expect(m.shown).toBe(false);
-    expect(await handle('h.isOpen()')).toBe(false);
+    expect(await isOpen()).toBe(false);
     expect(await page.evaluate(() => window.__column.events)).toEqual(['column-open', 'column-close']);
     expect(await page.evaluate(() => window.__column.closes)).toBe(1);
   } finally { await close(); }
