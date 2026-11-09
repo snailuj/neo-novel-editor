@@ -26,6 +26,7 @@ const made = [];
 afterEach(() => {
   if (envDirs === undefined) delete process.env.NEO_PLUGIN_DIRS;
   else process.env.NEO_PLUGIN_DIRS = envDirs;
+  delete process.env.NEO_BUNDLED_PLUGINS;
   while (made.length) fs.rmSync(made.pop(), { recursive: true, force: true });
 });
 
@@ -223,6 +224,20 @@ describe('plugin discovery', { concurrency: 1 }, () => {
   test('NEO_PLUGIN_DIRS is ignored in a packaged app', () => {
     wire({ isPackaged: true, dirs: fixtures });
     assert.equal(find('probe'), undefined);
+  });
+
+  // a spec of NEO's own plugin surfaces (the page column, the left pane's tabs) runs its
+  // fixture plugins alone, without the ones the app carries
+  test('NEO_BUNDLED_PLUGINS=0 leaves out plugins/ outside a packaged app, and is ignored in one', () => {
+    const app = appFolder({ 'plugins/carried': plugin('carried'), 'extra/fixture': plugin('fixture') });
+    process.env.NEO_BUNDLED_PLUGINS = '0';
+    wire({ appRoot: app, dirs: 'extra' });
+    assert.deepEqual(ids(), ['fixture']);
+    wire({ appRoot: app, dirs: 'extra', isPackaged: true });
+    assert.deepEqual(ids(), ['carried']);
+    delete process.env.NEO_BUNDLED_PLUGINS;
+    wire({ appRoot: app, dirs: 'extra' });
+    assert.deepEqual(ids(), ['carried', 'fixture']);
   });
 
   test('discover reads the folders once, for the menu and the window alike', () => {

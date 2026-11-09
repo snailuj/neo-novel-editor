@@ -384,8 +384,9 @@ test('the width survives a restart on the same machine', async () => {
 // ---- what a plugin is handed (plugins.js, API 6) ----
 
 const FIXTURES = 'tests/fixtures/plugins';
+// the fixture plugins alone: the plugin NEO carries puts its own page in the column
 async function startWithPlugins(...groups) {
-  const fixture = await launchProfile(undefined, { env: { NEO_PLUGIN_DIRS: groups.map((g) => `${FIXTURES}/${g}`).join(',') } });
+  const fixture = await launchProfile(undefined, { env: { NEO_PLUGIN_DIRS: groups.map((g) => `${FIXTURES}/${g}`).join(','), NEO_BUNDLED_PLUGINS: '0' } });
   await seedBook(fixture.page, LONG);
   return fixture;
 }
@@ -514,7 +515,7 @@ test('Ctrl+\\ toggles the column; focus stays in the book, and from the column r
 });
 
 test('Ctrl+\\ does nothing while no plugin has put anything in the column', async () => {
-  const { page, close } = await start();
+  const { page, close } = await startWithPlugins();
   try {
     const caret = await caretInBook(page);
     await page.keyboard.press('Control+\\');

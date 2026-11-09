@@ -2,7 +2,8 @@
 
 // Plugins, main-process half. A plugin is a folder holding a plugin.json; the
 // folders sit under plugins/ in the app folder and, outside a packaged app,
-// under each comma-separated folder in NEO_PLUGIN_DIRS. This file finds them,
+// under each comma-separated folder in NEO_PLUGIN_DIRS (and with
+// NEO_BUNDLED_PLUGINS=0, there alone). This file finds them,
 // lists them for the window (plugins:list), puts their commands in a Plugins
 // menu, and starts the main half of each plugin that has one (its manifest's
 // main): an activate(host) that answers the plugin's own window half
@@ -166,9 +167,12 @@ function discover() {
     return found;
   }
   const bundled = path.join(appRoot, 'plugins');
+  // NEO_BUNDLED_PLUGINS=0 is for development too: a spec of NEO's own plugin surfaces runs its
+  // fixture plugins without the ones the app carries
+  const carried = host.app.isPackaged || process.env.NEO_BUNDLED_PLUGINS !== '0';
   const byId = new Map();
   const list = [];
-  for (const root of [bundled, ...extraRoots()]) {
+  for (const root of [...(carried ? [bundled] : []), ...extraRoots()]) {
     // path.relative compares without regard to case on Windows
     const rel = path.relative(appRoot, root);
     if (outsideApp(rel)) { skip(root, 'skipped: outside the app folder'); continue; }

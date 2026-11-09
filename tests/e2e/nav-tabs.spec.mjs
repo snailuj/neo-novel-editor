@@ -8,8 +8,10 @@ import { launchProfile, seedBook } from '../support/electron-profile.mjs';
 const FIXTURES = 'tests/fixtures/plugins';
 const THREE = '<p>One.</p>';
 
+// the fixture plugins alone: the plugin NEO carries has a tab of its own
+const ALONE = { NEO_BUNDLED_PLUGINS: '0' };
 async function start(...groups) {
-  const fixture = await launchProfile(undefined, { env: { NEO_PLUGIN_DIRS: groups.map((g) => `${FIXTURES}/${g}`).join(',') } });
+  const fixture = await launchProfile(undefined, { env: { NEO_PLUGIN_DIRS: groups.map((g) => `${FIXTURES}/${g}`).join(','), ...ALONE } });
   await seedBook(fixture.page, THREE);
   return fixture;
 }
@@ -146,7 +148,7 @@ test('show() opens the left pane and selects the tab, and says false once there 
 });
 
 test('Chapters keeps working in a script and on the Notes tab, and names that view\'s own list', async () => {
-  const fixture = await launchProfile(undefined, { env: { NEO_PLUGIN_DIRS: `${FIXTURES}/navtab-v6` } });
+  const fixture = await launchProfile(undefined, { env: { NEO_PLUGIN_DIRS: `${FIXTURES}/navtab-v6`, ...ALONE } });
   const { page, close } = fixture;
   try {
     await seedBook(page, '<p class="sp-action">INT. HARBOUR - DAY</p>', { format: 'screenplay' });
