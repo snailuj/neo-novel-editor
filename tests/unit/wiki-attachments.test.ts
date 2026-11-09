@@ -64,3 +64,23 @@ test('copying keeps the bytes, reuses the same bytes, and numbers a different fi
   assert.deepEqual(second, { dest: 'wiki/attachments/Map (2).png', sha256: sha('another map'), copied: true });
   assert.throws(() => copyAttachment(library, '../x', a), /one name/);
 });
+
+// Rule: a page's own vault is searched first; only then each further folder named for
+// the import, by path from its top and then by name, in the order named.
+test('an attachment the vault lacks is found in the further folders, the vault first', (t) => {
+  const vault = tempDir(t, 'hoard-att-');
+  const old = tempDir(t, 'hoard-old-');
+  mkdirSync(path.join(vault, '.obsidian'));
+  const own = put(path.join(vault, 'Quay.jpg'), 'own quay');
+  put(path.join(old, 'Media', 'Quay.jpg'), 'old quay');
+  const rooted = put(path.join(old, 'Media', 'Cabin.pdf'), 'cabin');
+  const byName = put(path.join(old, '_attachments', 'deep', 'Levin.png'), 'levin');
+  const page = path.join(vault, 'lore', 'Harbour.md');
+  const plain = new AttachmentFinder(vault);
+  assert.equal(plain.find('Levin.png', page), null, 'baseline: the vault alone lacks it');
+  const finder = new AttachmentFinder(vault, [old]);
+  assert.equal(finder.find('Quay.jpg', page), own);
+  assert.equal(finder.find('Media/Cabin.pdf', page), rooted);
+  assert.equal(finder.find('levin.PNG', page), byName);
+  assert.equal(finder.find('Nowhere.png', page), null);
+});

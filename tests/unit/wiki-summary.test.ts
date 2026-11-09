@@ -26,7 +26,7 @@ test('the summary counts what comes in and names what does not, with why', () =>
     'Coming in beside its page, because the source and the page in NEO have both changed: Wren (source changed 2026-10-15).',
     '2 CriticMarkup marks become comments and suggestions.',
     '1 image or PDF the pages show is copied into the wiki.',
-    'Not found beside the pages, so not copied: Gone.png.',
+    'Not found in the pages\' vault, so not copied: Gone.png. An "images from:" line in the list names another folder to look in.',
     'Already in the wiki: Fox.',
     'Already in hoard, so they come in with hoard\'s pages: Quay.',
     'Not imported, because hoard holds an older copy, which comes in with hoard\'s pages: Bay.',

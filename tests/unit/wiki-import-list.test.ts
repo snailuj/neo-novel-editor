@@ -29,9 +29,9 @@ test('each line of a text list names one page, read from the list\'s folder', ()
     '/elsewhere/Quay.md',
   ].join('\n'));
   assert.deepEqual(list.entries, [
-    { line: 3, path: path.join(dir, 'lore/Harbour.md'), section: null, name: null, folder: null, to: 'sources', sha: null },
-    { line: 4, path: path.join(dir, 'Writing/Tide Tables.md'), section: null, name: null, folder: null, to: 'sources', sha: null },
-    { line: 5, path: path.resolve('/elsewhere/Quay.md'), section: null, name: null, folder: null, to: 'sources', sha: null },
+    { line: 3, path: path.join(dir, 'lore/Harbour.md'), section: null, name: null, folder: null, to: 'sources', sha: null, lookIn: [] },
+    { line: 4, path: path.join(dir, 'Writing/Tide Tables.md'), section: null, name: null, folder: null, to: 'sources', sha: null, lookIn: [] },
+    { line: 5, path: path.resolve('/elsewhere/Quay.md'), section: null, name: null, folder: null, to: 'sources', sha: null, lookIn: [] },
   ]);
   assert.deepEqual(list.left, []);
 });
@@ -150,4 +150,21 @@ test('a list that is not a list says which line and why', () => {
     err instanceof ListError && /line 1/.test(err.message));
   assert.throws(() => readImportList(path.join(dir, 'l.txt'), '# nothing\n'), (err: unknown) =>
     err instanceof ListError && /no page/.test(err.message));
+});
+
+// Rule: an `images from:` line names a folder, read from the list's folder, where every
+// page of the list looks for the images and PDFs its own vault lacks; it is no page.
+test('images from lines name further folders for attachments, for every entry', () => {
+  const list = readImportList(path.join(dir, 'move.txt'), [
+    'lore/Harbour.md',
+    'Images From: ../old vault',
+    'to: wiki',
+    'lore/Quay.md',
+    'images from: /elsewhere/Media',
+  ].join('\n'));
+  const want = [path.resolve(dir, '../old vault'), path.resolve('/elsewhere/Media')];
+  assert.deepEqual(list.lookIn, want);
+  assert.deepEqual(list.entries.map((e) => [rel(e.path), e.lookIn]), [['lore/Harbour.md', want], ['lore/Quay.md', want]]);
+  assert.deepEqual(readImportList(path.join(dir, 'l.txt'), 'a.md\n').lookIn, []);
+  assert.throws(() => readImportList(path.join(dir, 'l.txt'), 'images from:\na.md\n'), (err: unknown) => err instanceof ListError && /line 1/.test(err.message));
 });
