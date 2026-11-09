@@ -25,7 +25,12 @@ NeoPlugins.register({
         e.preventDefault();
       }
     });
-    state.handle.element.append(line, button);
+    // somewhere to put a caret: tests/e2e/book-shortcuts.spec.mjs types here and fires the book's keys
+    const edit = document.createElement('div');
+    edit.id = 'fixture-edit';
+    edit.contentEditable = 'true';
+    edit.textContent = 'Words typed in the column.';
+    state.handle.element.append(line, button, edit);
     state.handle.onClose(() => { state.closes++; });
     state.handle.onResize((detail) => { state.resizes.push(detail.width); });
     for (const name of ['column-open', 'column-close']) neo.on(name, () => state.events.push(name));

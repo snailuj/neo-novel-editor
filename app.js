@@ -253,6 +253,9 @@ function applyDeviceLook(lib) {
 }
 
 const $ = (sel) => document.querySelector(sel);
+// The page column (split-column.js) holds a plugin's own editor. A key or action that acts on the
+// book does nothing to the book while the caret is there, so each of them asks this first.
+const inPageColumn = (node) => !!(window.NeoSplit && NeoSplit.contains && NeoSplit.contains(node));
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
 // The counters change as the writer types. Swapping their text node (what
@@ -5060,7 +5063,7 @@ window.addEventListener('keydown', (e) => {
   const cmd = IS_POCKET ? (e.metaKey !== e.ctrlKey) : (IS_MAC ? e.metaKey : e.ctrlKey);
   if (arrows && (!cmd || !e.altKey || e.shiftKey)) return;
   if (pages && ((IS_MAC && !IS_POCKET) || !e.ctrlKey || e.metaKey || e.altKey || e.shiftKey)) return;
-  if ($('#editor-view').hidden || document.querySelector('.modal-backdrop:not([hidden])')) return;
+  if ($('#editor-view').hidden || document.querySelector('.modal-backdrop:not([hidden])') || inPageColumn(e.target)) return;
   e.preventDefault();
   e.stopPropagation();
   gotoChapter(e.key === 'ArrowDown' || e.key === 'PageDown' ? 1 : -1);
@@ -13501,11 +13504,11 @@ function rejoinAtCaret() {
 // ⇧⌘Z (Ctrl+Shift+Z, and Ctrl+Y outside the Mac) puts back what ⌘Z took back
 // outside the engine's history. Any typing, anywhere, ends it: a redo never
 // lands over writing made after the undo.
-document.addEventListener('input', () => { redoStack = []; }, true);
+document.addEventListener('input', (e) => { if (!inPageColumn(e.target)) redoStack = []; }, true);
 document.addEventListener('keydown', (e) => {
   const key = e.key.toLowerCase();
   const redo = (e.metaKey || e.ctrlKey) && ((e.shiftKey && key === 'z') || (e.ctrlKey && !e.metaKey && !e.shiftKey && key === 'y' && !IS_MAC));
-  if (!redo || $('#editor-view').hidden || !book || !redoStack.length) return;
+  if (!redo || $('#editor-view').hidden || !book || !redoStack.length || inPageColumn(e.target)) return;
   e.preventDefault();
   structuralRedo();
 }, true);
@@ -13693,7 +13696,7 @@ document.addEventListener('keydown', (e) => {
   // on Linux, Ctrl+Shift+U belongs to the input method (it types a Unicode
   // character by its code), so Read Aloud there is Ctrl+Shift+K (#287)
   if (cmd && e.shiftKey && !e.altKey && e.code === (IS_LINUX ? 'KeyK' : 'KeyU')) {
-    if (!book || $('#editor-view').hidden || !moreOn()) return;
+    if (!book || $('#editor-view').hidden || !moreOn() || inPageColumn(e.target)) return;
     e.preventDefault();
     e.stopPropagation();
     toggleReadAloud();
@@ -13724,9 +13727,11 @@ function editableOf(range) {
 function openSearch(fromVim = false) {
   if ($('#editor-view').hidden || !book) { toast(t('Open a book first')); return; }
   const sel = window.getSelection();
-  const preset = sel && !sel.isCollapsed ? sel.toString().slice(0, 80).trim() : '';
+  // a selection in the page column is not the book's words: Find opens, but takes nothing from it
+  const inColumn = !!(sel && inPageColumn(sel.anchorNode));
+  const preset = sel && !sel.isCollapsed && !inColumn ? sel.toString().slice(0, 80).trim() : '';
   // ⌘F again from the bar itself keeps the place it first came from
-  if (sel && sel.rangeCount && editableOf(sel.getRangeAt(0))) searchHome = sel.getRangeAt(0).cloneRange();
+  if (sel && sel.rangeCount && !inColumn && editableOf(sel.getRangeAt(0))) searchHome = sel.getRangeAt(0).cloneRange();
   searchFromVim = fromVim;
   $('#searchbar').hidden = false;
   const inp = $('#search-input');
