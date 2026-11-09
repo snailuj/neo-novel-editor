@@ -59,7 +59,27 @@
     }
   }
 
-  const rules = { limits, clamp, defaultWidth, bookShare, keyWidth };
+  // Which pinned panes float, so that the book and the column keep their minimums (design, "When
+  // there is not room for everything", steps 3 and 4). A floating pane keeps its pin and opens on
+  // hover as an unpinned one does. panes: { id, width, pinned, order, forced }, order being when it
+  // was pinned (larger is later). The pane pinned earliest floats first, so the one pinned last docks
+  // for as long as it can, and floats only when it alone leaves too little. A forced pane (the
+  // Darlings snapshots) docks whatever the room. Returns the ids, earliest pinned first.
+  function floating({ viewWidth, panes, uiZoom = 1, pageZoom = 1 }) {
+    const need = BOOK_MIN * pageZoom + COLUMN_MIN * uiZoom;
+    const docked = panes.filter((p) => p.forced || p.pinned);
+    let room = viewWidth - docked.reduce((sum, p) => sum + p.width, 0);
+    const candidates = docked.filter((p) => !p.forced).sort((a, b) => a.order - b.order);
+    const out = [];
+    while (room < need && candidates.length) {
+      const next = candidates.shift();
+      room += next.width;
+      out.push(next.id);
+    }
+    return out;
+  }
+
+  const rules = { limits, clamp, defaultWidth, bookShare, keyWidth, floating };
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = rules;
     return;

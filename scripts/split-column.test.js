@@ -80,3 +80,55 @@ test('the divider\'s keys: arrows 16px, Shift 64px, Home widest, End narrowest, 
   assert.equal(next('a', 576), null);
   assert.equal(S.keyWidth({ key: 'ArrowLeft', shiftKey: false, width: 600, limits: lim, uiZoom: 1.25 }), 620);
 });
+
+// ---- which pinned panes float (design, "When there is not room for everything", steps 3 and 4) ----
+
+const NAV = { id: 'nav', width: 248 };
+const SIDE = { id: 'side', width: 250 };
+const pinned = (pane, order) => ({ ...pane, pinned: true, order });
+
+test('with room for both panes, the book and the column, nothing floats', () => {
+  // 248 + 960 + 250 = 1458
+  assert.deepEqual(S.floating({ viewWidth: 1458, panes: [pinned(NAV, 1), pinned(SIDE, 2)] }), []);
+  assert.deepEqual(S.floating({ viewWidth: 2560, panes: [pinned(NAV, 1), pinned(SIDE, 2)] }), []);
+});
+
+test('with both panes pinned and not enough room, the one pinned earlier floats and the one pinned last docks', () => {
+  assert.deepEqual(S.floating({ viewWidth: 1440, panes: [pinned(NAV, 1), pinned(SIDE, 2)] }), ['nav']);
+  assert.deepEqual(S.floating({ viewWidth: 1440, panes: [pinned(NAV, 2), pinned(SIDE, 1)] }), ['side']);
+  assert.deepEqual(S.floating({ viewWidth: 1457, panes: [pinned(NAV, 1), pinned(SIDE, 2)] }), ['nav']);
+});
+
+test('the pane pinned last floats too once even it leaves less than 960px', () => {
+  // 1190 less the right pane's 250 is 940
+  assert.deepEqual(S.floating({ viewWidth: 1100, panes: [pinned(NAV, 1), pinned(SIDE, 2)] }).sort(), ['nav', 'side']);
+  assert.deepEqual(S.floating({ viewWidth: 1100, panes: [pinned(NAV, 1), { ...SIDE }] }), ['nav']);
+  // one pinned pane alone: 1200 - 248 = 952
+  assert.deepEqual(S.floating({ viewWidth: 1200, panes: [pinned(NAV, 1)] }), ['nav']);
+  assert.deepEqual(S.floating({ viewWidth: 1208, panes: [pinned(NAV, 1)] }), []);
+});
+
+test('a pane that is not pinned never floats, and a forced pane (the snapshots) always docks', () => {
+  assert.deepEqual(S.floating({ viewWidth: 700, panes: [{ ...NAV }, { ...SIDE }] }), []);
+  assert.deepEqual(S.floating({ viewWidth: 1300, panes: [pinned(NAV, 1), { ...SIDE, forced: true }] }), ['nav']);
+  assert.deepEqual(S.floating({ viewWidth: 500, panes: [{ ...SIDE, forced: true }] }), []);
+});
+
+test('the minimums scale: Interface size grows the column and the panes, page zoom the book', () => {
+  const big = { uiZoom: 1.25, pageZoom: 1.5 };
+  const panes = [pinned({ ...NAV, width: 310 }, 1)];
+  // 560 * 1.5 + 400 * 1.25 + 310 = 1650
+  assert.deepEqual(S.floating({ viewWidth: 1650, panes, ...big }), []);
+  assert.deepEqual(S.floating({ viewWidth: 1649, panes, ...big }), ['nav']);
+});
+
+test('the same input always gives the same answer, and a wider window never floats more', () => {
+  const panes = [pinned(NAV, 3), pinned(SIDE, 7)];
+  let last = Infinity;
+  for (let viewWidth = 600; viewWidth <= 2000; viewWidth += 7) {
+    const got = S.floating({ viewWidth, panes });
+    assert.deepEqual(got, S.floating({ viewWidth, panes }));
+    assert.ok(got.length <= last, `${viewWidth}: ${got.length} floating after ${last}`);
+    last = got.length;
+  }
+});
