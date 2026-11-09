@@ -1385,7 +1385,7 @@ body.focus-mode .walk-note { opacity: 0.6; }
    than the 1px line: 12px over the book's margin, the rest over the column. */
 :root { --split-grip: #7d7d7d; }
 #split-column {
-  position: fixed; top: 0; bottom: calc(40px * var(--ui-zoom)); z-index: 55;
+  position: fixed; top: 0; bottom: calc(40px * var(--ui-zoom)); z-index: 65; /* over the left hover zone, under the panes */
   inset-inline-end: var(--side-dock); width: var(--split-px, 0px);
   padding-inline-end: calc(20px * var(--ui-zoom)); /* the strip where the right pane wakes */
   background: var(--paper); color: var(--ink);
@@ -1412,7 +1412,7 @@ body.focus-mode .walk-note { opacity: 0.6; }
 #split-divider:hover .split-grip, #split-divider:focus-visible .split-grip, .split-dragging .split-grip { background: var(--accent); }
 #split-divider:focus-visible { outline: 2px solid var(--accent); box-shadow: inset 0 0 0 2px var(--bg); }
 /* While the column is open the right pane wakes on the column's outer strip, not on the page */
-#editor-view.split-open #side-hotzone { width: calc(20px * var(--ui-zoom)); }
+#editor-view.split-open #side-hotzone { width: calc(20px * var(--ui-zoom)); z-index: 66; }
 @media (prefers-reduced-motion: no-preference) {
   #split-column { transition: transform 0.18s ease, visibility 0s linear 0.18s; }
   #editor-view.split-open #split-column { transition: transform 0.18s ease; }

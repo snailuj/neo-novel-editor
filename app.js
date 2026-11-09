@@ -7950,6 +7950,8 @@ $('#editor-view').addEventListener('wheel', (e) => {
   if (e.ctrlKey) return; // pinch-zoom gesture, not a scroll
   if (scroller.contains(e.target)) return; // native scrolling handles it
   if ($('#nav-pane').contains(e.target) || $('#side-pane').contains(e.target)) return;
+  // the page column scrolls itself; the book beside it must not follow
+  if (window.NeoSplit && NeoSplit.contains(e.target)) return;
   scroller.scrollTop += e.deltaY;
 }, { passive: true });
 
@@ -18024,6 +18026,10 @@ function applyLook() {
   focusLevel = more && FOCUS_LEVELS.includes(library.focus) ? library.focus : 'off';
   applyFocus();
 }
+
+// the page column keeps the reader's place as it opens, closes and resizes, and gives the keyboard
+// back to the page when it goes (split-column.js)
+if (window.NeoSplit && NeoSplit.attach) NeoSplit.attach({ focusBook: focusPage, keepPlace: keepReadingPlace });
 
 // Plugins (plugins.js) come last, once all of NEO is defined. Getters,
 // because book, chapterHTML and currentTab are reassigned. book is handed

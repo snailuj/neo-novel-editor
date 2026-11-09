@@ -127,3 +127,226 @@ test('a closed column leaves the manuscript where the pinned panes put it', asyn
     expect(dock).toBe('');
   } finally { await close(); }
 });
+
+// The widest the column may be, from the boxes and the design's numbers: the book keeps 560px
+// beside it, and with less room than that the column lies over the book up to the room less 48px.
+function widest(m, windowWidth, nav) {
+  const room = windowWidth - (nav ? NAV : 0);
+  return room - BOOK_MIN >= COLUMN_MIN ? room - BOOK_MIN : Math.max(COLUMN_MIN, room - 48);
+}
+
+// Drags the divider by the column's own edge to x. The pointer holds it where it grabbed it, so
+// the column's width afterwards is the window's width less x.
+async function dragTo(page, x) {
+  const edge = (await measure(page)).column.left; // once it has slid in
+  await page.mouse.move(edge, 400);
+  await page.mouse.down();
+  await page.mouse.move(x, 400, { steps: 6 });
+  await page.mouse.up();
+  // away from the window's edges, where a hover zone would wake a pane over the divider
+  await page.mouse.move(await page.evaluate(() => innerWidth / 2), 600);
+}
+
+const valueOf = (page) => page.evaluate(() => {
+  const d = document.querySelector('#split-divider');
+  return { now: +d.getAttribute('aria-valuenow'), min: +d.getAttribute('aria-valuemin'), max: +d.getAttribute('aria-valuemax') };
+});
+
+test('dragging the divider follows the pointer and stops at the limits without jumping, in any window', async () => {
+  const { app, page, close } = await start();
+  try {
+    for (const width of [1440, 1100, 800]) {
+      await setWindow(app, page, width);
+      await pin(page, {});
+      await openColumn(page);
+      const top = widest(await measure(page), width, false);
+      const label = `window ${width}`;
+
+      await dragTo(page, width - 500);
+      let m = await measure(page);
+      // the drag really moved it before the limits are tried
+      expect(m.column.width, `${label}: follows the pointer`).toBeCloseTo(Math.min(500, top), 0);
+      await dragTo(page, 2);
+      m = await measure(page);
+      expect(m.column.width, `${label}: stops at the widest`).toBeCloseTo(top, 0);
+      expect((await valueOf(page)).now, label).toBe((await valueOf(page)).min);
+      await dragTo(page, width - 1);
+      m = await measure(page);
+      expect(m.column.width, `${label}: stops at the narrowest`).toBeCloseTo(COLUMN_MIN, 0);
+      expect((await valueOf(page)).now, label).toBe((await valueOf(page)).max);
+      // never past the window's own right edge
+      expect(m.column.right, label).toBe(width);
+      await closeColumn(page);
+    }
+  } finally { await close(); }
+});
+
+test('the divider\'s keys move it 16px, Shift 64px, Home to the widest, End to the narrowest', async () => {
+  const { app, page, close } = await start();
+  try {
+    await setWindow(app, page, 1440);
+    await pin(page, {});
+    await openColumn(page);
+    await page.locator('#split-divider').focus();
+    const wide = async () => (await measure(page)).column.width;
+    const start0 = await wide();
+    expect(start0).toBe(576); // the usual width, 40% of the window
+    const press = async (key) => { await page.keyboard.press(key); return wide(); };
+
+    expect(await press('ArrowLeft')).toBe(start0 + 16);
+    expect(await press('ArrowRight')).toBe(start0);
+    expect(await press('Shift+ArrowLeft')).toBe(start0 + 64);
+    expect(await press('Shift+ArrowRight')).toBe(start0);
+    const widestNow = widest(await measure(page), 1440, false);
+    expect(await press('Home')).toBe(widestNow);
+    // at a limit the key changes nothing
+    expect(await press('ArrowLeft')).toBe(widestNow);
+    expect((await valueOf(page)).now).toBe((await valueOf(page)).min);
+    expect(await press('End')).toBe(COLUMN_MIN);
+    expect(await press('ArrowRight')).toBe(COLUMN_MIN);
+    expect((await valueOf(page)).now).toBe((await valueOf(page)).max);
+  } finally { await close(); }
+});
+
+test('a double-click or Enter on the divider returns the column to the usual width', async () => {
+  const { app, page, close } = await start();
+  try {
+    await setWindow(app, page, 1440);
+    await pin(page, {});
+    await openColumn(page);
+    for (const how of ['double-click', 'Enter']) {
+      await dragTo(page, 1440 - 450);
+      expect((await measure(page)).column.width, `${how}: moved off the usual width first`).toBeCloseTo(450, 0);
+      if (how === 'Enter') {
+        await page.locator('#split-divider').focus();
+        await page.keyboard.press('Enter');
+      } else {
+        await page.locator('#split-divider').dblclick();
+      }
+      expect((await measure(page)).column.width, how).toBe(576);
+      expect(await page.evaluate(() => localStorage.getItem('neo.splitWidth')), `${how}: the kept width is forgotten`).toBeNull();
+    }
+    // a second reset is idempotent
+    await page.locator('#split-divider').dblclick();
+    expect((await measure(page)).column.width).toBe(576);
+  } finally { await close(); }
+});
+
+test('the column keeps its width as the window changes until the book reaches its minimum, then gives way', async () => {
+  const { app, page, close } = await start();
+  try {
+    await setWindow(app, page, 1440);
+    await pin(page, {});
+    await openColumn(page);
+    await dragTo(page, 1440 - 600);
+    expect((await measure(page)).column.width).toBeCloseTo(600, 0);
+
+    await setWindow(app, page, 1800);
+    let m = await measure(page);
+    expect(m.column.width, 'a wider window gives the book the change').toBeCloseTo(600, 0);
+    expect(m.paper.right - m.paper.left, 'and the book is not narrower').toBeGreaterThan(560);
+
+    await setWindow(app, page, 1100);
+    m = await measure(page);
+    expect(m.overlay).toBe(false);
+    expect(m.column.width, 'a narrow window takes it from the column, down to the book minimum').toBeCloseTo(1100 - BOOK_MIN, 0);
+    expect(m.column.left, 'the book keeps its room').toBeGreaterThanOrEqual(BOOK_MIN - 1);
+
+    await setWindow(app, page, 1440);
+    expect((await measure(page)).column.width, 'the width the writer chose comes back').toBeCloseTo(600, 0);
+  } finally { await close(); }
+});
+
+test('with less than 960px of room the column lies over the book, which keeps the window\'s centre', async () => {
+  const { app, page, close } = await start();
+  try {
+    await setWindow(app, page, 800);
+    await pin(page, {});
+    await openColumn(page);
+    const m = await measure(page);
+    expect(m.open).toBe(true);
+    expect(m.overlay).toBe(true);
+    expect(m.column.width).toBeGreaterThanOrEqual(COLUMN_MIN);
+    expect(m.column.width).toBeLessThanOrEqual(800 - 48);
+    expect(Math.abs((m.paper.left + m.paper.right) / 2 - 400), 'the book stays centred in the whole window').toBeLessThanOrEqual(1);
+    expect(m.column.left, 'the column covers the right of the book').toBeLessThan(m.paper.right);
+    // beside the book again once the window has the room
+    await setWindow(app, page, 1100);
+    expect((await measure(page)).overlay).toBe(false);
+  } finally { await close(); }
+});
+
+test('the divider is a focusable vertical separator with a name, a value and a 44px grab area', async () => {
+  const { app, page, close } = await start();
+  try {
+    await setWindow(app, page, 1440);
+    await pin(page, {});
+    await openColumn(page);
+    const m = await measure(page);
+    const d = page.locator('#split-divider');
+    await expect(d).toHaveAttribute('role', 'separator');
+    await expect(d).toHaveAttribute('aria-orientation', 'vertical');
+    await expect(d).toHaveAttribute('tabindex', '0');
+    expect(await d.getAttribute('aria-label')).toMatch(/resize/i);
+    const v = await valueOf(page);
+    expect(v.min).toBeLessThan(v.now);
+    expect(v.now).toBeLessThan(v.max);
+    expect(await d.getAttribute('aria-valuetext')).toBe(`Book ${v.now} percent, page ${100 - v.now} percent`);
+    expect(m.divider.width).toBeGreaterThanOrEqual(44);
+    // 12px of the grab area lie over the book's margin and the rest over the column
+    expect(m.divider.left).toBeCloseTo(m.column.left - 12, 0);
+    await d.focus();
+    expect(await page.evaluate(() => document.activeElement.id)).toBe('split-divider');
+    // the grip is drawn at all times, not only on hover
+    const grip = await page.evaluate(() => {
+      const g = document.querySelector('.split-grip');
+      const r = g.getBoundingClientRect();
+      return { w: r.width, h: r.height, shown: getComputedStyle(g).visibility !== 'hidden' };
+    });
+    expect(grip).toEqual({ w: 5, h: 36, shown: true });
+  } finally { await close(); }
+});
+
+test('the wheel over the column never scrolls the manuscript', async () => {
+  const { app, page, close } = await start();
+  try {
+    await setWindow(app, page, 1800); // wide enough for a margin beside the page that is not a hover zone
+    await pin(page, {});
+    await openColumn(page);
+    const m = await measure(page);
+    const top = () => page.evaluate(() => document.querySelector('#paper-scroll').scrollTop);
+    expect(await page.evaluate(() => { const s = document.querySelector('#paper-scroll'); return s.scrollHeight > s.clientHeight + 200; })).toBe(true);
+    // the baseline: over the book's margin the wheel does scroll it
+    expect(m.paper.left).toBeGreaterThan(120);
+    await page.mouse.move(m.paper.left / 2, 300);
+    await page.mouse.wheel(0, 300);
+    await expect.poll(top).toBeGreaterThan(100);
+    const scrolled = await top();
+    await page.mouse.move((m.column.left + m.column.right) / 2, 300);
+    await page.mouse.wheel(0, 300);
+    await page.waitForTimeout(250);
+    expect(await top()).toBe(scrolled);
+  } finally { await close(); }
+});
+
+test('the width survives a restart on the same machine', async () => {
+  const first = await start();
+  const { profile } = first;
+  let bookId;
+  try {
+    await setWindow(first.app, first.page, 1440);
+    await pin(first.page, {});
+    await openColumn(first.page);
+    await dragTo(first.page, 1440 - 470);
+    expect((await measure(first.page)).column.width, 'the drag moved it off the usual 576').toBeCloseTo(470, 0);
+    bookId = await first.page.evaluate(() => book.id);
+  } finally { await first.close({ remove: false }); }
+
+  const second = await launchProfile(profile);
+  try {
+    await setWindow(second.app, second.page, 1440);
+    await second.page.evaluate((id) => openBook(id), bookId);
+    await openColumn(second.page);
+    expect((await measure(second.page)).column.width).toBeCloseTo(470, 0);
+  } finally { await second.close(); }
+});
