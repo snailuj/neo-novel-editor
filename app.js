@@ -7951,7 +7951,7 @@ $('#editor-view').addEventListener('wheel', (e) => {
   if (scroller.contains(e.target)) return; // native scrolling handles it
   if ($('#nav-pane').contains(e.target) || $('#side-pane').contains(e.target)) return;
   // the page column scrolls itself; the book beside it must not follow
-  if (window.NeoSplit && NeoSplit.contains(e.target)) return;
+  if (pageColumn && pageColumn.contains(e.target)) return;
   scroller.scrollTop += e.deltaY;
 }, { passive: true });
 
@@ -17879,8 +17879,13 @@ for (const pane of [$('#nav-pane'), $('#side-pane')]) {
     }, 0);
   });
 }
+// Pocket has no page column (split-column.js is not on its page)
+const pageColumn = window.NeoSplit && window.NeoSplit.region ? window.NeoSplit : null;
 const REGIONS = [
   { box: () => $('#paper-scroll'), enter: focusPage },
+  // the page column, second, when a plugin has opened it (split-column.js). Esc is its own:
+  // the plugin may have a menu open to close first, so the Esc below waits for the bubble.
+  ...(pageColumn ? [{ box: () => pageColumn.region, enter: () => pageColumn.focus(), when: () => pageColumn.isOpen(), ownEsc: true }] : []),
   {
     box: () => $('#nav-pane'),
     enter: () => {
@@ -17912,20 +17917,43 @@ document.addEventListener('keydown', (e) => {
     SHELF_REGIONS[at < 0 ? 0 : (at + 1) % SHELF_REGIONS.length].enter();
     return;
   }
-  const here = REGIONS.findIndex((r) => r.box().contains(document.activeElement));
+  const regions = REGIONS.filter((r) => !r.when || r.when());
+  const here = regions.findIndex((r) => r.box().contains(document.activeElement));
   if (regionKey(e)) {
     e.preventDefault();
     // from nowhere in particular (a book just opened), forward starts at the page
-    if (here < 0) { REGIONS[e.shiftKey ? REGIONS.length - 1 : 0].enter(); return; }
-    REGIONS[(here + (e.shiftKey ? REGIONS.length - 1 : 1)) % REGIONS.length].enter();
+    if (here < 0) { regions[e.shiftKey ? regions.length - 1 : 0].enter(); return; }
+    regions[(here + (e.shiftKey ? regions.length - 1 : 1)) % regions.length].enter();
     return;
   }
   // Esc from a pane or the bottom bar: back to the words, not to the shelf
-  if (e.key === 'Escape' && !e.isComposing && here > 0 && $('#searchbar').hidden) {
+  if (e.key === 'Escape' && !e.isComposing && here > 0 && !regions[here].ownEsc && $('#searchbar').hidden) {
     e.preventDefault();
     e.stopPropagation();
     focusPage();
   }
+}, true);
+// Esc in the page column: back to the book's caret, the column staying open. The column's own
+// element listens, so the plugin's handlers inside it have the event first: a menu or form it has
+// open takes the Esc and says so by cancelling the event. Either way the Esc stops here, for the
+// document's Esc (above) would send the book back to the shelf.
+if (pageColumn) {
+  pageColumn.region.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || e.isComposing || !$('#searchbar').hidden || document.querySelector('.modal-backdrop:not([hidden])')) return;
+    e.stopPropagation();
+    if (e.defaultPrevented) return;
+    e.preventDefault();
+    focusPage();
+  });
+}
+// Ctrl+Backslash (Cmd on a Mac) opens or closes the page column, wherever the keyboard is in the
+// book. With no plugin in the column there is nothing to open: the key is left alone.
+window.addEventListener('keydown', (e) => {
+  if (e.key !== '\\' || e.altKey || e.shiftKey || e.isComposing || !(IS_MAC ? e.metaKey : e.ctrlKey)) return;
+  if ($('#editor-view').hidden || document.querySelector('.modal-backdrop:not([hidden])')) return;
+  if (!pageColumn || !pageColumn.toggle()) return;
+  e.preventDefault();
+  e.stopPropagation();
 }, true);
 // up and down the chapter list
 $('#nav-list').addEventListener('keydown', (e) => {

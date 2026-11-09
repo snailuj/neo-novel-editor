@@ -388,7 +388,7 @@ test('open and close show and hide the plugin\'s element in the host\'s one colu
     let m = await measure(page);
     expect(m.shown).toBe(true);
     expect(await handle('h.isOpen()')).toBe(true);
-    await expect(page.locator('#split-body')).toHaveText('What the fixture shows in the column.');
+    await expect(page.locator('#split-body')).toContainText('What the fixture shows in the column.');
     // opening twice is the same as once
     expect(await page.evaluate(() => window.__column.events)).toEqual(['column-open']);
 
@@ -425,5 +425,123 @@ test('a plugin that fails to activate gives the column back with everything else
     await page.waitForTimeout(300);
     const state = await page.evaluate(() => ({ open: NeoSplit.isOpen(), available: NeoSplit.isAvailable(), cls: document.querySelector('#editor-view').classList.contains('split-open') }));
     expect(state).toEqual({ open: false, available: false, cls: false });
+  } finally { await close(); }
+});
+
+// ---- keyboard and focus (app.js) ----
+
+// Puts the caret in the middle of a line of the book and says where it is.
+async function caretInBook(page) {
+  await page.locator('.chapter-body p').nth(5).click();
+  return caretPlace(page);
+}
+const caretPlace = (page) => page.evaluate(() => {
+  const sel = getSelection();
+  return { text: sel.anchorNode && sel.anchorNode.textContent.slice(0, 12), offset: sel.anchorOffset, inBook: !!document.activeElement.closest('#paper-scroll'), tag: document.activeElement.tagName };
+});
+const where = (page) => page.evaluate(() => {
+  const a = document.activeElement;
+  if (a.closest('#split-column')) return 'column';
+  if (a.closest('#paper-scroll')) return 'book';
+  if (a.closest('#nav-pane')) return 'nav';
+  if (a.closest('#side-pane')) return 'side';
+  if (a.closest('#bottombar')) return 'bottombar';
+  return a.tagName + '#' + a.id;
+});
+const columnOpen = (page) => page.evaluate(() => NeoSplit.isOpen());
+
+test('Ctrl+\\ toggles the column; focus stays in the book, and from the column returns to the caret', async () => {
+  const { app, page, close } = await startWithPlugins('v6');
+  try {
+    await page.waitForFunction(() => window.__column?.handle);
+    await setWindow(app, page, 1440);
+    await pin(page, {});
+    const caret = await caretInBook(page);
+    expect(caret.inBook).toBe(true);
+
+    await page.keyboard.press('Control+\\');
+    await measure(page);
+    expect(await columnOpen(page), 'opened').toBe(true);
+    expect(await caretPlace(page), 'focus stays where it was').toEqual(caret);
+    await page.keyboard.press('Control+\\');
+    expect(await columnOpen(page), 'a second press closes it').toBe(false);
+    expect(await caretPlace(page)).toEqual(caret);
+
+    // from inside the column the caret comes back to the book at the same place
+    await page.keyboard.press('Control+\\');
+    await page.evaluate(() => document.querySelector('#fixture-menu').focus());
+    expect(await where(page), 'the keyboard really is in the column').toBe('column');
+    await page.keyboard.press('Control+\\');
+    expect(await columnOpen(page)).toBe(false);
+    expect(await caretPlace(page)).toEqual(caret);
+
+    // closing from a plugin's own call while the keyboard is in the column does the same
+    await page.evaluate(() => window.__column.handle.open());
+    await page.evaluate(() => document.querySelector('#fixture-menu').focus());
+    await page.evaluate(() => window.__column.handle.close());
+    expect(await caretPlace(page)).toEqual(caret);
+  } finally { await close(); }
+});
+
+test('Ctrl+\\ does nothing while no plugin has put anything in the column', async () => {
+  const { page, close } = await start();
+  try {
+    const caret = await caretInBook(page);
+    await page.keyboard.press('Control+\\');
+    await page.waitForTimeout(300);
+    expect(await columnOpen(page)).toBe(false);
+    expect(await page.evaluate(() => document.querySelector('#editor-view').classList.contains('split-open'))).toBe(false);
+    expect(await caretPlace(page)).toEqual(caret);
+  } finally { await close(); }
+});
+
+test('F6 visits the book, then the column, then the panes, and skips a closed column', async () => {
+  const { app, page, close } = await startWithPlugins('v6');
+  try {
+    await page.waitForFunction(() => window.__column?.handle);
+    await setWindow(app, page, 1440);
+    await pin(page, {});
+    await caretInBook(page);
+
+    // closed: the book's next stop is the left pane
+    await page.keyboard.press('F6');
+    expect(await where(page), 'closed column is skipped').toBe('nav');
+    await page.keyboard.press('Shift+F6');
+    expect(await where(page)).toBe('book');
+
+    await page.evaluate(() => window.__column.handle.open());
+    await measure(page);
+    const order = [];
+    for (let i = 0; i < 5; i++) {
+      await page.keyboard.press('F6');
+      order.push(await where(page));
+    }
+    expect(order).toEqual(['column', 'nav', 'side', 'bottombar', 'book']);
+    await page.keyboard.press('Shift+F6');
+    await page.keyboard.press('Shift+F6');
+    expect(await where(page), 'backwards from the book: bottom bar, then the pane before it').toBe('side');
+  } finally { await close(); }
+});
+
+test('Esc in the column returns the keyboard to the book\'s caret, after the plugin has closed its menu, and the column stays open', async () => {
+  const { app, page, close } = await startWithPlugins('v6');
+  try {
+    await page.waitForFunction(() => window.__column?.handle);
+    await setWindow(app, page, 1440);
+    await pin(page, {});
+    const caret = await caretInBook(page);
+    await page.evaluate(() => window.__column.handle.open());
+    await measure(page);
+    await page.evaluate(() => { window.__column.menuOpen = true; document.querySelector('#fixture-menu').focus(); });
+    expect(await where(page)).toBe('column');
+
+    await page.keyboard.press('Escape');
+    expect(await page.evaluate(() => window.__column.menuOpen), 'the plugin took the first Esc for its menu').toBe(false);
+    expect(await where(page), 'so the keyboard has not left the column').toBe('column');
+
+    await page.keyboard.press('Escape');
+    expect(await where(page)).toBe('book');
+    expect(await caretPlace(page)).toEqual(caret);
+    expect(await columnOpen(page), 'Esc never closes the column').toBe(true);
   } finally { await close(); }
 });

@@ -3,7 +3,7 @@
 
 'use strict';
 
-window.__column = { handle: null, events: [], closes: 0, resizes: [], neo: null };
+window.__column = { handle: null, events: [], closes: 0, resizes: [], neo: null, menuOpen: false };
 
 NeoPlugins.register({
   id: 'column-v6',
@@ -12,7 +12,20 @@ NeoPlugins.register({
     const state = window.__column;
     state.neo = neo;
     state.handle = neo.column();
-    state.handle.element.textContent = 'What the fixture shows in the column.';
+    // a line of text and a button standing for a menu: while state.menuOpen is set, Esc closes
+    // the menu and the host must leave the focus where it is
+    const line = document.createElement('p');
+    line.textContent = 'What the fixture shows in the column.';
+    const button = document.createElement('button');
+    button.id = 'fixture-menu';
+    button.textContent = 'Menu';
+    button.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && state.menuOpen) {
+        state.menuOpen = false;
+        e.preventDefault();
+      }
+    });
+    state.handle.element.append(line, button);
     state.handle.onClose(() => { state.closes++; });
     state.handle.onResize((detail) => { state.resizes.push(detail.width); });
     for (const name of ['column-open', 'column-close']) neo.on(name, () => state.events.push(name));
