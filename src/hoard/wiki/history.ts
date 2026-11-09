@@ -1,4 +1,4 @@
-// The wiki pane's trail of pages, as a browser keeps one. A stop is a stored page id
+// The page column's trail of pages, as a browser keeps one. A stop is a stored page id
 // (wiki/... or sources/...). Pure.
 export class PageHistory {
   #trail: string[] = [];
@@ -14,6 +14,16 @@ export class PageHistory {
 
   get canForward(): boolean {
     return this.#at < this.#trail.length - 1;
+  }
+
+  /** Where Back leads, or null at the start. */
+  get previous(): string | null {
+    return this.canBack ? this.#trail[this.#at - 1]! : null;
+  }
+
+  /** Where Forward leads, or null at the end. */
+  get next(): string | null {
+    return this.canForward ? this.#trail[this.#at + 1]! : null;
   }
 
   /** A new page: what was ahead goes. The page already shown is not a new stop. */
