@@ -139,7 +139,8 @@
     if (view.hidden || !view.clientWidth) return;
     const m = measure();
     const next = clamp(kept === null ? m.usual : kept * m.uiZoom, m.lim);
-    const changed = Math.abs(next - width) > 0.01;
+    // a column that is opening is not resizing: the plugin tells its own width at opening
+    const changed = view.classList.contains('split-open') && open && Math.abs(next - width) > 0.01;
     width = next;
     view.style.setProperty('--split-px', `${width}px`);
     view.classList.toggle('split-open', open);
@@ -150,7 +151,7 @@
     divider.setAttribute('aria-valuenow', String(now));
     const say = window.NeoI18n ? NeoI18n.t : (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k]);
     divider.setAttribute('aria-valuetext', say('Book {book} percent, page {page} percent', { book: String(now), page: String(100 - now) }));
-    if (changed && open) emit('resize', { width });
+    if (changed) emit('resize', { width });
   }
   let queued = 0;
   const relayout = () => { if (!queued) queued = requestAnimationFrame(() => { queued = 0; layout(); }); };

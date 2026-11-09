@@ -350,3 +350,80 @@ test('the width survives a restart on the same machine', async () => {
     expect((await measure(second.page)).column.width).toBeCloseTo(470, 0);
   } finally { await second.close(); }
 });
+
+// ---- what a plugin is handed (plugins.js, API 6) ----
+
+const FIXTURES = 'tests/fixtures/plugins';
+async function startWithPlugins(...groups) {
+  const fixture = await launchProfile(undefined, { env: { NEO_PLUGIN_DIRS: groups.map((g) => `${FIXTURES}/${g}`).join(',') } });
+  await seedBook(fixture.page, LONG);
+  return fixture;
+}
+
+test('a plugin below API 6 gets no column, one written for API 6 does', async () => {
+  const { page, close } = await startWithPlugins('v5', 'v6');
+  try {
+    await page.waitForFunction(() => window.__columnV5?.activated && window.__column?.handle);
+    // both really activated before they are compared
+    expect(await page.evaluate(() => window.__columnV5)).toEqual({ activated: true, column: 'undefined' });
+    expect(await page.evaluate(() => typeof window.__column.neo.column)).toBe('function');
+    expect(await page.evaluate(() => Object.keys(window.__column.handle).sort())).toEqual(['close', 'element', 'isOpen', 'onClose', 'onResize', 'open']);
+  } finally { await close(); }
+});
+
+test('open and close show and hide the plugin\'s element in the host\'s one column, and say so once each', async () => {
+  const { app, page, close } = await startWithPlugins('v6');
+  try {
+    await page.waitForFunction(() => window.__column?.handle);
+    await setWindow(app, page, 1440);
+    await pin(page, {});
+    const handle = (expr) => page.evaluate((e) => new Function('h', `return ${e}`)(window.__column.handle), expr);
+    // the column's content root is the host's own element, the same on every call
+    expect(await page.evaluate(() => window.__column.handle.element === document.querySelector('#split-body'))).toBe(true);
+    expect(await page.evaluate(() => window.__column.neo.column().element === window.__column.handle.element)).toBe(true);
+    expect(await handle('h.isOpen()')).toBe(false);
+    expect((await measure(page)).shown).toBe(false);
+
+    await page.evaluate(() => { window.__column.handle.open(); window.__column.handle.open(); });
+    let m = await measure(page);
+    expect(m.shown).toBe(true);
+    expect(await handle('h.isOpen()')).toBe(true);
+    await expect(page.locator('#split-body')).toHaveText('What the fixture shows in the column.');
+    // opening twice is the same as once
+    expect(await page.evaluate(() => window.__column.events)).toEqual(['column-open']);
+
+    await page.evaluate(() => { window.__column.handle.close(); window.__column.handle.close(); });
+    m = await measure(page);
+    expect(m.shown).toBe(false);
+    expect(await handle('h.isOpen()')).toBe(false);
+    expect(await page.evaluate(() => window.__column.events)).toEqual(['column-open', 'column-close']);
+    expect(await page.evaluate(() => window.__column.closes)).toBe(1);
+  } finally { await close(); }
+});
+
+test('onResize tells the plugin the new width as the divider moves', async () => {
+  const { app, page, close } = await startWithPlugins('v6');
+  try {
+    await page.waitForFunction(() => window.__column?.handle);
+    await setWindow(app, page, 1440);
+    await pin(page, {});
+    await page.evaluate(() => window.__column.handle.open());
+    await measure(page);
+    expect(await page.evaluate(() => window.__column.resizes.length), 'nothing yet from a column that has not moved').toBe(0);
+    await dragTo(page, 1440 - 480);
+    const told = await page.evaluate(() => window.__column.resizes);
+    expect(told.length).toBeGreaterThan(0);
+    expect(told.at(-1)).toBeCloseTo(480, 0);
+    expect((await measure(page)).column.width).toBeCloseTo(told.at(-1), 0);
+  } finally { await close(); }
+});
+
+test('a plugin that fails to activate gives the column back with everything else it added', async () => {
+  const { page, close } = await startWithPlugins('throws');
+  try {
+    await page.waitForFunction(() => window.__columnThrows === 'ran');
+    await page.waitForTimeout(300);
+    const state = await page.evaluate(() => ({ open: NeoSplit.isOpen(), available: NeoSplit.isAvailable(), cls: document.querySelector('#editor-view').classList.contains('split-open') }));
+    expect(state).toEqual({ open: false, available: false, cls: false });
+  } finally { await close(); }
+});

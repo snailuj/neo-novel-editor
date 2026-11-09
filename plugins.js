@@ -3,7 +3,9 @@
 // and stylesheet. The script calls NeoPlugins.register, and its activate(neo)
 // is handed these calls (apiFor):
 //   on(event, fn)             book-open, book-close, chapter-change,
-//                             chapter-saved, selection and rendered;
+//                             chapter-saved, selection and rendered; and
+//                             column-open and column-close, as the page
+//                             column opens and closes (API 6);
 //                             chapter-saved carries html, the text the
 //                             write put in the file, and previous, what
 //                             the file held before it as this window knew
@@ -31,6 +33,11 @@
 // and, for a plugin written for API 5, on each side section addPane makes:
 //   wide(on)                  the right-hand pane made wider while on, for
 //                             work in the section (see wide)
+// and, for a plugin written for API 6:
+//   column()                  the page column, beside the manuscript: one
+//                             host-owned region, so every call gives the same
+//                             element. { element, open(), close(), isOpen(),
+//                             onClose(fn), onResize(fn) } (see column)
 // None of them writes a file: replace edits the page as typing does, and a
 // chapter reaches the disk through persistChapter alone. That is no wall.
 // A plugin's script runs in NEO's page, where window.neo, NEO's own way to
@@ -46,8 +53,9 @@
 'use strict';
 
 (() => {
-  const API_VERSIONS = Object.freeze([1, 2, 3, 4, 5]);
-  const EVENTS = ['book-open', 'book-close', 'chapter-change', 'chapter-saved', 'selection', 'rendered'];
+  const API_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6]);
+  // column-open and column-close come from the page column (see column)
+  const EVENTS = ['book-open', 'book-close', 'chapter-change', 'chapter-saved', 'selection', 'rendered', 'column-open', 'column-close'];
 
   // One entry per plugin that registered: { id, listeners, panes, commands,
   // highlights, status, told, disposed }. listeners maps an event name to a
@@ -1006,6 +1014,8 @@
     if (apiVersion >= 3) api.hold = (chIds) => hold(entry, chIds);
     // nor opens anything
     if (apiVersion >= 4) api.open = (bookId) => open(entry, bookId);
+    // nor takes the page column
+    if (apiVersion >= 6) api.column = () => columnOf(entry);
     return Object.freeze(api);
   }
 
@@ -1021,6 +1031,69 @@
       log(entry.id, `open ${bookId} failed: ${err && err.message !== undefined ? err.message : text(err)}`);
       return false;
     });
+  }
+
+  // API 6: the page column, a region of the host's beside the manuscript (split-column.js).
+  // There is one, so every plugin's column() answers with its handle on the same element; a plugin
+  // that takes it makes the column's shortcut work, and gives the column back (closed, emptied)
+  // when it is disposed. onClose and onResize hang off the plugin's entry and go with it.
+  function columnOf(entry) {
+    if (entry.column) return entry.column.handle;
+    const split = window.NeoSplit;
+    if (!split || !split.element) throw new TypeError('this window has no page column');
+    const watch = { closers: new Set(), resizers: new Set() };
+    const listener = (set, name) => (fn) => {
+      if (typeof fn !== 'function') throw new TypeError(`${name} takes a function, not ${shown(fn)}`);
+      if (entry.disposed) return () => {};
+      set.add(fn);
+      return () => { set.delete(fn); };
+    };
+    const handle = Object.freeze({
+      element: split.element,
+      open() {
+        if (entry.disposed) return false;
+        split.open();
+        return split.isOpen();
+      },
+      close() { if (!entry.disposed) split.close(); },
+      isOpen: () => !entry.disposed && split.isOpen(),
+      onClose: listener(watch.closers, 'onClose'),
+      onResize: listener(watch.resizers, 'onResize')
+    });
+    entry.column = { handle, ...watch };
+    if (!entry.disposed) split.setAvailable(true);
+    return handle;
+  }
+
+  // What the column tells the plugins that took it, and every plugin that listens for the events
+  function columnHeard(kind, detail) {
+    for (const entry of registry.values()) {
+      if (entry.disposed || !entry.column) continue;
+      const set = kind === 'close' ? entry.column.closers : entry.column.resizers;
+      for (const fn of [...set]) call(fn, detail, (err) => logFailure(entry.id, fn, err, 'listener', `column-${kind}`));
+    }
+  }
+  function watchColumn() {
+    const split = window.NeoSplit;
+    if (!split || !split.on) return;
+    split.on('open', () => dispatch(listenersOf('column-open'), {}));
+    split.on('close', () => {
+      dispatch(listenersOf('column-close'), {});
+      columnHeard('close', {});
+    });
+    split.on('resize', (detail) => columnHeard('resize', { width: detail.width }));
+  }
+
+  // A disposed plugin that held the column hands it back: when no live plugin holds it, it is
+  // closed, emptied and its shortcut does nothing.
+  function releaseColumn(entry) {
+    if (!entry.column) return;
+    entry.column.closers.clear();
+    entry.column.resizers.clear();
+    if ([...registry.values()].some((e) => e !== entry && !e.disposed && e.column)) return;
+    const split = window.NeoSplit;
+    split.setAvailable(false);
+    split.element.replaceChildren();
   }
 
   function dropStyle(id) {
@@ -1057,6 +1130,7 @@
       }
     }
     entry.panes.clear();
+    releaseColumn(entry);
     if (entry.status) entry.status.remove();
     entry.status = null;
     dropStyle(entry.id);
@@ -1115,6 +1189,7 @@
   function attach(getters) {
     if (get) return;
     get = getters;
+    watchColumn();
     document.addEventListener('selectionchange', () => {
       if (!heard('selection')) return;
       selectionMoved = true;
