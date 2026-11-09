@@ -134,6 +134,11 @@
     return { uiZoom, viewWidth, side, room, lim, usual };
   }
 
+  // TODO(split-view-design.md, "When there is not room for everything", steps 3 and 4): with both
+  // panes pinned and no room, the pane pinned earlier should float (dashed ring on its pin) so the
+  // one pinned last docks. Until then the column overlays the book below 960px of room, whatever
+  // the pins.
+
   // Sets the width, the classes and the divider's values from the window as it is now.
   function layout() {
     if (view.hidden || !view.clientWidth) return;
