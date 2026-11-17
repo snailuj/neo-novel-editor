@@ -282,3 +282,18 @@ test('a retry that writes a page anew records its new hash, even when the manife
   assert.deepEqual(s.manifest().map((r) => r.file_sha256), ['f'.repeat(64), sha(readFileSync(s.at('wiki/Ebb.html')))]);
   assert.deepEqual(s.changes().map((c) => c.kind), ['page-imported']);
 });
+
+// Rule: a pick's further folders are searched for the attachments its own vault lacks.
+test('an attachment that stayed in another vault is copied when the pick names that folder', async (t) => {
+  const s = setup(t);
+  s.put('hoard/.obsidian/app.json', '{}');
+  const page = s.put('hoard/lore/Cabin.md', 'The cabin.\n![[Cabin Map.png]]\n');
+  const old = path.dirname(path.dirname(s.put('old/Media/Cabin Map.png', Buffer.from([4, 5, 6]))));
+  const wiki = s.into('wiki');
+  const without = wiki.sort([{ path: page }]);
+  assert.deepEqual(without.verdicts.map((v) => ('missing' in v ? v.missing : null)), [['Cabin Map.png']], 'baseline: the vault alone lacks it');
+  const sorted = wiki.sort([{ path: page, lookIn: [old] }]);
+  const done = await wiki.apply(sorted);
+  assert.deepEqual([done.attachments, done.missing], [1, []]);
+  assert.deepEqual(s.files('wiki'), ['Cabin.html', 'attachments/Cabin Map.png']);
+});

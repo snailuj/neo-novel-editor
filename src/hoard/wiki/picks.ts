@@ -24,9 +24,9 @@ import { section } from './sections.ts';
  * it goes in, or one section of it (a heading, or a line range with the start of the hash
  * the file had then).
  */
-export interface Pick { path: string; name?: string | null; folder?: string | null; section?: string | null; sha?: string | null }
+export interface Pick { path: string; name?: string | null; folder?: string | null; section?: string | null; sha?: string | null; lookIn?: readonly string[] }
 
-export interface Picked { path: string; name: string; folder: string | null; sections: string[]; sha: string | null }
+export interface Picked { path: string; name: string; folder: string | null; sections: string[]; sha: string | null; lookIn?: readonly string[] }
 /** An attachment a page names, and the file found for it. */
 export interface Found { target: string; file: string }
 export interface Converted { sha256: string; page: ConvertedPage; attachments: Found[]; missing: string[] }
@@ -89,14 +89,14 @@ export function picked(picks: readonly (string | Pick)[]): Picked[] {
         into.sha ??= pick.sha ?? null;
         continue;
       }
-      const p = { path: pick.path, name, folder, sections: [pick.section], sha: pick.sha ?? null };
+      const p = { path: pick.path, name, folder, sections: [pick.section], sha: pick.sha ?? null, lookIn: pick.lookIn ?? [] };
       parts.set(k, p);
       out.push(p);
       continue;
     }
     if (whole.has(samePath(pick.path))) continue;
     whole.add(samePath(pick.path));
-    out.push({ path: pick.path, name, folder, sections: [], sha: null });
+    out.push({ path: pick.path, name, folder, sections: [], sha: null, lookIn: pick.lookIn ?? [] });
   }
   return out.sort(byName);
 }
@@ -139,8 +139,10 @@ export function convertPick(p: Picked, bytes: Buffer, finders: Map<string, Attac
     return { why: err instanceof Error ? err.message : String(err) };
   }
   const root = vaultRoot(p.path) ?? path.dirname(path.resolve(p.path));
-  let finder = finders.get(root);
-  if (!finder) finders.set(root, finder = new AttachmentFinder(root));
+  const lookIn = p.lookIn ?? [];
+  const finderKey = [root, ...lookIn].join('\0');
+  let finder = finders.get(finderKey);
+  if (!finder) finders.set(finderKey, finder = new AttachmentFinder(root, lookIn));
   const attachments: Found[] = [];
   const missing: string[] = [];
   for (const target of attachmentsIn(text)) {

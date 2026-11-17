@@ -10,6 +10,9 @@
 // back. A .csv list is a keep/move list: the rows of its `path` column whose `verdict` is
 // Move, named by a `name` column, sent to a `to` column's tree where it has one.
 //
+// An `images from: <folder>` line, anywhere in a text list, names a further folder where
+// every page of the list looks for the images and PDFs its own vault lacks.
+//
 // Pure: the list's text is handed in, and nothing is read from the disk.
 import path from 'node:path';
 import type { Tree } from '../pages/identity.ts';
@@ -28,12 +31,16 @@ export interface ListEntry {
   to: Tree;
   /** The start of the file's SHA-256 that a line range was read against, or null. */
   sha: string | null;
+  /** Further folders to find attachments in: the list's, shared by every entry. */
+  lookIn: string[];
 }
 
 export interface ImportList {
   entries: ListEntry[];
   /** Rows of a keep/move list that name a page but do not move it whole. */
   left: { line: number; path: string; why: string }[];
+  /** Further folders to find attachments in, from `images from:` lines. */
+  lookIn: string[];
 }
 
 /** A list that does not read as a list. */
@@ -44,6 +51,7 @@ export class ListError extends Error {
 const PAGE = /^(.*?\.md)(?:#(.*))?$/i;
 const LINES = /^L(\d+)-L(\d+)(?:@([0-9a-f]{8,64}))?$/i;
 const TO = /^to:(.*)$/i;
+const IMAGES = /^images from:(.*)$/i;
 
 const SOURCES: Tree = 'sources';
 
@@ -77,7 +85,7 @@ function placed(line: number, text: string): { name: string; folder: string | nu
   return { name, folder: parts.join('/') };
 }
 
-function entry(line: number, text: string, dir: string, dest: Tree = SOURCES): ListEntry {
+function entry(line: number, text: string, dir: string, dest: Tree = SOURCES, lookIn: string[] = []): ListEntry {
   const arrow = text.indexOf('->');
   const target = (arrow < 0 ? text : text.slice(0, arrow)).trim();
   const { name, folder } = arrow < 0 ? { name: null, folder: null } : placed(line, text.slice(arrow + 2));
@@ -92,20 +100,27 @@ function entry(line: number, text: string, dir: string, dest: Tree = SOURCES): L
     section = `L${start}-L${end}`;
     sha = lines[3]?.toLowerCase() ?? null;
   }
-  return { line, path: path.resolve(dir, page[1]!), section, name, folder, to: dest, sha };
+  return { line, path: path.resolve(dir, page[1]!), section, name, folder, to: dest, sha, lookIn };
 }
 
 function readText(text: string, dir: string): ImportList {
   const entries: ListEntry[] = [];
+  const lookIn: string[] = [];
   let dest = SOURCES;
   text.split(/\r\n?|\n/).forEach((raw, i) => {
     const line = raw.trim();
     if (line === '' || line.startsWith('#')) return;
     const to = TO.exec(line);
+    const images = IMAGES.exec(line);
     if (to) dest = treeOf(i + 1, to[1]!);
-    else entries.push(entry(i + 1, line, dir, dest));
+    else if (images) {
+      const folder = images[1]!.trim();
+      if (!folder) throw new ListError(`line ${i + 1}: "images from:" needs a folder after it`);
+      lookIn.push(path.resolve(dir, folder));
+    }
+    else entries.push(entry(i + 1, line, dir, dest, lookIn));
   });
-  return { entries, left: [] };
+  return { entries, left: [], lookIn };
 }
 
 // RFC 4180 rows, each with the line it starts on. A quote doubles inside a quoted field.
@@ -143,7 +158,7 @@ function readCsv(text: string, dir: string): ImportList {
     path: columns.indexOf('path'), verdict: columns.indexOf('verdict'), name: columns.indexOf('name'), to: columns.indexOf('to'),
   };
   if (at.path < 0 || at.verdict < 0) throw new ListError('line 1: a keep/move list needs a path column and a verdict column');
-  const list: ImportList = { entries: [], left: [] };
+  const list: ImportList = { entries: [], left: [], lookIn: [] };
   for (const { line, cells } of rows) {
     const file = (cells[at.path] ?? '').trim();
     const verdict = (cells[at.verdict] ?? '').trim();

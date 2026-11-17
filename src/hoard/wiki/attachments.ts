@@ -5,6 +5,8 @@
 //
 // An attachment is found as Obsidian finds it: the path from the vault's root, then
 // from the page's folder, then by its name anywhere in the vault outside dot-folders.
+// Failing that, each further folder an import names is searched the same way: hoard's
+// pages came from the old vault, and their images stayed there.
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -51,10 +53,12 @@ export function attachmentsIn(markdown: string): string[] {
 /** Finds a page's attachments inside one vault; the vault is walked once, when first needed. */
 export class AttachmentFinder {
   readonly #root: string;
+  readonly #further: AttachmentFinder[];
   #byName: Map<string, string> | null = null;
 
-  constructor(vaultRoot: string) {
+  constructor(vaultRoot: string, further: readonly string[] = []) {
     this.#root = path.resolve(vaultRoot);
+    this.#further = further.map((dir) => new AttachmentFinder(dir));
   }
 
   #inside(file: string): boolean {
@@ -96,7 +100,17 @@ export class AttachmentFinder {
 
   /** The file a page's target names, or null when the vault has none. */
   find(target: string, page: string): string | null {
-    for (const base of [this.#root, path.dirname(path.resolve(page))]) {
+    const found = this.#own(target, [this.#root, path.dirname(path.resolve(page))]);
+    if (found) return found;
+    for (const other of this.#further) {
+      const there = other.#own(target, [other.#root]);
+      if (there) return there;
+    }
+    return null;
+  }
+
+  #own(target: string, bases: string[]): string | null {
+    for (const base of bases) {
       const file = path.resolve(base, target);
       if (this.#inside(file) && !path.relative(this.#root, file).split(path.sep).some((part) => part.startsWith('.')) && this.#isFile(file)) return file;
     }

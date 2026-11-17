@@ -81,3 +81,15 @@ test('keyRange spans a key and its continuation lines, up to the next top-level 
   assert.deepEqual(keyRange(fm, 'tags'), [4, 5]);
   assert.equal(keyRange(fm, 'aliases'), null);
 });
+
+// Rule: a date parses wherever it sits in the block. A collection used as a key is
+// turned back into text by the YAML library, which must be able to write a date.
+test('a date inside a collection key parses, kept as its text', () => {
+  for (const yaml of ['[2024-01-02, b]: x', '{d: 2024-01-02}: x', '? [2024-01-02]\n: x']) {
+    const { fm } = split(`---\n${yaml}\n---\nBody.\n`);
+    assert.ok(fm, yaml);
+    const [key] = Object.keys(fm);
+    assert.match(key!, /2024-01-02/, yaml);
+    assert.equal(fm[key!], 'x', yaml);
+  }
+});

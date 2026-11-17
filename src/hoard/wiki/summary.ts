@@ -34,7 +34,7 @@ export function describeSort(sorted: SortedOf<object>, where = 'the wiki'): Summ
   }
   if (marks) parts.push(`${marks} CriticMarkup mark${marks === 1 ? ' becomes a comment or suggestion' : 's become comments and suggestions'}.`);
   if (files.size) parts.push(`${files.size} image${files.size === 1 ? '' : 's'} or PDF${files.size === 1 ? '' : 's'} the pages show ${files.size === 1 ? 'is' : 'are'} copied into ${where}.`);
-  if (missing.length) parts.push(`Not found beside the pages, so not copied: ${missing.slice(0, SHOWN).join(', ')}${missing.length > SHOWN ? ` and ${missing.length - SHOWN} more` : ''}.`);
+  if (missing.length) parts.push(`Not found in the pages' vault, so not copied: ${missing.slice(0, SHOWN).join(', ')}${missing.length > SHOWN ? ` and ${missing.length - SHOWN} more` : ''}. An "images from:" line in the list names another folder to look in.`);
   if (of('same').length) parts.push(`Already in ${where}: ${names(of('same'))}.`);
   if (of('through-hoard').length) parts.push(`Already in hoard, so they come in with hoard's pages: ${names(of('through-hoard'))}.`);
   if (of('hoard-older').length) {

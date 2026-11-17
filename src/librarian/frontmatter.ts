@@ -30,7 +30,13 @@ const CLOSE = '\n---\n';
 const TIMESTAMP = 'tag:yaml.org,2002:timestamp';
 type Tags = Exclude<NonNullable<SchemaOptions['customTags']>, unknown[]>;
 const timestampsAsText: Tags = (tags) => tags.map((tag) => (
-  typeof tag === 'object' && tag.tag === TIMESTAMP ? { ...tag, resolve: (text: string) => new PyDate(text) } : tag
+  typeof tag === 'object' && tag.tag === TIMESTAMP ? {
+    ...tag,
+    resolve: (text: string) => new PyDate(text),
+    // The library writes a collection key back out as text, so it must know a PyDate.
+    identify: (value: unknown) => value instanceof PyDate,
+    stringify: ({ value }: { value: unknown }) => (value as PyDate).text,
+  } : tag
 )) as ReturnType<Tags>;
 const OPTIONS: ParseOptions & DocumentOptions & SchemaOptions = {
   version: '1.1',

@@ -51,7 +51,7 @@ async function choose(from: 'pages' | 'list', host: NeoMainHost): Promise<{ pick
   try {
     const list = readImportList(file, readFileSync(file, 'utf8'));
     host.log('info', 'wiki.import-list', { file, entries: list.entries.length, left: list.left.length });
-    return { picks: list.entries.map(({ path, name, folder, section, sha, to }) => ({ path, name, folder, section, sha, to })), left: list.left };
+    return { picks: list.entries.map(({ path, name, folder, section, sha, to, lookIn }) => ({ path, name, folder, section, sha, to, lookIn })), left: list.left };
   } catch (err) {
     const why = err instanceof ListError ? `${file}, ${err.message}.` : `${file} does not read: ${String(err)}`;
     host.log('warn', 'wiki.import-list does not read', why);
