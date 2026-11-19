@@ -5,6 +5,7 @@ import type { Identity } from './history/commit.ts';
 import type { Clock } from './history/checkpoints.ts';
 import { openHistory, type History } from './history.ts';
 import type { Log } from './log.ts';
+import { openSync, type Sync } from './sync.ts';
 import { openTree, type Tree } from './tree.ts';
 
 export interface LibraryOptions {
@@ -19,6 +20,7 @@ export interface LibraryOptions {
 export interface OpenLibrary {
   tree: Tree;
   history: History;
+  sync: Sync;
   /** Stops the timers, waits for the tree, then makes the history's last commit. */
   close(): Promise<void>;
 }
@@ -26,7 +28,7 @@ export interface OpenLibrary {
 export async function openLibrary(options: LibraryOptions): Promise<OpenLibrary> {
   const { log } = options;
   // The history needs the tree's exclusive and the tree needs the history's wrote; each reaches the other late.
-  const late: { tree?: Tree } = {};
+  const late: { tree?: Tree; sync?: Sync } = {};
   const history = await openHistory({
     repo: options.repo, library: options.library, state: options.state, author: options.author,
     idleMs: options.idleSeconds * 1000, log, clock: options.clock,
@@ -35,13 +37,18 @@ export async function openLibrary(options: LibraryOptions): Promise<OpenLibrary>
   const tree = await openTree({
     repo: options.repo, library: options.library, state: options.state, log,
     onChange: (device) => history.wrote(device),
-    stateExtra: () => ({ history: { lastCommit: history.lastCommit() } }),
+    stateExtra: () => ({ history: { lastCommit: history.lastCommit(), sync: late.sync?.status() } }),
   });
   late.tree = tree;
   await history.start();
+  const sync = await openSync({ history, tree, intervalMs: options.syncSeconds * 1000, log, clock: options.clock });
+  late.sync = sync;
+  sync.start();
   return {
-    tree, history,
+    tree, history, sync,
     async close() {
+      sync.stop();
+      await sync.settled();
       await tree.close();
       await history.close();
     },
