@@ -13,7 +13,7 @@ export interface Reply { status: number; headers: Record<string, string | string
 
 export interface Client {
   url: string;
-  call(method: string, rawPath: string, options?: { body?: Buffer | string; headers?: Record<string, string> }): Promise<Reply>;
+  call(method: string, rawPath: string, options?: { body?: Buffer | string; chunks?: string[]; headers?: Record<string, string> }): Promise<Reply>;
   get(p: string): Promise<Reply>;
   put(p: string, body: Buffer | string, headers?: Record<string, string>): Promise<Reply>;
   del(p: string, ifMatch?: string): Promise<Reply>;
@@ -36,6 +36,8 @@ export function clientFor(server: Server, device = 'test-device'): Client {
       });
     });
     req.on('error', reject);
+    // Several writes with no Content-Length make the request chunked.
+    for (const chunk of options.chunks ?? []) req.write(chunk);
     req.end(options.body);
   });
   const file = (p: string) => `/v1/files/${p.split('/').map(encodeURIComponent).join('/')}`;

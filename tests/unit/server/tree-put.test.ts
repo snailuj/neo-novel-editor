@@ -106,18 +106,19 @@ test('concurrent creates of clashing paths accept exactly one', async (t) => {
 
 test('a read that overlaps a write returns bytes and the version of the same write', async (t) => {
   const h = tempHoard(t);
-  let tree: Tree | undefined;
+  const held: { tree?: Tree } = {};
   let interfere = false;
   const readFile: NonNullable<TreeOptions['readFile']> = async (file) => {
     if (interfere) {
       interfere = false;
       // The write lands after the read chose its version and before the bytes are read.
-      const current = (await tree!.read('a.html')).version;
-      await tree!.put('a.html', Buffer.from('new'), { ifMatch: current });
+      const current = (await held.tree!.read('a.html')).version;
+      await held.tree!.put('a.html', Buffer.from('new'), { ifMatch: current });
     }
     return fsReadFile(file);
   };
-  tree = await openTree({ repo: h.repo, library: 'library', state: h.state, log: captureLog().log, readFile });
+  const tree = await openTree({ repo: h.repo, library: 'library', state: h.state, log: captureLog().log, readFile });
+  held.tree = tree;
   await tree.put('a.html', Buffer.from('old'), NEW);
   interfere = true;
   const got = await tree.read('a.html');

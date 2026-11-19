@@ -89,6 +89,15 @@ test('a body over the limit is 413 and is not stored', async (t) => {
   assert.deepEqual((await client.changes(0)).json.changes.map((c: { path: string }) => c.path), ['small.html']);
 });
 
+test('a chunked body over the limit is 413 as soon as it passes the limit, and is not stored', async (t) => {
+  const h = tempHoard(t);
+  const { client } = await startServer(t, h, { bodyLimit: 64 });
+  const chunks = Array.from({ length: 8 }, () => 'x'.repeat(30));
+  const r = await client.call('PUT', '/v1/files/chunked.html', { chunks, headers: { 'If-None-Match': '*', 'Transfer-Encoding': 'chunked' } });
+  assert.deepEqual([r.status, r.json.code], [413, 'too_large']);
+  assert.deepEqual((await client.changes(0)).json.changes, []);
+});
+
 test('bad JSON, unknown routes, wrong methods and bad query values are told apart', async (t) => {
   const h = tempHoard(t);
   const { client } = await startServer(t, h);
