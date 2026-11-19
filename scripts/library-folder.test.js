@@ -59,7 +59,7 @@ function computer({ documents = true, chosen = false } = {}) {
     startDir: broken
   });
   vm.runInContext(source, context, { filename: path.join(root, 'main.js') });
-  vm.runInContext('LIBRARY_DIR = startDir; LIBRARY_FILE = require("path").join(startDir, "library.json");', context);
+  vm.runInContext('LIBRARY_DIR = startDir;', context);
   const run = (code) => vm.runInContext(code, context);
   return {
     base, home, userData, shown, run,

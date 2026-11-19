@@ -43,7 +43,7 @@ function computer({ openFails = false } = {}) {
   vm.runInContext(source, context, { filename: path.join(root, 'main.js') });
   const library = fs.mkdtempSync(path.join(os.tmpdir(), 'neo-email-'));
   context.library = library;
-  vm.runInContext('LIBRARY_DIR = library; LIBRARY_FILE = require("path").join(library, "library.json"); renderPDF = async () => Buffer.from("%PDF-test");', context);
+  vm.runInContext('LIBRARY_DIR = library; renderPDF = async () => Buffer.from("%PDF-test");', context);
   const draft = (extra) => handlers.get('email:draft')(null, {
     to: 'me@example.com', subject: 'NEO draft — My Book — 1,200 words', body: 'Line one.\nLine two & more.', html: '<p>x</p>', defaultName: 'My-Book', ...extra
   });

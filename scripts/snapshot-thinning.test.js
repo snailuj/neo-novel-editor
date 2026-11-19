@@ -47,18 +47,9 @@ function loadMain() {
   return {
     context,
     call: (name, ...args) => handlers.get(name)(null, ...args),
-    // a file iCloud has not brought down: the test names them
-    setCloudOnly(files) {
-      context.cloudFiles = new Set(files);
-      vm.runInContext(`
-        icloud.cloudOnlyAmong = (files) => new Set([...files].filter((f) => cloudFiles.has(f)));
-        icloud.requestDownload = () => {};
-        icloud.waitMs = 50;
-      `, context);
-    },
     pointAt(dir) {
       context.libraryRoot = dir;
-      vm.runInContext('LIBRARY_DIR = libraryRoot; LIBRARY_FILE = require("path").join(libraryRoot, "library.json");', context);
+      vm.runInContext('LIBRARY_DIR = libraryRoot;', context);
     }
   };
 }
@@ -84,12 +75,6 @@ describe('snapshot:read reports what it cannot read', { concurrency: 1 }, () => 
   test('a chapter file that is empty reads as empty (legitimately)', async () => {
     const { bookId, name } = await snapshotWithFiles({ 'ch-a.html': '' });
     assert.equal(await main.call('snapshot:read', bookId, name, 'ch-a.html'), '');
-  });
-
-  test('a chapter still in iCloud throws cloud_only after the wait', async () => {
-    const { bookId, name, snapDir } = await snapshotWithFiles({ 'ch-a.html': '<p>A</p>' });
-    main.setCloudOnly([path.join(snapDir, 'ch-a.html')]);
-    await assert.rejects(main.call('snapshot:read', bookId, name, 'ch-a.html'), { code: 'cloud_only' });
   });
 
   test('a name or file that is not a snapshot file throws', async () => {

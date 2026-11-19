@@ -510,7 +510,7 @@ describe('the Plugins menu', { concurrency: 1 }, () => {
       libraryRoot: tempFolder()
     });
     vm.runInContext(fs.readFileSync(path.join(root, 'main.js'), 'utf8'), context, { filename: path.join(root, 'main.js') });
-    vm.runInContext('LIBRARY_DIR = libraryRoot; LIBRARY_FILE = require("path").join(libraryRoot, "library.json");', context);
+    vm.runInContext('LIBRARY_DIR = libraryRoot;', context);
 
     const event = {};
     on.get('plugins:list')(event);
@@ -1018,7 +1018,7 @@ function loadMain(profile, appDir) {
   });
   vm.runInContext(fs.readFileSync(path.join(root, 'main.js'), 'utf8'), context, { filename: path.join(root, 'main.js') });
   // nothing is logged into the real Documents folder before ready() moves the library
-  vm.runInContext('LIBRARY_DIR = libraryRoot; LIBRARY_FILE = require("path").join(libraryRoot, "library.json");', context);
+  vm.runInContext('LIBRARY_DIR = libraryRoot;', context);
   return {
     dialogs,
     call: (channel, ...args) => handlers.get(channel)(null, ...args),

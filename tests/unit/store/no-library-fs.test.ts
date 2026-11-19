@@ -110,7 +110,7 @@ function loadMain(seen: Seen[]) {
     has: (name: string) => handlers.has(name),
     pointAt(dir: string) {
       context.libraryRoot = dir;
-      vm.runInContext('LIBRARY_DIR = libraryRoot; LIBRARY_FILE = require("path").join(libraryRoot, "library.json");', context);
+      vm.runInContext('LIBRARY_DIR = libraryRoot;', context);
     },
     run: (code: string) => vm.runInContext(code, context),
   };
@@ -191,7 +191,7 @@ test('the fs that main.js is given is the recording one', async () => {
     main.pointAt(library);
     seen.length = 0;
     // a handler's read, as a stand-in for one that was never moved
-    main.run('fs.existsSync(LIBRARY_FILE)');
+    main.run('fs.existsSync(LIBRARY_DIR)');
     assert.ok(seen.some((s) => inside(library, s.path)));
   } finally {
     fs.rmSync(library, { recursive: true, force: true });

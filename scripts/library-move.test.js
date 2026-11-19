@@ -86,7 +86,7 @@ function mac({ pocket = true, ipad = false, answers = [0], firstRun = false } = 
     startDir: lib
   });
   vm.runInContext(source, context, { filename: path.join(root, 'main.js') });
-  vm.runInContext('LIBRARY_DIR = startDir; LIBRARY_FILE = require("path").join(startDir, "library.json");', context);
+  vm.runInContext('LIBRARY_DIR = startDir;', context);
   const run = (code) => vm.runInContext(code, context);
   return {
     base, home, lib, cloud, shown, trashed, opened, did, run,
@@ -99,27 +99,6 @@ function mac({ pocket = true, ipad = false, answers = [0], firstRun = false } = 
 }
 
 describe('moving the library', { concurrency: 1 }, () => {
-  test('two libraries become one: shared shelves keep every book, the rest join', () => {
-    const m = mac({ pocket: false });
-    try {
-      // (values from the sandbox are made plain, so they compare as this file's own)
-      const merged = JSON.parse(m.run(`JSON.stringify(mergeLibraries(${JSON.stringify({
-        authorName: '', penNames: ['A'], firstRunDone: true, authors: [{ id: 'a1', name: 'Anonymous' }],
-        shelves: [{ id: 'shelf-1', name: 'Works in Progress', bookIds: ['b3'] }]
-      })}, ${JSON.stringify({
-        authorName: 'Hugh Howey', penNames: ['B'], authors: [{ id: 'a1', name: 'Hugh Howey' }, { id: 'a2', name: 'Margo Pruett' }],
-        shelves: [{ id: 'shelf-1', name: 'Mine', bookIds: ['b1', 'b3'] }, { id: 'shelf-2', name: 'Silo', bookIds: ['b2'], authorId: 'a2' }]
-      })}))`));
-      assert.deepEqual(merged.shelves.map((s) => [s.id, s.name, s.bookIds]), [['shelf-1', 'Works in Progress', ['b3', 'b1']], ['shelf-2', 'Silo', ['b2']]]);
-      assert.equal(merged.shelves[1].authorId, 'a2');
-      assert.deepEqual(merged.authors.map((a) => a.name), ['Hugh Howey', 'Margo Pruett']);
-      assert.deepEqual([...merged.penNames], ['A', 'B']);
-      assert.equal(merged.authorName, 'Hugh Howey');
-    } finally {
-      m.done();
-    }
-  });
-
   test('Use iCloud Drive moves every book into NEO Pocket\'s folder, beside the iPad\'s, and restarts there', async () => {
     const m = mac({ ipad: true });
     try {
@@ -173,22 +152,6 @@ describe('moving the library', { concurrency: 1 }, () => {
       assert.equal(m.trashed.length, 0);
       assert.equal(m.settings().libraryDir, path.join(m.home, 'Dropbox', 'NEO'));
     } finally {
-      m.done();
-    }
-  });
-
-  test('a copy that fails part way leaves both folders as they were', () => {
-    const m = mac({ ipad: true });
-    const real = fs.cpSync;
-    let n = 0;
-    fs.cpSync = (...a) => { if (++n === 2) throw Object.assign(new Error('disk full'), { code: 'ENOSPC' }); return real(...a); };
-    try {
-      assert.throws(() => m.run('moveLibrary(LIBRARY_DIR, ' + JSON.stringify(m.cloud) + ')'), /disk full/);
-      assert.deepEqual(fs.readdirSync(m.cloud).sort(), ['book-pocket-3', 'library.json']);
-      assert.deepEqual(m.library(m.cloud).shelves[0].bookIds, ['book-pocket-3']);
-      assert.ok(fs.existsSync(path.join(m.lib, 'book-wool-1')) && fs.existsSync(path.join(m.lib, 'book-shift-2')));
-    } finally {
-      fs.cpSync = real;
       m.done();
     }
   });

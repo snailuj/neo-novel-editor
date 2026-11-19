@@ -133,3 +133,27 @@ test('a file that never answers is left out and named, and this process keeps ru
   assert.match(await zip.file('_left-out-of-this-backup.txt').async('string'), /stickies\.json \(not handed over in time\)/);
   assert.ok(zip.file(`${book.id}/book.json`), 'the rest is backed up');
 });
+
+test('what is still in iCloud is left out of the backup and named, not waited on', async () => {
+  const h = harness();
+  const book = await h.withBook();
+  // a placeholder is a file with a size and no blocks; the worker treats such a file as in iCloud when told to
+  const file = h.at(book.id, 'chapters', 'ch-aaa.html');
+  const size = fs.statSync(file).size;
+  fs.rmSync(file);
+  fs.closeSync(fs.openSync(file, 'w'));
+  fs.truncateSync(file, size);
+  assert.equal(fs.statSync(file).blocks, 0, 'this disk makes sparse files');
+  const asPlaceholder: ForkWorker = (script) => {
+    const child = nodeFork(script, [], { env: { ...process.env, NEO_TEST_SPARSE_IS_CLOUD: '1' } });
+    return {
+      on: (ev: string, fn: (arg: never) => void) => child.on(ev, ev === 'exit' ? (code: number | null) => (fn as (n: number) => void)(code || 0) : (fn as () => void)),
+      postMessage: (m: unknown) => child.send(m as never),
+      kill: () => child.kill(),
+    } as BackupWorker;
+  };
+  await h.store.backup(asPlaceholder, { workerPath: worker });
+  const zip = await zipOf(h.at('Backups', `neo-backup-${today()}.zip`));
+  assert.match(await zip.file('_left-out-of-this-backup.txt').async('string'), /ch-aaa\.html \(in iCloud, not on this Mac\)/);
+  assert.deepEqual(h.asked, [file], 'and iCloud is asked for it');
+});

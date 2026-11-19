@@ -51,7 +51,7 @@ function loadMain() {
     call: (name, ...args) => handlers.get(name)(null, ...args),
     pointAt(dir) {
       context.libraryRoot = dir;
-      vm.runInContext('LIBRARY_DIR = libraryRoot; LIBRARY_FILE = require("path").join(libraryRoot, "library.json");', context);
+      vm.runInContext('LIBRARY_DIR = libraryRoot;', context);
     }
   };
 }

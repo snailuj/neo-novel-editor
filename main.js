@@ -8,15 +8,15 @@ const fs = require('fs');
 const os = require('os');
 const { Buffer } = require('buffer');
 const plugins = require('./plugins-main.js');
-const { createFsStore, createICloud, createJsonFiles, libName } = require('./src/store/index.ts');
+const store = require('./src/store/index.ts');
 
-// The store owns every library file. These are shared with the code that has not moved
-// behind it yet (covers, art, the error log, backup, folder moves), and are the same
-// objects the store uses, so there is one iCloud queue and one set of recovery rules.
-const icloud = createICloud({ platform: process.platform });
-const jsonFiles = createJsonFiles({ log: (source, detail) => logError(source, detail), icloud, platform: process.platform });
-const { readJSON, writeJSON, parseJSONFile, writeFileDurable } = jsonFiles;
-const { cloudOnlyAmong, isCloudOnly, whenLocal, afterLocal, cloudError } = icloud;
+// settings.json and secrets.json live in the app's own data folder, not in a library, so
+// they use the durable write and the JSON recovery directly. A library file is only ever
+// opened by the store (src/store).
+// (and a manuscript picked to import may be in iCloud too, which is waited for the same way)
+const icloud = store.createICloud({ platform: process.platform });
+const jsonFiles = store.createJsonFiles({ log: (source, detail) => logError(source, detail), icloud, platform: process.platform });
+const { readJSON, writeJSON, writeFileDurable } = jsonFiles;
 
 // One store per library folder. The folder is set at startup and changes with a relaunch,
 // but a test (or a fall-back to another folder) can point LIBRARY_DIR elsewhere, so the
@@ -24,7 +24,7 @@ const { cloudOnlyAmong, isCloudOnly, whenLocal, afterLocal, cloudError } = iclou
 let fsStore = null;
 function libraryStore() {
   if (!fsStore || fsStore.root !== LIBRARY_DIR) {
-    fsStore = createFsStore({ root: LIBRARY_DIR, log: (source, detail) => logError(source, detail), t, platform: process.platform, icloud, json: jsonFiles });
+    fsStore = store.createFsStore({ root: LIBRARY_DIR, log: (source, detail) => logError(source, detail), t, platform: process.platform });
   }
   return fsStore;
 }
@@ -33,14 +33,21 @@ function libraryStore() {
 // refuses (see reportBlockedWrite) is explained to the writer, then the error
 // goes back to the page as before.
 {
+  // (a read of something that is not there yet, a chapter another device has not synced or
+  // one not written yet, is an answer the page handles, not an error to log; it still
+  // rejects, so the page hears it)
+  const failed = (channel, err) => {
+    reportBlockedWrite(err);
+    if (store.storeErrorCode(err) !== 'not_found') logError('ipc ' + channel, err);
+  };
   const handle = ipcMain.handle.bind(ipcMain);
   ipcMain.handle = (channel, fn) => handle(channel, (...args) => {
     // a handler's answer keeps its own timing: sync stays sync
     let out;
     // (and any failure lands in the error log, named by its channel, for
     // whatever bug report follows)
-    try { out = fn(...args); } catch (err) { reportBlockedWrite(err); logError('ipc ' + channel, err); throw err; }
-    if (out && typeof out.then === 'function') out.catch((err) => { reportBlockedWrite(err); logError('ipc ' + channel, err); });
+    try { out = fn(...args); } catch (err) { failed(channel, err); throw err; }
+    if (out && typeof out.then === 'function') out.catch((err) => failed(channel, err));
     return out;
   });
 }
@@ -61,7 +68,6 @@ if (process.platform === 'linux') app.commandLine.appendSwitch('enable-speech-di
 // (Electron's Documents from the start, not the home folder's: the tests stand
 // in a throwaway folder there, and never write into a writer's real library)
 let LIBRARY_DIR = path.join((() => { try { return app.getPath('documents'); } catch { return path.join(os.homedir(), 'Documents'); } })(), 'NEO Library');
-let LIBRARY_FILE = path.join(LIBRARY_DIR, 'library.json');
 // npm run try (scripts/try.js): NEO from source with settings of its own,
 // which point it at the throwaway copy of the library that script made, so
 // a trial never touches the real library (and runs beside the real NEO)
@@ -191,99 +197,14 @@ ipcMain.handle('i18n:reload', (e) => {
 });
 
 // File → Library Folder…: point NEO at any folder, or back at the default.
-// The library is plain files, so the writer moves them; NEO only follows.
-// NEO Pocket's folder in iCloud Drive, as this Mac sees it. It's there once
-// the app has run on an iPad or iPhone signed in to the same iCloud account;
-// desktop NEO never makes it (only the app it belongs to can).
-function pocketCloudLibrary() {
-  if (process.platform !== 'darwin') return null;
-  const dir = path.join(app.getPath('home'), 'Library', 'Mobile Documents', 'iCloud~com~hughhowey~neo~pocket', 'Documents');
-  try { if (!fs.statSync(dir).isDirectory()) return null; } catch { return null; }
-  return path.join(dir, 'NEO Library');
-}
+// The library is plain files, so the writer moves them; NEO only follows. What is
+// asked here is Electron's (dialogs, windows, relaunch); the folders themselves are
+// read and moved by the store module (src/store).
 
-// what a library folder holds that moving it carries: books and anything
-// else the writer keeps there, but not NEO's own half-written spares
-const MOVE_SKIP = new Set(['library.json', '.neo-write-test', '.DS_Store']);
-function libraryEntries(dir) {
-  try { return fs.readdirSync(dir).filter((n) => !MOVE_SKIP.has(n) && !/\.(tmp|bak)$/.test(n)); } catch { return []; }
-}
-const hasBooks = (dir) => libraryEntries(dir).some((n) => n.startsWith('book-'));
-// a is inside b, or is b
-const insideFolder = (a, b) => { const r = path.relative(path.resolve(b), path.resolve(a)); return !r.startsWith('..') && !path.isAbsolute(r); };
-
-// Two libraries become one: the shelves of `from` join those of `into` (a
-// shelf both have keeps every book of both), and so do the pen names. What
-// `into` already says stays; `from` fills in what it lacks.
-function mergeLibraries(into, from) {
-  if (!into) return from;
-  if (!from) return into;
-  const out = { ...from, ...into };
-  const shelves = (into.shelves || []).map((sh) => ({ ...sh, bookIds: [...(sh.bookIds || [])] }));
-  for (const sh of from.shelves || []) {
-    const same = shelves.find((x) => x.id === sh.id);
-    if (same) {
-      for (const b of sh.bookIds || []) if (!same.bookIds.includes(b)) same.bookIds.push(b);
-    } else {
-      shelves.push({ ...sh, bookIds: [...(sh.bookIds || [])] });
-    }
-  }
-  out.shelves = shelves;
-  const authors = (into.authors || []).map((a) => ({ ...a }));
-  for (const a of from.authors || []) {
-    const same = authors.find((x) => x.id === a.id);
-    if (!same) authors.push({ ...a });
-    else if ((!same.name || same.name === 'Anonymous') && a.name) same.name = a.name;
-  }
-  if (authors.length) out.authors = authors;
-  out.penNames = [...new Set([...(into.penNames || []), ...(from.penNames || [])])];
-  out.authorName = into.authorName || from.authorName || '';
-  out.firstRunDone = !!(into.firstRunDone || from.firstRunDone);
-  return out;
-}
-
-// every file of a folder, by its path inside it, with its size
-function treeSizes(dir, base = dir, out = new Map()) {
-  for (const n of fs.readdirSync(dir)) {
-    const f = path.join(dir, n);
-    const st = fs.statSync(f);
-    if (st.isDirectory()) treeSizes(f, base, out);
-    else out.set(path.relative(base, f), st.size);
-  }
-  return out;
-}
-
-// The books of one library folder copied into another, beside whatever is
-// there already (a book both have keeps the copy that's there), checked file
-// by file, and library.json merged. Nothing leaves `from`: the caller puts it
-// in the Trash once this has worked. If anything fails, what was copied is
-// taken away again and the error goes up, so `to` is as it was.
-function moveLibrary(from, to) {
-  fs.mkdirSync(to, { recursive: true });
-  const made = [];
-  try {
-    for (const name of libraryEntries(from)) {
-      const src = path.join(from, name);
-      const dst = path.join(to, name);
-      if (fs.existsSync(dst)) continue;
-      made.push(dst);
-      fs.cpSync(src, dst, { recursive: true, errorOnExist: true, force: false, preserveTimestamps: true });
-      if (fs.statSync(src).isDirectory()) {
-        const a = treeSizes(src), b = treeSizes(dst);
-        for (const [f, size] of a) if (b.get(f) !== size) throw Object.assign(new Error('Not every file came across: ' + path.join(name, f)), { code: 'EINCOMPLETE' });
-      } else if (fs.statSync(src).size !== fs.statSync(dst).size) {
-        throw Object.assign(new Error('Not every file came across: ' + name), { code: 'EINCOMPLETE' });
-      }
-    }
-    const mine = readJSON(path.join(from, 'library.json'), null);
-    const theirsFile = path.join(to, 'library.json');
-    const theirs = fs.existsSync(theirsFile) ? readJSON(theirsFile, null) : null;
-    if (mine || theirs) writeJSON(theirsFile, mergeLibraries(theirs, mine));
-  } catch (err) {
-    for (const p of made) { try { fs.rmSync(p, { recursive: true, force: true }); } catch { /* as much as can go */ } }
-    throw err;
-  }
-}
+// NEO Pocket's folder in iCloud Drive, as this Mac sees it, once the app has run on an
+// iPad or iPhone signed in to the same iCloud account
+const pocketCloudLibrary = () => store.pocketCloudLibrary({ home: app.getPath('home'), platform: process.platform });
+const { hasBooks, insideFolder } = store;
 
 // Move the books, with the window closed so nothing writes behind the move:
 // everything typed is saved first. Returns false (and says why) when the
@@ -299,10 +220,7 @@ async function moveLibraryAndClose(win, from, to) {
   } catch { /* a window that's already gone has nothing left to save */ }
   for (const w of BrowserWindow.getAllWindows()) { try { w.destroy(); } catch { /* gone */ } }
   try {
-    const theirs = path.join(to, 'library.json');
-    const wait = fs.existsSync(theirs) ? whenLocal([theirs]) : null;
-    if (wait && (await wait).size) throw cloudError(theirs);
-    moveLibrary(from, to);
+    await store.moveLibrary(from, to, { log: logError, platform: process.platform });
   } catch (err) {
     logError('move library', err);
     await dialog.showMessageBox({
@@ -359,7 +277,8 @@ async function askAboutPocket() {
   if (!cloud || path.resolve(cloud) === path.resolve(LIBRARY_DIR)) return;
   const settings = readSettings();
   if (settings.pocketAsked) return;
-  const lib = parseJSONFile(LIBRARY_FILE);
+  let lib = null;
+  try { lib = await libraryStore().peekLibrary(); } catch { /* not here yet (iCloud), or not readable: nothing to ask about */ }
   if (!lib || !lib.firstRunDone) return;
   pocketAsking = true;
   try {
@@ -491,36 +410,6 @@ async function chooseLibraryFolder() {
   app.exit(0);
 }
 
-// Can NEO write in this folder? Windows' Controlled folder access (Defender's
-// ransomware protection) refuses new files in Documents to apps it doesn't
-// know, and NEO is one. A small file written and removed tells.
-let lastFolderError = null;
-// A folder in Dropbox or one an antivirus watches can hold a file for a
-// moment as it is made: the test file is tried again a few times, and once
-// it was written, failing to delete it is no reason to say the folder can't
-// be saved in (#474).
-const PROBE_TRIES = 3;
-const PROBE_RETRY = ['EBUSY', 'EPERM', 'EACCES', 'EAGAIN'];
-function folderWritable(dir) {
-  const probe = path.join(dir, '.neo-write-test');
-  for (let n = 1; ; n++) {
-    try {
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(probe, 'ok');
-      try { fs.unlinkSync(probe); } catch { /* it is only a test file: the next one writes over it */ }
-      lastFolderError = null;
-      return true;
-    } catch (err) {
-      if (n < PROBE_TRIES && PROBE_RETRY.includes(err.code)) {
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150 * n);
-        continue;
-      }
-      lastFolderError = err;
-      logError('library folder not writable: ' + dir, err);
-      return false;
-    }
-  }
-}
 const isBlockedWrite = (err) => !!err && ['EPERM', 'EACCES', 'EROFS'].includes(err.code);
 // a folder that isn't there to write in (not a refusal): a OneDrive folder
 // on a computer where OneDrive isn't set up, a drive that's gone
@@ -533,55 +422,41 @@ function blockedDetail(dir, err) {
       : t('Check that the folder exists and that NEO may write to it, or keep your library in another folder.'));
 }
 
-// Where a first library goes when Documents itself can't hold one. Beside
-// Documents, not nowhere: the writer is never left at "Start writing" with
-// no way on.
-function fallbackLibraryDir() {
-  const home = app.getPath('home');
-  const spots = [];
-  try {
-    const docs = path.join(home, 'Documents');
-    if (fs.statSync(docs).isDirectory()) spots.push(path.join(docs, 'NEO Library'));
-  } catch { /* no plain Documents folder here */ }
-  spots.push(path.join(home, 'NEO Library'));
-  return spots.find((dir) => dir !== LIBRARY_DIR && folderWritable(dir)) || null;
-}
+// The library is at this folder from now on: remembered, so a OneDrive that comes back
+// later doesn't swap libraries
 function useLibraryDir(dir) {
   LIBRARY_DIR = dir;
-  LIBRARY_FILE = path.join(LIBRARY_DIR, 'library.json');
-  // remembered, so a OneDrive that comes back later doesn't swap libraries
   const settings = readSettings();
   settings.libraryDir = LIBRARY_DIR;
   try { writeSettings(settings); } catch (err) { logError('settings', err); }
 }
-// The writer's own library folder, missing at launch: a drive not plugged
-// in, a NAS or cloud folder not mounted yet. Never swapped quietly for the
-// default (new books would land there and seem lost when the drive came
-// back). Asked once: Try Again once it's there, Choose Folder…, or Continue
-// with the default folder for this session only; the choice stays saved.
-function isDir(dir) { try { return fs.statSync(dir).isDirectory(); } catch { return false; } }
+// The writer's own library folder, missing at launch: a drive not plugged in, a NAS or
+// cloud folder not mounted yet. Never swapped quietly for the default (new books would land
+// there and seem lost when the drive came back). Asked: Try Again once it's there, Choose
+// Folder…, or Continue with the default folder for this session only; the choice stays saved.
+function chooseFolderSync() {
+  const picked = dialog.showOpenDialogSync({
+    title: t('Choose a folder for your NEO library'),
+    defaultPath: os.homedir(),
+    properties: ['openDirectory', 'createDirectory']
+  });
+  return picked && picked[0] ? picked[0] : null;
+}
 function awaitChosenLibrary(chosen) {
-  const fallback = path.join(app.getPath('documents'), 'NEO Library');
-  while (!isDir(chosen)) {
-    const r = dialog.showMessageBoxSync({
+  return store.awaitChosenLibrary({
+    chosen,
+    fallback: path.join(app.getPath('documents'), 'NEO Library'),
+    ask: (dir) => ['retry', 'choose', 'continue'][dialog.showMessageBoxSync({
       type: 'warning',
       message: t('NEO can\'t save in your library folder'),
-      detail: blockedDetail(chosen, { code: 'ENOENT' }),
+      detail: blockedDetail(dir, { code: 'ENOENT' }),
       buttons: [t('Try Again'), t('Choose Folder…'), t('Continue')],
       defaultId: 0,
       cancelId: 2
-    });
-    if (r === 2) return fallback;
-    if (r === 1) {
-      const picked = dialog.showOpenDialogSync({
-        title: t('Choose a folder for your NEO library'),
-        defaultPath: os.homedir(),
-        properties: ['openDirectory', 'createDirectory']
-      });
-      if (picked && picked[0]) { useLibraryDir(picked[0]); return picked[0]; }
-    }
-  }
-  return chosen;
+    })],
+    pick: chooseFolderSync,
+    remember: useLibraryDir
+  });
 }
 // said once, after the window is up, only when it happened
 let libraryFallback = null;
@@ -597,44 +472,28 @@ function announceLibraryFallback() {
   }).catch(() => {});
 }
 // At startup, before any window: a library that can't be written is said
-// plainly, once, with a way out — not a hiccup at "Start writing"
+// plainly, once, with a way out, not a hiccup at "Start writing"
 function checkLibraryWritable() {
-  // (only where it can happen: on Windows, and anywhere before a first
-  // library exists; a synced library elsewhere isn't sent a test file
-  // every launch)
-  if (process.platform !== 'win32' && fs.existsSync(LIBRARY_FILE)) return;
-  // A first library that Documents can't hold goes beside it. Never when a
-  // library already lives here or the writer picked this folder: their books
-  // stay where they are, and the question below is theirs to answer.
-  if (!fs.existsSync(LIBRARY_FILE) && !readSettings().libraryDir && !folderWritable(LIBRARY_DIR)) {
-    const from = LIBRARY_DIR;
-    const spot = fallbackLibraryDir();
-    if (spot) {
-      useLibraryDir(spot);
-      libraryFallback = { from, to: spot };
-      return;
-    }
-  }
-  while (!folderWritable(LIBRARY_DIR)) {
-    const r = dialog.showMessageBoxSync({
+  const out = store.checkLibraryWritable({
+    dir: LIBRARY_DIR,
+    // A first library that Documents can't hold goes beside it, unless the writer picked
+    // this folder: their books stay where they are, and the question is theirs to answer.
+    chosen: !!readSettings().libraryDir,
+    home: app.getPath('home'),
+    platform: process.platform,
+    log: logError,
+    ask: (dir, err) => ['choose', 'retry', 'continue'][dialog.showMessageBoxSync({
       type: 'warning',
       message: t('NEO can\'t save in your library folder'),
-      detail: blockedDetail(LIBRARY_DIR, lastFolderError),
+      detail: blockedDetail(dir, err),
       buttons: [t('Choose Folder…'), t('Try Again'), t('Continue')],
       defaultId: 0,
       cancelId: 2
-    });
-    if (r === 2) return;
-    if (r === 0) {
-      const picked = dialog.showOpenDialogSync({
-        title: t('Choose a folder for your NEO library'),
-        defaultPath: os.homedir(),
-        properties: ['openDirectory', 'createDirectory']
-      });
-      if (!picked || !picked[0]) continue;
-      useLibraryDir(picked[0]);
-    }
-  }
+    })],
+    pick: chooseFolderSync,
+    remember: useLibraryDir
+  });
+  if (out.fallback) libraryFallback = out.fallback;
 }
 // Later on (the protection switched on mid-session), a refused save says so
 // once. The words stay on the page; NEO saves them as soon as it may.
@@ -656,34 +515,11 @@ function reportBlockedWrite(err) {
   (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts)).catch(() => {});
 }
 
-// Library files are opened by the store (src/store), never here. What stays in main.js
-// is the path of a book folder for the covers, and this look over the library for iCloud.
-function bookDir(bookId) {
-  return path.join(LIBRARY_DIR, libName(bookId));
-}
-
-// A minute after launch, the whole library is looked over (without reading
-// a word, and without holding anything up) and iCloud is asked for anything
-// it has taken off this Mac, so the books are here before they're opened.
+// A minute after launch, the whole library is looked over (without reading a word, and
+// without holding anything up) and iCloud is asked for anything it has taken off this Mac,
+// so the books are here before they're opened.
 async function fetchLibraryFromICloud() {
-  if (process.platform !== 'darwin') return;
-  const fsp = fs.promises;
-  const found = [];
-  const walk = async (dir) => {
-    let ents = [];
-    try { ents = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
-    for (const e of ents) {
-      const full = path.join(dir, e.name);
-      if (e.isDirectory()) { if (e.name !== 'Backups' && e.name !== 'Exports') await walk(full); continue; }
-      try { const st = await fsp.stat(full); if (st.size > 0 && st.blocks === 0) found.push(full); } catch { /* gone */ }
-    }
-  };
-  await walk(LIBRARY_DIR);
-  if (!found.length) return;
-  const away = cloudOnlyAmong(found);
-  if (!away.size) return;
-  logError('icloud', new Error(`${away.size} library files were in iCloud only; asked iCloud to bring them back to this Mac`));
-  icloud.requestDownload(away);
+  await libraryStore().fetchFromICloud();
 }
 // ---------------------------------------------------------------------------
 // IPC — the renderer's whole view of the disk
@@ -1591,7 +1427,7 @@ function readTextFile(fp) {
 
 async function importFile(fp) {
   // a manuscript kept in iCloud may not be on this Mac yet
-  const wait = whenLocal([fp]);
+  const wait = icloud.whenLocal([fp]);
   if (wait && (await wait).size) throw new Error('This file is still downloading from iCloud. Try again in a moment');
   const name = path.basename(fp).replace(/\.[^.]+$/, '');
   const ext = path.extname(fp).toLowerCase();
@@ -1849,13 +1685,7 @@ function dailyBackup() {
 // The window's own color, seen for a moment before the page draws and at the
 // edges while it resizes: the room's color, dark or (View → Page → Light) light
 function roomColor(theme) { return theme === 'light' ? '#efede8' : '#191919'; }
-// (this computer's own page, kept in settings.json as the window reports
-// it; the library's, the last device's, until it has one)
-function libraryPageTheme() {
-  const own = readSettings().pageTheme;
-  if (own) return own;
-  try { return isCloudOnly(LIBRARY_FILE) ? 'night' : JSON.parse(fs.readFileSync(LIBRARY_FILE, 'utf8')).pageTheme || 'night'; } catch { return 'night'; }
-}
+// (this computer's own page is kept in settings.json as the window reports it)
 
 // ---------------------------------------------------------------------------
 function createWindow() {
@@ -1874,6 +1704,7 @@ function createWindow() {
       if (onScreen) Object.assign(bounds, { x: saved.x, y: saved.y });
     }
   }
+  const ownTheme = readSettings().pageTheme;
   const win = new BrowserWindow({
     ...bounds,
     minWidth: 700,
@@ -1886,7 +1717,7 @@ function createWindow() {
     // Linux shows the window's own icon in its title bar and task bar; an
     // AppImage has no installed one to fall back on (#440)
     ...(process.platform === 'linux' ? { icon: path.join(__dirname, 'build', 'icon.png') } : {}),
-    backgroundColor: roomColor(libraryPageTheme()),
+    backgroundColor: roomColor(ownTheme),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -1897,6 +1728,13 @@ function createWindow() {
       spellcheck: true
     }
   });
+  // no page of its own yet on this computer: the library's, the last device's, as soon as
+  // the store has read it (a moment after the window, which starts on the dark room)
+  if (!ownTheme) {
+    libraryStore().peekLibrary().then((lib) => {
+      if (lib && lib.pageTheme && !win.isDestroyed()) win.setBackgroundColor(roomColor(lib.pageTheme));
+    }).catch(() => { /* still in iCloud, or unreadable: the room stays dark */ });
+  }
   if (process.platform === 'win32') {
     win.on('query-session-end', holdUpdateForShutdown);
     win.on('session-end', holdUpdateForShutdown);
@@ -3008,7 +2846,6 @@ app.whenReady().then(() => {
       // …unless the writer chose their own folder (File → Library Folder…)
       const chosen = readSettings().libraryDir;
       if (chosen) LIBRARY_DIR = awaitChosenLibrary(chosen);
-      LIBRARY_FILE = path.join(LIBRARY_DIR, 'library.json');
     } catch (err) {
       logError('paths', err);
     }

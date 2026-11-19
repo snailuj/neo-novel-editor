@@ -388,7 +388,7 @@ async function mainContext(temp, systemLocale, settings = {}, library = {}, raw 
   // The string is the file on disk. filename is how Node attributes coverage to it.
   vm.runInContext(source('main.js'), context, { filename: path.join(root, 'main.js') });
   // the library.json reads are the store's, so they answer a turn later
-  await vm.runInContext('LIBRARY_DIR = temp; LIBRARY_FILE = require("path").join(temp, "library.json"); initLanguage(); initSpell();', context);
+  await vm.runInContext('LIBRARY_DIR = temp; initLanguage(); initSpell();', context);
   await settle();
   return { context, loads, handlers, read: () => JSON.parse(fs.readFileSync(path.join(temp, 'library.json'))) };
 }
