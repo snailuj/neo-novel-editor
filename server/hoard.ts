@@ -195,6 +195,8 @@ export async function openHoardTools(options: HoardToolsOptions): Promise<HoardT
     const tool = TOOLS.find((name) => name === tail);
     if (!tool) throw new ApiError('unknown_tool', 404, `unknown librarian tool ${JSON.stringify(tail)}`);
     await readBody(); // ignored, but read so the limit applies and the connection is left clean
+    if (unavailable !== null) await probe();
+    if (unavailable !== null) throw new ApiError('tool_unavailable', 503, unavailable);
     const job = running.get(tool) ?? start(tool);
     return { status: 202, json: { id: job.id, tool: job.tool, state: job.state, startedAt: job.startedAt } };
   }

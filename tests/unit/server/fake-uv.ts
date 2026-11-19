@@ -34,14 +34,18 @@ export interface FakeUv {
   /** Runs started after this wait until `release()`. */
   hold(): void;
   release(): void;
+  /** Writes the script, for a fake made with `installed: false`. */
+  install(): void;
 }
 
-export function fakeUv(t: Cleanup): FakeUv {
+/** `installed: false` leaves the script unwritten, so `uv` is missing until `install()`. */
+export function fakeUv(t: Cleanup, { installed = true } = {}): FakeUv {
   const dir = tempDir(t, 'neo-fake-uv-');
   const script = path.join(dir, 'fake-uv.mjs');
   const control = path.join(dir, 'control');
   mkdirSync(control);
-  writeFileSync(script, SCRIPT);
+  const install = () => writeFileSync(script, SCRIPT);
+  if (installed) install();
   const saved = process.env.FAKE_UV_DIR;
   process.env.FAKE_UV_DIR = control;
   t.after(() => { if (saved === undefined) delete process.env.FAKE_UV_DIR; else process.env.FAKE_UV_DIR = saved; });
@@ -50,5 +54,6 @@ export function fakeUv(t: Cleanup): FakeUv {
     steer: (c) => writeFileSync(path.join(control, 'control.json'), JSON.stringify(c)),
     hold: () => writeFileSync(path.join(control, 'hold'), ''),
     release: () => writeFileSync(path.join(control, 'release'), ''),
+    install,
   };
 }

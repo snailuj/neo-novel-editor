@@ -167,3 +167,49 @@ test('only the latest keepJobs finished jobs are remembered', async (t) => {
   assert.equal((await job(client, first)).status, 404);
   assert.equal((await job(client, second)).status, 200);
 });
+
+test('without uv only the librarian routes are 503; state, files and projects keep working', async (t) => {
+  const h = tempHoard(t);
+  mkdirSync(path.join(h.repo, 'projects'));
+  writeFileSync(path.join(h.repo, 'projects', 'sample-hub.md'), 'hub');
+  const { client, lines } = await startServer(t, h, { hoardTools: { uv: { command: path.join(h.root, 'definitely', 'not-uv') } } });
+  assert.ok(lines.some((l) => l.msg === 'hoard.uv.probe' && l.available === false), 'the probe result was logged');
+
+  const refused = await post(client, 'lint');
+  assert.deepEqual([refused.status, refused.json.code], [503, 'tool_unavailable']);
+  assert.match(refused.json.message, /uv was not found on the host/);
+
+  assert.equal((await client.call('GET', '/v1/state')).status, 200);
+  assert.equal((await client.put('a.html', 'x', { 'If-None-Match': '*' })).status, 200);
+  assert.equal((await client.get('a.html')).body.toString(), 'x');
+  assert.deepEqual((await client.call('GET', '/v1/hoard/projects')).json, { projects: [{ name: 'sample-hub' }] });
+});
+
+test('a request while uv is missing probes again, so installing uv needs no restart', async (t) => {
+  const fake = fakeUv(t, { installed: false });
+  const { client } = await startServer(t, tempHoard(t), { hoardTools: { uv: fake.uv } });
+  const down = await post(client, 'lint');
+  assert.deepEqual([down.status, down.json.code], [503, 'tool_unavailable'], 'uv was still missing');
+  fake.install();
+  const up = await post(client, 'lint');
+  assert.equal(up.status, 202);
+  assert.equal((await finished(client, up.json.id)).json.state, 'done');
+});
+
+test('without configured tools the hoard routes are 503', async (t) => {
+  const { client } = await startServer(t, tempHoard(t));
+  const r = await client.call('GET', '/v1/hoard/projects');
+  assert.deepEqual([r.status, r.json.code, r.json.message], [503, 'tool_unavailable', 'hoard tools are not configured']);
+  assert.equal((await client.call('GET', '/v1/state')).status, 200);
+});
+
+test('close kills a running job and waits for it', async (t) => {
+  const fake = fakeUv(t);
+  const { client, tools } = await startServer(t, tempHoard(t), { hoardTools: { uv: fake.uv } });
+  fake.hold();
+  const id = (await post(client, 'lint')).json.id;
+  assert.equal((await job(client, id)).json.state, 'running');
+  await tools?.close();
+  const after = (await job(client, id)).json;
+  assert.deepEqual([after.state, after.exitCode], ['failed', null]);
+});
