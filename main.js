@@ -548,9 +548,8 @@ ipcMain.handle('chapter:write', async (_e, bookId, chapterId, html, expected) =>
   return out;
 });
 ipcMain.handle('chapter:delete', (_e, bookId, chapterId) => libraryStore().deleteChapter(bookId, chapterId));
-// A page the book has never had still answers '' here: the window keeps what it read as the
-// base its next save is checked against (aux:write), and takes null for words that are not
-// there. The store tells the two apart, and the window will once it handles the difference.
+// A page the book has never had answers null, not '': the window shows it empty and saves
+// it against a base of '' (aux:write), so a page another device made meanwhile is kept.
 ipcMain.handle('aux:read', (_e, bookId, name) => libraryStore().readAux(bookId, name)); // null: no page yet
 ipcMain.handle('aux:write', async (_e, bookId, name, html, expected) => {
   const out = await libraryStore().writeAux(bookId, name, html, expected);
