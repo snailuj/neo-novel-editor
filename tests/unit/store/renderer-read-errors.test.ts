@@ -15,7 +15,7 @@ import { createFsStore, StoreError, type FsStore } from '../../../src/store/inde
 //   - a page the book has never had reads as null, and is saved against ''.
 // The window's own code runs here, in a vm, against a real store on a temp library.
 
-type Anything = any; // eslint-disable-line @typescript-eslint/no-explicit-any
+type Anything = any;
 const root = path.join(import.meta.dirname, '..', '..', '..');
 const read = (file: string) => fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
 const core = read('app/core.js');
@@ -148,7 +148,7 @@ test('a chapter of the open book that has no file yet is left as it is, and the 
   assert.equal(w.run('chapterHTML.b'), '<p>two, written on the other device</p>', 'b was taken in: one missing file did not stop the look');
   assert.equal(w.run('chapterHTML.fresh'), '', 'the chapter with no file is as it was');
   assert.equal(w.run('savedHTML.fresh'), '');
-  assert.deepEqual(w.writes, [], 'and nothing was written');
+  assert.equal(w.writes.length, 0, 'and nothing was written');
   assert.deepEqual(w.logged, [], 'a chapter that is not written yet is not an error to log');
 });
 
@@ -165,7 +165,7 @@ test('a chapter that cannot be read is left as it is, the others are still looke
   assert.equal(w.run('chapterHTML.b'), '<p>two, written on the other device</p>');
   assert.equal(w.run('chapterHTML.a'), '<p>one</p>', 'the words on the page stay');
   assert.equal(w.run('savedHTML.a'), '<p>one</p>');
-  assert.deepEqual(w.writes, []);
+  assert.equal(w.writes.length, 0);
   assert.equal(w.logged.filter((m) => /unreadable/.test(m)).length, 1, 'logged');
   await w.run('refreshFromDisk()');
   assert.equal(w.logged.filter((m) => /unreadable/.test(m)).length, 1, 'but once');
@@ -179,7 +179,7 @@ test('a chapter in iCloud that never arrives is left as it is too', async () => 
   w.neo.readChapter = async () => { throw new Error("Error invoking remote method 'chapter:read': StoreError: [store:cloud_only] still in iCloud"); };
   await w.run('refreshFromDisk()');
   assert.equal(w.run('chapterHTML.a'), '<p>one</p>');
-  assert.deepEqual(w.writes, []);
+  assert.equal(w.writes.length, 0);
 });
 
 test('a chapter another device\'s book.json lists, not yet synced here, comes in empty with a base of \'\', so what arrives later is kept, not replaced', async () => {
@@ -196,7 +196,7 @@ test('a chapter another device\'s book.json lists, not yet synced here, comes in
   assert.deepEqual(w.plain('[...book.chapterOrder]'), ['a', 'new-there'], 'the chapter is in the book');
   assert.equal(w.run('chapterHTML["new-there"]'), '', 'empty for now');
   assert.equal(w.run(`diskKnown[${JSON.stringify(book.id + '/new-there')}]`), '', 'its base is \'\': the disk was seen to hold nothing');
-  assert.deepEqual(w.writes, [], 'and nothing is written for it');
+  assert.equal(w.writes.length, 0, 'and nothing is written for it');
   // its words arrive from the other device, while this window has typed into the chapter
   fs.writeFileSync(path.join(h.dir, book.id, 'chapters', 'new-there.html'), '<p>written over there</p>');
   w.run('chapterHTML["new-there"] = "<p>typed here</p>"');
@@ -220,7 +220,7 @@ test('a chapter that arrives later, with nothing typed in the meantime, is taken
   fs.writeFileSync(path.join(h.dir, book.id, 'chapters', 'new-there.html'), '<p>written over there</p>');
   await w.run('refreshFromDisk()');
   assert.equal(w.run('chapterHTML["new-there"]'), '<p>written over there</p>');
-  assert.deepEqual(w.writes, []);
+  assert.equal(w.writes.length, 0);
 });
 
 test('readNewChapter: a chapter with no file reads as empty; any other failure is the caller\'s, never turned into empty', async () => {
@@ -241,7 +241,7 @@ test('opening a book whose chapter cannot be read does not open it: no chapter i
   await assert.rejects(w.run(`openBook(${JSON.stringify(book.id)})`), /\[store:not_found\]/);
   assert.equal(w.run('book'), null, 'nothing was opened');
   assert.deepEqual(w.plain('chapterHTML'), {});
-  assert.deepEqual(w.writes, []);
+  assert.equal(w.writes.length, 0);
 });
 
 test('a notes page the book has never had reads as no text, and is saved against \'\', so a page made on the other device meanwhile is kept', async () => {

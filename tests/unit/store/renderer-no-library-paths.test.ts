@@ -64,9 +64,9 @@ test('the old coverUrl, which joined a book and a file onto the library path as 
 
 test('a join onto the library path in any renderer file, and a comment that only mentions it, are told apart', () => {
   assert.equal(violations('app/x.js', "const f = path.join(window.libraryPath, 'book.json');").length, 1);
-  assert.equal(violations('app/x.js', "const u = `file:///${a}`;").length, 1);
+  assert.equal(violations('app/x.js', 'const u = `file:///$' + '{a}`;').length, 1);
   assert.deepEqual(violations('app/x.js', '// libraryDirPath was a file:// URL once'), []);
-  assert.deepEqual(violations('app/x.js', 'const coverUrl = (meta) => `data:${meta.mime};base64,${meta.base64}`;'), []);
+  assert.deepEqual(violations('app/x.js', 'const coverUrl = (meta) => `data:$' + '{meta.mime};base64,$' + '{meta.base64}`;'), []);
 });
 
 test('no file of the window or the plugin host builds a file:// URL or names the library folder, beyond the list above', () => {

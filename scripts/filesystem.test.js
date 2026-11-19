@@ -161,7 +161,7 @@ describe('filesystem', { concurrency: 1 }, () => {
       assert.equal(fs.readFileSync(file, 'utf8'), JSON.stringify(data, null, 2));
       assert.equal(JSON.stringify(await main.call('json:read', book.id, 'darlings', null)), JSON.stringify(data));
       assert.equal(await main.call('json:read', book.id, 'no-such-sidecar', 'fallback'), 'fallback');
-      assert.equal(await main.call('aux:read', book.id, 'no-such-page'), '');
+      assert.equal(await main.call('aux:read', book.id, 'no-such-page'), null, 'no page yet is null, which the window reads as an empty page');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
