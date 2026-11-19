@@ -622,6 +622,16 @@ export function createFsStore(options: FsStoreOptions): FsStore {
       });
     },
 
+    async writeExport(name, data) {
+      const base = libName(name);
+      const dir = path.join(root, 'Exports');
+      fs.mkdirSync(dir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const file = path.join(dir, `${base}-${stamp}.pdf`);
+      fs.writeFileSync(file, data);
+      return file;
+    },
+
     async hasBook(bookId) {
       return fs.existsSync(bookDir(bookId));
     },

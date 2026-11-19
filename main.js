@@ -1369,11 +1369,7 @@ ipcMain.handle('print:manuscript', async (_e, { html, paper, defaultName }) => {
 // to your email — an outside-the-machine paper trail for provenance.
 ipcMain.handle('email:draft', async (_e, { to, subject, body, html, defaultName, method, print }) => {
   const { shell } = require('electron');
-  const exportsDir = path.join(LIBRARY_DIR, 'Exports');
-  if (!fs.existsSync(exportsDir)) fs.mkdirSync(exportsDir, { recursive: true });
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const file = path.join(exportsDir, `${defaultName}-${stamp}.pdf`);
-  fs.writeFileSync(file, await renderPDF(html, print));
+  const file = await libraryStore().writeExport(defaultName, await renderPDF(html, print));
 
   if (method === 'gmail') {
     // Gmail compose in the browser can't take an attachment from outside,

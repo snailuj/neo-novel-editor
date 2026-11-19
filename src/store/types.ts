@@ -131,6 +131,8 @@ export interface LibraryStore {
   /** A cover or painting by name; null when it is not there, not an image name, or still in iCloud. */
   readCover(bookId: string, name: string): Promise<CoverImage | null>;
   hasBook(bookId: string): Promise<boolean>;
+  /** A PDF into the library's Exports/ folder as `<name>-<time>.pdf`; the file it made. Throws bad_name for a name that is a path. */
+  writeExport(name: string, data: Uint8Array): Promise<string>;
   /**
    * One zip of the whole library for the day, in Backups/, keeping the last 14. It is made in a
    * process of its own (backup-worker.js), which leaves out and names any file that is not
