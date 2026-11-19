@@ -23,7 +23,7 @@ const localRequire = createRequire(path.join(root, 'main.js'));
 // seen, and one missing from the list that opens a library file is a failure.
 const pendingChannels: string[] = [
   'library:pocket', 'library:usePocket', // folder choice, move, Pocket
-  'cover:pick', 'cover:set', 'cover:remove', 'cover:read', 'cover:paint', // covers and art
+  'cover:pick', 'cover:paint', // covers and art
   'email:draft', // the draft goes into Exports/
   'log:error', // the library's error log
 ];
@@ -31,7 +31,7 @@ const pendingChannels: string[] = [
 const NAMES = ['library:read', 'library:write', 'library:listBooks', 'book:create', 'book:duplicate', 'book:readMeta',
   'book:writeMeta', 'chapter:stamps', 'chapter:read', 'chapter:write', 'chapter:delete', 'aux:read', 'aux:write',
   'snapshot:list', 'snapshot:read', 'snapshot:write', 'snapshot:remove', 'json:read', 'json:write', 'book:delete',
-  'spell:setLanguage'];
+  'spell:setLanguage', 'cover:set', 'cover:read', 'cover:remove'];
 
 type Seen = { fn: string; path: string };
 
@@ -160,6 +160,11 @@ test('every channel that has moved behind the store reaches the library only thr
     await main.call('library:write', lib);
     await main.call('library:listBooks');
     const copy = await main.call('book:duplicate', book.id, 'Guard copy');
+    const image = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'neo-guard-img-')), 'cover.png');
+    fs.writeFileSync(image, 'png');
+    const cover = await main.call('cover:set', book.id, image);
+    assert.equal((await main.call('cover:read', book.id, cover)).mime, 'image/png');
+    assert.equal(await main.call('cover:remove', book.id), true);
     await main.call('snapshot:remove', book.id, snap);
     await main.call('chapter:delete', book.id, 'c1');
     assert.equal(await main.call('book:delete', copy.id, 'Guard copy'), true);

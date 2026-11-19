@@ -41,6 +41,13 @@ export interface BookSummary {
   kind: string;
 }
 
+/** An image of a book, as the window shows it: base64 with its type. */
+export interface CoverImage {
+  base64: string;
+  mime: string;
+  ext: string;
+}
+
 export interface SnapshotListing {
   name: string;
   files: string[];
@@ -82,6 +89,12 @@ export interface LibraryStore {
 
   readJSON(bookId: string, name: string, fallback: Json): Promise<Json>;
   writeJSON(bookId: string, name: string, data: Json): Promise<true>;
+
+  /** Copies the picked image in as the book's cover and removes the older ones; its name, or null for a file that is not an image or a book that is not there. */
+  setCover(bookId: string, sourcePath: string): Promise<string | null>;
+  removeCover(bookId: string): Promise<true>;
+  /** A cover or painting by name; null when it is not there, not an image name, or still in iCloud. */
+  readCover(bookId: string, name: string): Promise<CoverImage | null>;
 }
 
 /** The two things only Electron's shell can do with a book folder. */

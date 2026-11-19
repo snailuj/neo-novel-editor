@@ -788,51 +788,9 @@ ipcMain.handle('cover:pick', async () => {
   return canceled || !filePaths.length ? null : filePaths[0];
 });
 
-function clearCovers(dir) {
-  for (const f of fs.readdirSync(dir)) {
-    if (/^cover-\d+\./.test(f)) fs.unlinkSync(path.join(dir, f));
-  }
-}
-
-ipcMain.handle('cover:set', (_e, bookId, srcPath) => {
-  const ext = path.extname(srcPath).toLowerCase().replace('.', '');
-  if (!COVER_EXTS.includes(ext)) return null;
-  const dir = bookDir(bookId);
-  if (!fs.existsSync(dir)) return null;
-  // the new cover is copied in before the old ones go (the picked file may
-  // be one of them)
-  const fname = 'cover-' + Date.now() + '.' + (ext === 'jpeg' ? 'jpg' : ext);
-  fs.copyFileSync(srcPath, path.join(dir, fname));
-  for (const f of fs.readdirSync(dir)) {
-    if (/^cover-\d+\./.test(f) && f !== fname) fs.unlinkSync(path.join(dir, f));
-  }
-  return fname;
-});
-
-ipcMain.handle('cover:remove', (_e, bookId) => {
-  const dir = bookDir(bookId);
-  if (fs.existsSync(dir)) clearCovers(dir);
-  return true;
-});
-
-ipcMain.handle('cover:read', (_e, bookId, fname) => {
-  let fp;
-  try {
-    if (!/^(cover|art)-\d+\.(png|jpg|webp)$/.test(fname)) return null;
-    fp = path.join(bookDir(bookId), fname);
-  } catch { return null; }
-  return afterLocal([fp], () => readCover(fp, fname), () => null);
-});
-function readCover(fp, fname) {
-  try {
-    const buf = fs.readFileSync(fp);
-    const ext = path.extname(fname).slice(1);
-    const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
-    return { base64: buf.toString('base64'), mime, ext };
-  } catch {
-    return null;
-  }
-}
+ipcMain.handle('cover:set', (_e, bookId, srcPath) => libraryStore().setCover(bookId, srcPath));
+ipcMain.handle('cover:remove', (_e, bookId) => libraryStore().removeCover(bookId));
+ipcMain.handle('cover:read', (_e, bookId, fname) => libraryStore().readCover(bookId, fname));
 
 // ---------------------------------------------------------------------------
 // Painted covers: once a story passes a thousand words, NEO reads it and

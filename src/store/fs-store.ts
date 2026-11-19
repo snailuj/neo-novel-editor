@@ -7,6 +7,7 @@ import {
   StoreError,
   type BookMeta,
   type BookSummary,
+  type CoverImage,
   type LibraryRecord,
   type LibraryStore,
   type Log,
@@ -262,6 +263,15 @@ export function createFsStore(options: FsStoreOptions): FsStore {
     if (!/^[\w-][\w.-]*\.(html|json)$/.test(libName(file))) throw new StoreError('bad_name', 'Invalid snapshot file');
     return path.join(snapshotDir(bookId, name), file);
   }
+  const COVER_EXTS = ['png', 'jpg', 'jpeg', 'webp'];
+  const COVER_NAME = /^(cover|art)-\d+\.(png|jpg|webp)$/;
+  const MIME: Record<string, string> = { png: 'image/png', webp: 'image/webp', jpg: 'image/jpeg' };
+
+  // Files of the book folder that match `pattern`, except `keep`
+  function removeMatching(dir: string, pattern: RegExp, keep?: string): void {
+    for (const f of fs.readdirSync(dir)) if (pattern.test(f) && f !== keep) fs.unlinkSync(path.join(dir, f));
+  }
+
   const sidecar = (bookId: string, name: string) => path.join(bookDir(bookId), libName(name) + '.json');
 
   return {
@@ -519,6 +529,43 @@ export function createFsStore(options: FsStoreOptions): FsStore {
     async writeJSON(bookId, name, data) {
       writeJSON(sidecar(bookId, name), data);
       return true;
+    },
+
+    // The new cover is copied in before the old ones go (the picked file may be one of
+    // them, and a copy that fails leaves the book with the cover it had). Timestamped names
+    // sidestep every caching gremlin.
+    async setCover(bookId, sourcePath) {
+      const ext = path.extname(sourcePath).toLowerCase().replace('.', '');
+      if (!COVER_EXTS.includes(ext)) return null;
+      const dir = bookDir(bookId);
+      if (!fs.existsSync(dir)) return null;
+      const name = 'cover-' + Date.now() + '.' + (ext === 'jpeg' ? 'jpg' : ext);
+      fs.copyFileSync(sourcePath, path.join(dir, name));
+      removeMatching(dir, /^cover-\d+\./, name);
+      return name;
+    },
+
+    async removeCover(bookId) {
+      const dir = bookDir(bookId);
+      if (fs.existsSync(dir)) removeMatching(dir, /^cover-\d+\./);
+      return true;
+    },
+
+    // A cover is decoration: whatever stops it being read (not there, a bad name, still in
+    // iCloud) is "no cover", never an error for the shelf to survive.
+    async readCover(bookId, name) {
+      let file: string;
+      try {
+        if (!COVER_NAME.test(name)) return null;
+        file = path.join(bookDir(bookId), name);
+      } catch { return null; }
+      const read = (): CoverImage | null => {
+        try {
+          const ext = path.extname(name).slice(1);
+          return { base64: fs.readFileSync(file).toString('base64'), mime: MIME[ext] ?? MIME.jpg, ext };
+        } catch { return null; }
+      };
+      return icloud.afterLocal([file], read, () => null);
     },
   };
 }
