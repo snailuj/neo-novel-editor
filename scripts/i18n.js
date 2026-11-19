@@ -17,7 +17,9 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const JS_FILES = [...require('./app-files').APP_FILES, 'main.js', 'covers.js', 'pocket/www/pocket-bridge.js', 'pocket/www/index.html'];
+// src/store/ holds the strings main.js shows for the library (the catalog, a new book, the first shelf)
+const STORE_FILES = fs.readdirSync(path.join(__dirname, '..', 'src', 'store')).filter((f) => f.endsWith('.ts')).map((f) => 'src/store/' + f);
+const JS_FILES = [...require('./app-files').APP_FILES, 'main.js', 'covers.js', ...STORE_FILES, 'pocket/www/pocket-bridge.js', 'pocket/www/index.html'];
 const HTML_FILES = ['index.html', 'pocket/www/index.html'];
 const LOCALES = path.join(ROOT, 'locales');
 
@@ -62,8 +64,9 @@ function collect() {
 
 const readLocale = (code) => JSON.parse(fs.readFileSync(path.join(LOCALES, code + '.json'), 'utf8'));
 
-const [cmd, code] = process.argv.slice(2);
-const keys = collect();
+module.exports = { collect };
+const [cmd, code] = require.main === module ? process.argv.slice(2) : [];
+const keys = require.main === module ? collect() : new Map();
 
 if (cmd === 'template') {
   const out = { _meta: { name: 'Language name in that language', translators: [] } };
@@ -95,6 +98,6 @@ if (cmd === 'template') {
   if (broken.length) console.log('\nPlaceholders differ from the English:\n  ' + broken.join('\n  '));
   if (unused.length) console.log('\nNo longer used:\n  ' + unused.join('\n  '));
   process.exitCode = missing.length || broken.length ? 1 : 0;
-} else {
+} else if (require.main === module) {
   console.log('usage: node scripts/i18n.js template | check <code>');
 }
