@@ -1,10 +1,10 @@
 // The library tree: the only module that writes library files. It owns the path-to-version
 // index and the seq, and one queue serialises every write, so the HTTP handlers and any
 // later server code that go through it cannot disagree about either.
-import { mkdir, readFile, readdir } from 'node:fs/promises';
+import { access, mkdir, readFile, readdir, rmdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { ApiError } from './errors.ts';
-import { writeFileDurable } from './durable.ts';
+import { renameRetrying, writeFileDurable } from './durable.ts';
 import { createRepoGit } from './git.ts';
 import type { Log } from './log.ts';
 import { checkPath, foldKey, TEMP_PREFIX } from './paths.ts';
@@ -20,6 +20,8 @@ export interface Tree {
   changes(since: number, limit: number): { seq: number; changes: Change[]; more: boolean };
   read(p: string): Promise<{ bytes: Buffer; version: string }>;
   put(p: string, bytes: Buffer, pre: Preconditions): Promise<{ version: string; seq: number }>;
+  remove(p: string, ifMatch: string | undefined): Promise<{ seq: number }>;
+  move(from: string, to: string, ifMatch: string | undefined): Promise<{ version: string; seq: number }>;
   /** Waits for queued writes to finish. */
   close(): Promise<void>;
 }
@@ -79,6 +81,19 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
   function setEntry(p: string, version: string | null, at: number): void {
     index.set(p, { version, seq: at });
     if (version === null) folds.delete(p); else folds.set(p, foldKey(p));
+  }
+  /** Removes the folders `p` sat in that are now empty, up to the library root. */
+  async function pruneEmptyParents(p: string): Promise<void> {
+    for (let dir = path.posix.dirname(p); dir !== '.'; dir = path.posix.dirname(dir)) {
+      try {
+        await rmdir(onDisk(dir));
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT') continue;
+        if (code !== 'ENOTEMPTY' && code !== 'EEXIST') log('warn', 'prune.failed', { dir, code });
+        return;
+      }
+    }
   }
   const persist = () => saveState(stateDir, { format: 1, seq, entries: Object.fromEntries(index) });
 
@@ -195,6 +210,70 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
         setEntry(p, version, seq);
         await persist();
         log('info', 'put', { path: p, version, seqBefore: before, seqAfter: seq });
+        return { version, seq };
+      });
+    },
+
+    async remove(p, ifMatch) {
+      checkPath(p);
+      return enqueue([p], async () => {
+        const entry = index.get(p);
+        if (entry === undefined) throw notFound(p);
+        if (entry.version === null) return { seq };
+        if (ifMatch === undefined) throw needsPrecondition();
+        if (ifMatch !== entry.version) throw stale(entry.version);
+        try {
+          await unlink(onDisk(p));
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+          log('warn', 'remove.missing_on_disk', { path: p, version: entry.version });
+        }
+        await pruneEmptyParents(p);
+        const before = seq;
+        seq += 1;
+        setEntry(p, null, seq);
+        await persist();
+        log('info', 'remove', { path: p, version: entry.version, seqBefore: before, seqAfter: seq });
+        return { seq };
+      });
+    },
+
+    async move(from, to, ifMatch) {
+      checkPath(from);
+      checkPath(to);
+      if (from === to) throw new ApiError('bad_move', 400, 'from and to are the same path');
+      return enqueue([from, to], async () => {
+        const version = index.get(from)?.version ?? null;
+        const target = index.get(to)?.version ?? null;
+        if (version === null) {
+          if (target !== null && target === ifMatch) return { version: target, seq };
+          throw notFound(from);
+        }
+        if (ifMatch === undefined) throw needsPrecondition();
+        if (ifMatch !== version) throw stale(version);
+        if (target !== null) throw new ApiError('exists', 409, `${to} already exists`, { version: target });
+        const clash = conflict(to, from);
+        if (clash) throw clash;
+        const caseOnly = foldKey(from) === foldKey(to);
+        if (!caseOnly && await access(onDisk(to)).then(() => true, () => false)) {
+          log('warn', 'move.untracked_target', { from, to });
+          throw new ApiError('exists', 409, `${to} exists on disk`);
+        }
+        await mkdir(path.dirname(onDisk(to)), { recursive: true });
+        try {
+          await renameRetrying(onDisk(from), onDisk(to));
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+          log('warn', 'move.missing_on_disk', { path: from, version });
+          throw notFound(from);
+        }
+        await pruneEmptyParents(from);
+        const before = seq;
+        seq += 1;
+        setEntry(from, null, seq);
+        setEntry(to, version, seq);
+        await persist();
+        log('info', 'move', { from, to, version, seqBefore: before, seqAfter: seq });
         return { version, seq };
       });
     },

@@ -1,6 +1,8 @@
 // A temporary hoard repo and state folder for the server's tests, and a log that keeps its lines.
+import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
+import { ApiError } from '../../../server/errors.ts';
 import { openTree, type Tree } from '../../../server/tree.ts';
 import { isolateGitConfig, tempDir } from '../git-support.ts';
 
@@ -27,4 +29,13 @@ export function tempHoard(t: Cleanup, library = 'library'): Hoard {
 export async function openTestTree(hoard: Hoard, log = captureLog()): Promise<{ tree: Tree; lines: LogLine[] }> {
   const tree = await openTree({ repo: hoard.repo, library: hoard.library, state: hoard.state, log: log.log });
   return { tree, lines: log.lines };
+}
+
+/** Asserts that `p` rejects with an ApiError of this code and status, and returns it. */
+export async function refused(p: Promise<unknown>, code: string, status: number): Promise<ApiError> {
+  const e = await p.then(() => assert.fail('accepted'), (err: unknown) => err);
+  assert.ok(e instanceof ApiError, String(e));
+  assert.equal(e.code, code);
+  assert.equal(e.status, status);
+  return e;
 }

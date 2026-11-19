@@ -6,18 +6,9 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { ApiError } from '../../../server/errors.ts';
-import { openTestTree, tempHoard } from './hoard.ts';
+import { openTestTree, refused, tempHoard } from './hoard.ts';
 
 const blob = (repo: string, text: string) => execFileSync('git', ['hash-object', '--no-filters', '--stdin'], { cwd: repo, input: text }).toString().trim();
-
-export async function refused(p: Promise<unknown>, code: string, status: number): Promise<ApiError> {
-  const e = await p.then(() => assert.fail('accepted'), (err: unknown) => err);
-  assert.ok(e instanceof ApiError, String(e));
-  assert.equal(e.code, code);
-  assert.equal(e.status, status);
-  return e;
-}
 
 const NEW = { ifNoneMatch: '*' } as const;
 
