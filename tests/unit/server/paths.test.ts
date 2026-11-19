@@ -33,6 +33,11 @@ const refused: Array<[string, string]> = [
   ['reserved with extension', 'wiki/nul.html'],
   ['reserved mixed case', 'book-1/Com3.txt'],
   ['reserved lpt9 directory', 'lpt9/place.html'],
+  ['8.3 short name', 'book-1/CHAPTE~1.HTM'],
+  ['8.3 short name in a folder', 'BOOK-1~2/one.html'],
+  ['reserved CONIN$', 'wiki/CONIN$'],
+  ['reserved CONOUT$ with extension', 'wiki/conout$.html'],
+  ['segment over 255 UTF-16 units', `wiki/${'a'.repeat(252)}.html`],
   ['temp prefix', `wiki/${TEMP_PREFIX}1234`],
 ];
 
@@ -45,7 +50,7 @@ for (const [why, p] of refused) {
 test('checkPath accepts ordinary library paths and returns them unchanged', () => {
   for (const p of [
     'library.json', 'book-1/chapters/one.html', 'wiki/place.html', '.neo/marks/one.json',
-    'wiki/Café au lait.html', 'wiki/console.html', 'wiki/conx/y.html', 'a.b.c/d.e',
+    'wiki/Café au lait.html', 'wiki/console.html', 'wiki/conx/y.html', 'a.b.c/d.e', `wiki/${'a'.repeat(250)}.html`, 'wiki/\ud83d\ude00.html',
   ]) assert.equal(checkPath(p), p);
 });
 
@@ -53,4 +58,9 @@ test('foldKey makes paths that differ only by case or Unicode form equal', () =>
   assert.equal(foldKey('Wiki/Place.html'), foldKey('wiki/place.HTML'));
   assert.equal(foldKey('wiki/café.html'), foldKey('wiki/café.html'));
   assert.notEqual(foldKey('wiki/a.html'), foldKey('wiki/b.html'));
+});
+
+test('foldKey folds the Unicode case pairs a Windows or macOS disk treats as equal', () => {
+  assert.equal(foldKey('wiki/\u0131.html'), foldKey('wiki/i.html'));
+  assert.equal(foldKey('wiki/\u017f.html'), foldKey('wiki/s.html'));
 });
