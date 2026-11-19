@@ -1387,6 +1387,8 @@ function bookTile(meta, opts = {}) {
 // words go to disk first, so the copy has them.
 async function duplicateBook(meta) {
   if (book && book.id === meta.id) {
+    // a chapter not loaded here would be copied empty, and its save throws
+    if (refuseNotLoaded(book.chapterOrder)) return;
     await Promise.all(book.chapterOrder.filter((c) => chapterHTML[c] !== undefined && chapterHTML[c] !== savedHTML[c]).map((c) => persistChapter(c)));
     flushAllSaves();
     await saveMeta();
