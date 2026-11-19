@@ -1,6 +1,7 @@
 // A temporary hoard repo and state folder for the server's tests, and a log that keeps its lines.
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
+import { openTree, type Tree } from '../../../server/tree.ts';
 import { isolateGitConfig, tempDir } from '../git-support.ts';
 
 interface Cleanup { after(fn: () => void): void }
@@ -21,4 +22,9 @@ export function tempHoard(t: Cleanup, library = 'library'): Hoard {
   const repo = path.join(root, 'repo');
   execFileSync('git', ['init', '-q', repo]);
   return { repo, state: path.join(root, 'state'), library, root };
+}
+
+export async function openTestTree(hoard: Hoard, log = captureLog()): Promise<{ tree: Tree; lines: LogLine[] }> {
+  const tree = await openTree({ repo: hoard.repo, library: hoard.library, state: hoard.state, log: log.log });
+  return { tree, lines: log.lines };
 }
