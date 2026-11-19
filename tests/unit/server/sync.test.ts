@@ -236,3 +236,13 @@ test('a tracked file with changes outside the library stops the pull with an err
   assert.equal((await l.sync.runOnce()).state, 'ok');
   assert.equal(readFileSync(lib(h, 'wiki/theirs.html'), 'utf8'), 'theirs');
 });
+
+test('a rename another clone pushed is raised as the old path gone and the new one live, with the same version', async (t) => {
+  const h = syncHoard(t);
+  const l = await openWithHistory(t, h, SYNC);
+  const { version } = await l.tree.read('wiki/shared.html');
+  const seq = (await l.tree.state()).seq;
+  pushFrom(h.other, { 'library/wiki/shared.html': null, 'library/places/shared.html': 'shared v1' });
+  assert.equal((await l.sync.runOnce()).state, 'ok');
+  assert.deepEqual(l.tree.changes(seq, 500).changes, [{ path: 'wiki/shared.html', version: null }, { path: 'places/shared.html', version }]);
+});

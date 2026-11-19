@@ -17,10 +17,17 @@ export interface TreeOptions {
   syncDir?: SyncDir;
   /** Reads a library file; a test interleaves a write with it. */
   readFile?: (file: string) => Promise<Buffer>;
+  /** Looks at the disk for rescan; a test folds case as NTFS and APFS do. */
+  disk?: Disk;
   /** Called after every accepted put, delete and move, and once for the changes reconcile found, with the writing device. */
   onChange?: (device: string | undefined) => void;
   /** Fields added to the state reply; the history's last commit and sync result go here. */
   stateExtra?: () => Record<string, unknown>;
+}
+export interface Disk {
+  stat(file: string): Promise<{ isFile(): boolean }>;
+  /** The names in a folder, spelt as the disk stores them. */
+  readdir(dir: string): Promise<string[]>;
 }
 export interface Preconditions { ifMatch?: string; ifNoneMatch?: string; device?: string }
 
@@ -97,6 +104,7 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
   const sync = options.syncDir ?? makeSyncDir(log);
   const readBytes = options.readFile ?? ((file: string) => readFile(file));
   const onDisk = (p: string) => path.join(libraryDir, ...p.split('/'));
+  const disk: Disk = options.disk ?? { stat: (file) => stat(file), readdir: (dir) => readdir(dir) };
 
   await assertOutsideRepo(stateDir, repo);
   try {
@@ -219,9 +227,28 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
     for (const p of [...new Set(paths)].sort()) {
       try { wanted.push(checkPath(p)); } catch { log('warn', 'rescan.skip_bad_path', { path: p }); }
     }
+    // stat folds case on NTFS and APFS, so after a pulled case-only rename it would find the
+    // old name too and leave both live. Each part of the path must also be listed, spelt
+    // exactly so, by its folder. One listing per folder per rescan.
+    const listings = new Map<string, Promise<Set<string>>>();
+    const listed = (dir: string) => {
+      let names = listings.get(dir);
+      if (!names) {
+        names = disk.readdir(dir === '' ? libraryDir : onDisk(dir)).then((n) => new Set(n), () => new Set<string>());
+        listings.set(dir, names);
+      }
+      return names;
+    };
+    const exactly = async (p: string) => {
+      const parts = p.split('/');
+      for (let i = 0; i < parts.length; i += 1) {
+        if (!(await listed(parts.slice(0, i).join('/'))).has(parts[i])) return false;
+      }
+      return true;
+    };
     const present: string[] = [];
     for (const p of wanted) {
-      if (await stat(onDisk(p)).then((s) => s.isFile(), () => false)) present.push(p);
+      if (await disk.stat(onDisk(p)).then((s) => s.isFile(), () => false) && await exactly(p)) present.push(p);
     }
     const versions = new Map(present.map((p, i) => [p, i]));
     const hashed = await git.hashPaths(present.map(onDisk));

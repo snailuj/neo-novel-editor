@@ -3,10 +3,11 @@
 // ordinary change by rescan; and onChange fires for an accepted change and for nothing else.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { test } from 'node:test';
-import { openTree } from '../../../server/tree.ts';
+import { openTree, type Disk } from '../../../server/tree.ts';
 import { captureLog, openTestTree, refused, tempHoard } from './hoard.ts';
 
 const NEW = { ifNoneMatch: '*' } as const;
@@ -131,5 +132,54 @@ test('the state reply carries what stateExtra gives, without losing its own fiel
   assert.deepEqual(state.history, { lastCommit: null });
   assert.equal(state.library, 'library/');
   assert.equal(state.seq, 0);
+  await tree.close();
+});
+
+/** The disk of a case-insensitive file system: a name in any case finds the entry, and a folder lists names as stored. */
+function foldingDisk(): Disk {
+  const resolve = (file: string): string => {
+    const parts = path.resolve(file).split(path.sep);
+    let at = parts[0] + path.sep;
+    for (const part of parts.slice(1)) {
+      if (!part) continue;
+      let names: string[] = [];
+      try { names = readdirSync(at); } catch { /* left as written, so the real call fails */ }
+      at = path.join(at, names.find((n) => n === part) ?? names.find((n) => n.toLowerCase() === part.toLowerCase()) ?? part);
+    }
+    return at;
+  };
+  return { stat: (file) => stat(resolve(file)), readdir: (dir) => readdir(resolve(dir)) };
+}
+
+test('on a disk that folds case, rescan of a case-only rename made outside the tree leaves only the new name live', async (t) => {
+  const h = tempHoard(t);
+  const tree = await openTree({ repo: h.repo, library: 'library', state: h.state, log: captureLog().log, disk: foldingDisk() });
+  await tree.put('wiki/Place.html', Buffer.from('place'), NEW);
+  await tree.put('Notes/one.html', Buffer.from('one'), NEW);
+  const seq = (await tree.state()).seq;
+  renameSync(lib(h, 'wiki/Place.html'), lib(h, 'wiki/place.html'));
+  renameSync(lib(h, 'Notes'), lib(h, 'notes'));
+  assert.deepEqual(readdirSync(lib(h, 'wiki')), ['place.html'], 'the baseline: only the new name is on disk');
+
+  assert.equal(await tree.rescan(['wiki/Place.html', 'wiki/place.html', 'Notes/one.html', 'notes/one.html']), 4);
+  assert.deepEqual(Object.fromEntries(tree.changes(seq, 500).changes.map((c) => [c.path, c.version])), {
+    'wiki/Place.html': null, 'wiki/place.html': blob(h.repo, 'place'), 'Notes/one.html': null, 'notes/one.html': blob(h.repo, 'one'),
+  });
+  await assert.rejects(tree.read('wiki/Place.html'), /no such file/);
+  assert.equal((await tree.read('wiki/place.html')).bytes.toString(), 'place');
+  // With the old name gone, a new file under it is a create, not a case clash.
+  await tree.put('wiki/PLACE2.html', Buffer.from('2'), NEW);
+  await tree.close();
+});
+
+test('rescan of an ordinary rename made outside the tree raises the old path as gone and the new one with the same version', async (t) => {
+  const h = tempHoard(t);
+  const { tree } = await openTestTree(h);
+  const put = await tree.put('wiki/old.html', Buffer.from('same'), NEW);
+  const seq = (await tree.state()).seq;
+  mkdirSync(lib(h, 'moved'));
+  renameSync(lib(h, 'wiki/old.html'), lib(h, 'moved/new.html'));
+  assert.equal(await tree.rescan(['wiki/old.html', 'moved/new.html']), 2);
+  assert.deepEqual(tree.changes(seq, 500).changes, [{ path: 'wiki/old.html', version: null }, { path: 'moved/new.html', version: put.version }]);
   await tree.close();
 });
