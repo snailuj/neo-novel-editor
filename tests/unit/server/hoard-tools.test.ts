@@ -97,7 +97,7 @@ test('a librarian job answers 202 while the tool still runs, is polled to done, 
   assert.deepEqual([done.state, done.exitCode, done.signal, done.truncated, done.stderr], ['done', 0, null, false, 'fake stderr\n']);
   assert.equal(typeof done.ms, 'number');
   const seen = JSON.parse(done.stdout);
-  assert.deepEqual(seen.argv, ['run', '--project', '_meta/infra/tools', 'python', '_meta/infra/tools/librarian/cli.py', 'lint']);
+  assert.deepEqual(seen.argv, ['run', '--frozen', '--project', '_meta/infra/tools', 'python', '_meta/infra/tools/librarian/cli.py', 'lint']);
   assert.equal(seen.cwd, realpathSync(h.repo));
   assert.equal(seen.env.UV_PROJECT_ENVIRONMENT, path.join(h.state, 'hoard-venv'));
   assert.equal(seen.env.PYTHONDONTWRITEBYTECODE, '1');
@@ -299,4 +299,18 @@ test('a grandchild holding stdout does not keep a finished job running', async (
   assert.deepEqual([ended.state, ended.exitCode], ['done', 0]);
   assert.ok(ended.ms < 2000, `the job ended ${ended.ms} ms after it started, well before the grandchild exited`);
   assert.match(ended.stdout, /"argv"/, 'what was read before the grace ran out is kept');
+});
+
+test('a projects folder that is itself a link lists nothing, reads 404 and logs a warning', async (t) => {
+  const h = tempHoard(t);
+  const outside = path.join(h.root, 'outside');
+  mkdirSync(outside);
+  writeFileSync(path.join(outside, 'sample-hub.md'), 'hub');
+  try { symlinkSync(outside, path.join(h.repo, 'projects'), 'junction'); } catch { t.skip('this host refuses to make links'); return; }
+  const { client, lines } = await startServer(t, h, { hoardTools: { uv: fakeUv(t).uv } });
+  const list = await client.call('GET', '/v1/hoard/projects');
+  assert.deepEqual([list.status, list.json], [200, { projects: [] }]);
+  const got = await client.call('GET', '/v1/hoard/projects/sample-hub');
+  assert.deepEqual([got.status, got.json.code], [404, 'not_found']);
+  assert.ok(lines.some((l) => l.level === 'warn' && l.msg === 'hoard.projects.linked'));
 });

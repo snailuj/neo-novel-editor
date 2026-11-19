@@ -4,7 +4,7 @@
 // and bytecode redirected out of the tree.
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readdir, readFile } from 'node:fs/promises';
+import { lstat, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { ApiError } from './errors.ts';
 import { createRepoGit } from './git.ts';
@@ -71,6 +71,11 @@ export async function openHoardTools(options: HoardToolsOptions): Promise<HoardT
   async function pages(): Promise<{ name: string; file: string }[] | null> {
     let entries;
     try {
+      // A linked projects/ could point anywhere on the host, so it counts as absent.
+      if ((await lstat(projectsDir)).isSymbolicLink()) {
+        log('warn', 'hoard.projects.linked', { dir: projectsDir });
+        return null;
+      }
       entries = await readdir(projectsDir, { withFileTypes: true });
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
@@ -166,7 +171,8 @@ export async function openHoardTools(options: HoardToolsOptions): Promise<HoardT
       startedAt: new Date().toISOString(), endedAt: null, ms: null,
     };
     const env = { ...process.env, UV_PROJECT_ENVIRONMENT: path.join(state, 'hoard-venv'), PYTHONDONTWRITEBYTECODE: '1' };
-    const args = [...uv.args, 'run', '--project', '_meta/infra/tools', 'python', '_meta/infra/tools/librarian/cli.py', tool];
+    // --frozen: uv must never rewrite the tracked uv.lock in the clone.
+    const args = [...uv.args, 'run', '--frozen', '--project', '_meta/infra/tools', 'python', '_meta/infra/tools/librarian/cli.py', tool];
     const out: Buffer[][] = [[], []];
     const kept = [0, 0];
     const keep = (i: number) => (chunk: Buffer) => {
