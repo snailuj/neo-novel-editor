@@ -6,13 +6,21 @@
 
 let libraryDirPath = '';
 
-function coverUrl(meta) {
-  // Pocket serves the library through a URL; desktop hands a plain path
-  if (/^[a-z]+:\/\//.test(libraryDirPath)) {
-    return libraryDirPath + '/' + encodeURIComponent(meta.id) + '/' + encodeURIComponent(meta.coverImage);
-  }
-  const p = (libraryDirPath + '/' + meta.id + '/' + meta.coverImage).replace(/\\/g, '/');
-  return encodeURI('file://' + (p.startsWith('/') ? '' : '/') + p);
+// The writer's own cover image, as the main process reads it (cover:read): a data URL, so
+// the window never builds a path to a library file. Names carry the time they were set, so
+// a cover is never stale; a few dozen are kept, the oldest first out.
+const coverCache = new Map(); // bookId/file -> data URL
+const COVER_CACHE_MAX = 60;
+
+async function coverDataUrl(meta) {
+  const key = meta.id + '/' + meta.coverImage;
+  if (coverCache.has(key)) return coverCache.get(key);
+  const data = await window.neo.readCover(meta.id, meta.coverImage);
+  if (!data) return null;
+  const url = `data:${data.mime};base64,${data.base64}`;
+  coverCache.set(key, url);
+  if (coverCache.size > COVER_CACHE_MAX) coverCache.delete(coverCache.keys().next().value);
+  return url;
 }
 
 async function loadLibrary() {
@@ -1141,13 +1149,26 @@ function dressTile(el, meta) {
   if (isScript(meta)) return; // a script wears its card (scriptTile)
   el.classList.remove('has-cover');
   const mode = coverMode(meta);
+  const token = (el._dressToken = (el._dressToken || 0) + 1);
   if (mode === 'image') {
+    const wear = (url) => { el.style.background = `#1d1d1d url("${url}") center / cover no-repeat`; };
     el.classList.add('has-cover');
-    el.style.background = `#1d1d1d url("${coverUrl(meta)}") center / cover no-repeat`;
+    const key = meta.id + '/' + meta.coverImage;
+    if (coverCache.has(key)) { wear(coverCache.get(key)); return; }
+    // the tile shows its dark ground until the image is read; if it cannot be read (the file
+    // is gone, or still in iCloud) the abstract covers it, as it does a book with no image
+    el.style.background = '#1d1d1d';
+    coverDataUrl(meta).then((url) => {
+      if (el._dressToken !== token) return;
+      if (url) { wear(url); return; }
+      window.neo.logError('cover image could not be read: ' + key);
+      el.classList.remove('has-cover');
+      el.style.background = '';
+      NeoCovers.dress(el, NeoCovers.plan(meta));
+    }, (err) => window.neo.logError('cover image: ' + (err && err.stack || err)));
     return;
   }
   el.classList.toggle('cv-painting', !!(meta.coverArt && meta.coverArt.status === 'pending'));
-  const token = (el._dressToken = (el._dressToken || 0) + 1);
   // a painting already decoded is drawn straight away; otherwise the
   // abstract shows instantly and the painting replaces it once read.
   // The tile may not be on the page yet when the art arrives, so the only
