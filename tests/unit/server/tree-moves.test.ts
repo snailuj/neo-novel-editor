@@ -90,3 +90,17 @@ test('a move onto a path that folds to another live path is a case clash; a case
   assert.deepEqual(tree.changes(2, 10).changes.map((c) => c.path), ['wiki/A.html', 'wiki/a.html']);
   await tree.close();
 });
+
+test('a move is checked against its own source for folder-case and file-versus-folder clashes, never a 500', async (t) => {
+  const h = tempHoard(t);
+  const { tree } = await openTestTree(h);
+  const va = (await tree.put('wiki/a.html', Buffer.from('a'), NEW)).version;
+  await refused(tree.move('wiki/a.html', 'Wiki/a.html', va), 'case_clash', 409);
+  await refused(tree.move('wiki/a.html', 'Wiki/b.html', va), 'case_clash', 409);
+  await refused(tree.move('wiki/a.html', 'wiki/a.html/b.html', va), 'path_conflict', 409);
+  assert.equal(tree.currentSeq(), 1);
+  assert.deepEqual(await tree.move('wiki/a.html', 'wiki/A.html', va), { version: va, seq: 2 });
+  assert.deepEqual(await tree.move('wiki/A.html', 'wiki/sub/b.html', va), { version: va, seq: 3 });
+  assert.equal((await tree.read('wiki/sub/b.html')).bytes.toString(), 'a');
+  await tree.close();
+});

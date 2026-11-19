@@ -140,8 +140,8 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
     const dirFolds = dirs.map(foldKey);
     // O(live paths) per create; creates are rare next to updates and a library is thousands of files.
     for (const [q, fq] of folds) {
-      if (q === ignore) continue;
-      if (fq === f) return new ApiError('case_clash', 409, `${p} differs only by case from ${q}`, { path: q });
+      // The source of a move is exempt only from the exact-name clash, so a case-only rename works.
+      if (fq === f && q !== ignore) return new ApiError('case_clash', 409, `${p} differs only by case from ${q}`, { path: q });
       if (f.startsWith(`${fq}/`) || fq.startsWith(`${f}/`)) return new ApiError('path_conflict', 409, `${p} cannot be a file and a folder: ${q}`, { path: q });
       for (let d = 0; d < dirs.length; d += 1) {
         if (fq.startsWith(`${dirFolds[d]}/`) && !q.startsWith(`${dirs[d]}/`)) return new ApiError('case_clash', 409, `folder ${dirs[d]} differs only by case from the folder of ${q}`, { path: q });
