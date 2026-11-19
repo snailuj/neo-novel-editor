@@ -87,3 +87,8 @@ export async function isWorkTree(dir: string): Promise<boolean> {
     throw e;
   }
 }
+
+/** The top folder of the work tree `dir` is in. */
+export async function topLevel(dir: string): Promise<string> {
+  return (await ok(dir, ['rev-parse', '--show-toplevel'])).trim();
+}

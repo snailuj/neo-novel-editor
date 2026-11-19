@@ -4,7 +4,7 @@ import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { ApiError } from './errors.ts';
-import { isWorkTree } from './git.ts';
+import { isWorkTree, topLevel } from './git.ts';
 import { checkPath } from './paths.ts';
 import { assertOutsideRepo } from './state.ts';
 
@@ -17,7 +17,7 @@ export class ConfigError extends Error {
   }
 }
 
-const WILDCARD = /^\[?(::|::0|0(:0){7}|0\.0\.0\.0)\]?$|^$/;
+const WILDCARD = /^\[?(::|::0|0(:0){7}|0(\.0){0,3})\]?$|^$/;
 
 export async function parseConfig(argv: readonly string[], env: Record<string, string | undefined>): Promise<Config> {
   let flags;
@@ -56,7 +56,7 @@ export async function parseConfig(argv: readonly string[], env: Record<string, s
   if (!(await stat(repo).then((s) => s.isDirectory(), () => false))) throw new ConfigError(`repo ${repo} does not exist`);
   if (!(await isWorkTree(repo))) throw new ConfigError(`repo ${repo} is not a git work tree`);
   try {
-    await assertOutsideRepo(state, repo);
+    await assertOutsideRepo(state, await topLevel(repo));
   } catch (e) {
     throw new ConfigError((e as Error).message);
   }

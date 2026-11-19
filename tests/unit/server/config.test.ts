@@ -22,7 +22,7 @@ test('flags, environment and defaults combine, with flags winning over the envir
 
 test('a wildcard host is refused with a pointer to the tailnet address', async (t) => {
   const h = tempHoard(t);
-  for (const host of ['0.0.0.0', '::', '[::]', '0:0:0:0:0:0:0:0', '']) {
+  for (const host of ['0.0.0.0', '::', '[::]', '0:0:0:0:0:0:0:0', '0', '0.0', '']) {
     await refuses(parseConfig(['--host', host], { NEO_SERVER_REPO: h.repo, NEO_SERVER_STATE: h.state }), /tailnet/);
   }
 });
@@ -44,4 +44,12 @@ test('a missing repo, a folder that is not a git work tree, a bad port and a bad
   await refuses(parseConfig(['--port', '70000'], { NEO_SERVER_REPO: h.repo, NEO_SERVER_STATE: h.state }), /port/);
   await refuses(parseConfig(['--library', '../out'], { NEO_SERVER_REPO: h.repo, NEO_SERVER_STATE: h.state }), /library/);
   await refuses(parseConfig(['--nonsense'], { NEO_SERVER_REPO: h.repo, NEO_SERVER_STATE: h.state }), /nonsense/);
+});
+
+test('the state folder is compared with the top of the work tree, not with the --repo subfolder', async (t) => {
+  const h = tempHoard(t);
+  const sub = path.join(h.repo, 'sub');
+  mkdirSync(sub);
+  await refuses(parseConfig(['--repo', sub], { NEO_SERVER_STATE: path.join(h.repo, 'state') }), /inside the repo/);
+  assert.equal((await parseConfig(['--repo', sub], { NEO_SERVER_STATE: h.state })).repo, sub);
 });
