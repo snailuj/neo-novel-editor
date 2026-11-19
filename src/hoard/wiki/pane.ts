@@ -1,29 +1,46 @@
-// The wiki pane: a section of the right-hand pane, beside the book being written, where a
-// stored page (a file in the library's wiki/ or sources/ folder, its id such as
-// wiki/People/Ada.html) is shown without the writer leaving their place. Following a
-// [[link]] in the manuscript shows its page here and leaves the caret where it was
-// (wiki/window.ts); links on the page shown move the pane to their page; Back and Forward
-// (Alt+Left and Alt+Right in the pane) walk the trail. A link reaches a page by its title,
-// a wiki page before a source (pages/titles.ts), against the list read when the page is
-// drawn and read again when the link is followed. Above the page, the Pages tree
-// (wiki/pane-tree.ts) lists the stored pages to open, make, rename and move; the trail
-// follows a rename.
+// The page view: the stored page shown in the host's page column (API 6, split-column.js),
+// beside the book being written. A stored page is a file in the library's wiki/ or sources/
+// folder, its id such as wiki/People/Ada.html. Following a [[link]] in the manuscript shows its
+// page here, opens the column and leaves the caret where it was (wiki/window.ts); links on the
+// page shown move the column to their page; Back and Forward (Alt+Left and Alt+Right in the
+// column) walk the trail. A link reaches a page by its title, a wiki page before a source
+// (pages/titles.ts), against the list read when the page is drawn and read again when the link
+// is followed. The Pages tree (wiki/pane-tree.ts) lists the stored pages on a tab of the left
+// pane, to open, make, rename and move; the trail follows a rename.
 //
-// The pane reads a page through the main half, from its file, so it shows the page as last
+// The column reads a page through the main half, from its file, so it shows the page as last
 // saved, kept to its paragraphs, their wiki classes and NEO's inline formatting
 // (pageBlocks). A real link or image on the page is a locked chip in the text, kept as
-// written. The page is edited in place (wiki/pane-edit.ts), so before the pane shows
+// written. The page is edited in place (wiki/pane-edit.ts), so before the column shows
 // another page, or this one again, it waits for what was typed to be saved (beforeLeave).
-// It never takes the focus from the manuscript: only a click or a key inside the pane moves
-// the focus, and then it stays in the pane.
+// It never takes the focus from the manuscript: only a click or a key inside the column moves
+// the focus, and then it stays in the column.
+//
+// ---- State machine (ui-state-design) ------------------------------------------------------
+// split-view-design.md, "State machine", has the two tables: A, where the column sits, which
+// the host keeps (split-column.js), and B, the page in it. Built here from B: Empty (no stop in
+// the trail: the words and Show Pages), Opening (title kept until the read answers; a newer
+// request wins, by the counter asked), Reading, and Unsaved (pane-edit.ts saves 800 ms after
+// typing stops; going to a page waits for the save). A page that is gone says so in the
+// status line, as the pane did. Repeats: opening the page shown adds no stop; Ctrl+\ toggles
+// and reopens on the same page, which stays drawn while the column is closed; Close is gone
+// once pressed; Back at the start and Forward at the end are disabled. F2 and the page menu's
+// Rename and Move open the tree's one form under the page's row on the Pages tab (tree.ts,
+// table B), so one field is open at a time. Not built from B yet: Save failed with Save
+// again, Gone as read-only text, "Opening…" after 300 ms, and a scroll place per stop.
+import { titleOf } from '../pages/identity.ts';
 import { titleIndex } from '../pages/titles.ts';
+import { t } from '../say.ts';
 import { PageHistory } from './history.ts';
 import { linksIn } from './links.ts';
 import { startPagesTree } from './pane-tree.ts';
-import type { Listed } from './tree.ts';
+import { rowName, type Listed, type Row } from './tree.ts';
+
+// NEO's own small menu (app.js), a global of the window: resolves with the value chosen, or null
+declare function popMenu(x: number, y: number, items: ({ label: string; value: string; disabled?: boolean } | '-')[], o?: { from?: Element | null }): Promise<string | null>;
 
 interface StoredRead { id: string; title: string; html: string }
-/** The page shown, as the pane's editing and marks see it. */
+/** The page shown, as the column's editing and marks see it. */
 export interface ShownPage { id: string; title: string; html: string }
 interface Resolver { get(target: string): string | undefined }
 
@@ -40,7 +57,21 @@ const button = (className: string, text: string) => {
   return b;
 };
 
-// What the pane keeps of a page's HTML: the paragraphs with their wiki classes and
+// The toolbar's icons, drawn in currentColor; their buttons carry the names
+const ICON = {
+  back: '<path d="M10 3 5 8l5 5"/>',
+  forward: '<path d="m6 3 5 5-5 5"/>',
+  more: '<circle cx="3" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="13" cy="8" r="1.4"/>',
+  close: '<path d="m4 4 8 8M12 4l-8 8"/>',
+};
+const iconButton = (className: string, icon: keyof typeof ICON, name: string) => {
+  const b = button(`hoard-col-button ${className}`, '');
+  b.setAttribute('aria-label', name);
+  b.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true" class="hoard-icon-${icon}">${ICON[icon]}</svg>`;
+  return b;
+};
+
+// What the column keeps of a page's HTML: the paragraphs with their wiki classes and
 // data, and NEO's own inline formatting. Anything else is left out for its text, so a
 // page read from disk can never put a script, a style or a live link in the window.
 export const BLOCK_CLASS = /^(?:wiki-[a-z0-9-]+|scene-break)$/;
@@ -60,8 +91,9 @@ function pageBlocks(html: string): HTMLTemplateElement {
   return inert;
 }
 
-export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
-  const pane = neo.addPane({ id: 'wiki', title: 'Wiki', side: true });
+export function startWikiPane(neo: NeoApiV6, o: { changed: () => void }) {
+  const column = neo.column();
+  const pagesTab = neo.addPane({ id: 'pages', title: t('Pages'), nav: true });
   const history = new PageHistory();
   // the page drawn, if any
   let stored: StoredRead | null = null;
@@ -80,20 +112,37 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
   let held: Promise<void> = Promise.resolve();
   let release: (() => void) | null = null;
 
-  const root = pane.element;
-  root.classList.add('hoard-wiki-pane');
-  const nav = el('div', 'hoard-wiki-nav');
-  const backButton = button('hoard-wiki-back', '‹ Back');
-  const forwardButton = button('hoard-wiki-forward', 'Forward ›');
-  nav.append(backButton, forwardButton);
-  const title = el('h3', 'hoard-wiki-title');
+  // the column below the window's drag strip: a toolbar that stays put, then the page and
+  // its comments (marks/pane-marks.ts appends them to root) in one measure that scrolls
+  const frame = el('div', 'hoard-page-column');
+  const scroller = el('div', 'hoard-col-scroll');
+  const root = el('div', 'hoard-col-inner');
+  const bar = el('div', 'hoard-col-bar');
+  const backButton = iconButton('hoard-wiki-back', 'back', t('Back'));
+  const forwardButton = iconButton('hoard-wiki-forward', 'forward', t('Forward'));
+  const crumbs = el('nav', 'hoard-crumbs');
+  crumbs.setAttribute('aria-label', t('Where this page is'));
+  const crumbList = el('ol');
+  crumbs.append(crumbList);
+  const actionsButton = iconButton('hoard-col-actions', 'more', t('Page actions'));
+  actionsButton.setAttribute('aria-haspopup', 'menu');
+  actionsButton.title = t('Rename, move or show in Pages');
+  const closeButton = iconButton('hoard-col-close', 'close', t('Close page column'));
+  closeButton.title = t('Close page column (Ctrl+\\)');
+  bar.append(backButton, forwardButton, crumbs, el('span', 'hoard-col-gap'), actionsButton, closeButton);
+  const title = el('h2', 'hoard-wiki-title');
   title.tabIndex = -1;
-  // where a stored page lives, as a trail of its folders
-  const where = el('p', 'hoard-wiki-where');
   const status = el('p', 'hoard-status hoard-wiki-status');
   status.setAttribute('role', 'status');
   const body = el('div', 'hoard-wiki-page');
-  const empty = el('p', 'hoard-wiki-empty', 'Ctrl+click a [[link]] in your writing, or put the caret in one and choose Plugins > Follow Link, to look its page up here. Or open Pages above and pick one.');
+  const empty = el('div', 'hoard-wiki-empty');
+  const showPagesButton = button('hoard-col-quiet', t('Show Pages'));
+  empty.append(el('p', '', t('No page open. Pick one under Pages in the left pane, or Ctrl+click a [[link]] in your writing.')), showPagesButton);
+  root.append(bar, title, status, body, empty);
+  scroller.append(root);
+  frame.append(scroller);
+  column.element.append(frame);
+
   const tree = startPagesTree(neo, {
     open: (id) => open(id),
     hold: async () => {
@@ -111,15 +160,36 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
     },
     moves: () => moves,
     changed: o.changed,
-    paneRoot: root,
+    paneRoot: pagesTab.element,
+    show: () => { pagesTab.show(); },
   });
-  root.append(tree.element, nav, title, where, status, body, empty);
+  pagesTab.element.classList.add('hoard-pages-tab');
+  pagesTab.element.append(tree.element);
 
   const refreshNav = () => {
     backButton.disabled = !history.canBack;
     forwardButton.disabled = !history.canForward;
-    nav.hidden = !stored && !history.current;
+    backButton.setAttribute('aria-label', history.previous ? t('Back to {title}', { title: titleOf(history.previous) }) : t('Back'));
+    forwardButton.setAttribute('aria-label', history.next ? t('Forward to {title}', { title: titleOf(history.next) }) : t('Forward'));
+    backButton.title = `${backButton.getAttribute('aria-label')} (Alt+Left)`;
+    forwardButton.title = `${forwardButton.getAttribute('aria-label')} (Alt+Right)`;
+    actionsButton.disabled = !stored;
     empty.hidden = !!history.current;
+  };
+
+  // The folders of the page shown, each a button that shows its folder in Pages.
+  const drawCrumbs = (id: string | null) => {
+    const parts = id ? id.split('/').slice(0, -1) : [];
+    crumbList.replaceChildren(...parts.map((_, i) => {
+      const key = parts.slice(0, i + 1).join('/');
+      const name = rowName({ parent: i ? '' : null, tree: parts[0], name: parts[i] } as Row);
+      const crumb = button('hoard-crumb', name);
+      crumb.title = t('Show {name} in Pages', { name });
+      crumb.addEventListener('click', () => { tree.reveal(key); });
+      const li = el('li');
+      li.append(crumb);
+      return li;
+    }));
   };
 
   // Text with its [[links]] as buttons to their pages, or marked missing.
@@ -236,7 +306,7 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
       library = await readList();
     } catch (err) {
       if (mine === moves) throw err;
-      console.warn('hoard: wiki pane: the list for a link the writer went on from did not read', err);
+      console.warn('hoard: page column: the list for a link the writer went on from did not read', err);
       return 'dropped';
     }
     if (mine !== moves) return 'dropped';
@@ -266,10 +336,12 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
     const id = history.current;
     const at = showAt;
     showAt = null;
-    // before a button the writer pressed is disabled, which would drop the focus
+    // a button the writer pressed that is now disabled, Back at the start say, hands the
+    // focus to the title rather than drop it
     const hadFocus = root.contains(document.activeElement);
+    const dropped = () => !root.contains(document.activeElement) || (document.activeElement as HTMLButtonElement).disabled === true;
     refreshNav();
-    if (hadFocus && !root.contains(document.activeElement)) title.focus();
+    if (hadFocus && dropped()) title.focus();
     if (!id) return;
     const mine = ++asked;
     await beforeLeaving();
@@ -288,7 +360,7 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
     }
     if (mine !== asked) return;
     stored = page ? { id, title: page.title, html: page.html } : null;
-    where.textContent = stored ? id.split('/').slice(0, -1).join(' / ') : '';
+    drawCrumbs(stored ? id : null);
     if (!page) {
       title.textContent = '';
       body.replaceChildren();
@@ -301,11 +373,12 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
     for (const fn of shownListeners) fn(stored ? { ...stored } : null);
     tree.markShown(stored?.id ?? null);
     refreshNav();
-    // a page opened from the tree leaves the focus on its row, and a writer gone back to the
-    // book while the page was read stays there; a link drawn over falls to the body
+    // a page opened from the tree leaves the focus on its row, a writer gone back to the book
+    // while the page was read stays there, and Back or Forward keeps it; a link drawn over
+    // falls to the body, and the new page's title takes it
     const here = document.activeElement;
-    const inPane = !here || here === document.body || (root.contains(here) && !tree.element.contains(here));
-    if (hadFocus && inPane) title.focus();
+    const fell = !here || here === document.body || (root.contains(here) && (here as HTMLButtonElement).disabled === true);
+    if (hadFocus && fell) title.focus();
   };
 
   /** A stored page shown, and with at the words there marked and scrolled to. */
@@ -313,7 +386,7 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
     showAt = at ?? null;
     moves++;
     history.visit(id);
-    pane.show();
+    column.open();
     return showCurrent();
   };
   const went = (to: string | null) => {
@@ -324,10 +397,32 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
   const back = () => went(history.back());
   const forward = () => went(history.forward());
 
+  const warn = (what: string) => (err: unknown) => console.warn(`hoard: page column: ${what}`, err);
   backButton.addEventListener('click', () => { back(); });
   forwardButton.addEventListener('click', () => { forward(); });
+  closeButton.addEventListener('click', () => { column.close(); });
+  showPagesButton.addEventListener('click', () => { tree.reveal(null).catch(warn('Pages did not show')); });
+  actionsButton.addEventListener('click', async () => {
+    const id = stored?.id;
+    if (!id) return;
+    const box = actionsButton.getBoundingClientRect();
+    const choice = await popMenu(box.left, box.bottom, [
+      { label: t('Rename page…'), value: 'rename' },
+      { label: t('Move page…'), value: 'move' },
+      '-',
+      { label: t('Show in Pages'), value: 'show' },
+    ], { from: actionsButton });
+    if (choice === 'rename' || choice === 'move') tree.edit(choice, id).catch(warn(`${choice} did not start`));
+    else if (choice === 'show') tree.reveal(id).catch(warn('Pages did not show'));
+  });
   root.addEventListener('keydown', (e) => {
-    if (!e.altKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+    if (e.ctrlKey || e.metaKey || e.isComposing) return;
+    if (e.key === 'F2' && !e.altKey && !e.shiftKey && stored) {
+      e.preventDefault();
+      tree.edit('rename', stored.id).catch(warn('rename did not start'));
+      return;
+    }
+    if (!e.altKey || e.shiftKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
     e.preventDefault();
     if (e.key === 'ArrowLeft') back();
     else forward();
@@ -342,24 +437,22 @@ export function startWikiPane(neo: NeoApiV5, o: { changed: () => void }) {
     forward,
     /** The stored page shown (wiki/... or sources/...); null while none is. */
     currentPage: () => stored?.id ?? null,
-    /** The Pages tree, for tests and the console. */
-    tree: { refresh: () => tree.refresh(), state: () => tree.state() },
+    /** The Pages tab of the left pane, for tests and the console. */
+    tree: { refresh: () => tree.refresh(), state: () => tree.state(), show: () => tree.reveal(stored?.id ?? null) },
     /** The page shown again, as saved now (after an import, say). */
     reload: () => showCurrent(),
-    /** The pane's section, and the element holding the page's lines, one per paragraph in order. */
+    /** What the column shows under its toolbar, and the element holding the page's lines, one per paragraph in order. */
     root,
     body,
     /** The page shown, as last drawn; null while none is. */
     shown: (): ShownPage | null => (stored ? { ...stored } : null),
-    /** Told after each page is drawn in the pane, with null when it is gone. */
+    /** Told after each page is drawn in the column, with null when it is gone. */
     onShown(fn: (page: ShownPage | null) => void) { shownListeners.push(fn); },
-    /** Waited for before the pane shows a page, this one again too. */
+    /** Waited for before the column shows a page, this one again too. */
     beforeLeave(fn: () => Promise<void>) { leaving.push(fn); },
-    /** Told when the tree renames or moves a page, before the pane reads it again. */
+    /** Told when the tree renames or moves a page, before the column reads it again. */
     onRenamed(fn: (from: string, to: string) => void) { renamedListeners.push(fn); },
     /** Resolves once no rename or move is under way; a save waits for it. */
     held: () => held,
-    /** A wider right-hand pane while on (host API 5). */
-    wide: (on: boolean) => pane.wide(on),
   };
 }

@@ -10,14 +10,19 @@
 //
 // Strings are found in t('…'), tk('…') and NeoI18n.t('…') calls in the
 // JavaScript, and in the data-i18n* attributes of index.html. NEO Pocket's
-// own page and bridge count too: they show the same locales/ files.
+// own page and bridge count too: they show the same locales/ files, and so do
+// the hoard plugin's page column and Pages tab.
 
 'use strict';
 const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const JS_FILES = ['app.js', 'main.js', 'covers.js', 'pocket/www/pocket-bridge.js', 'pocket/www/index.html'];
+const JS_FILES = [
+  'app.js', 'main.js', 'covers.js', 'split-column.js', 'pocket/www/pocket-bridge.js', 'pocket/www/index.html',
+  // the hoard plugin's page column and Pages tab, through NeoI18n (src/hoard/say.ts)
+  'src/hoard/wiki/pane.ts', 'src/hoard/wiki/pane-tree.ts',
+];
 const HTML_FILES = ['index.html', 'pocket/www/index.html'];
 const LOCALES = path.join(ROOT, 'locales');
 

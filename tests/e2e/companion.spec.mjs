@@ -117,7 +117,7 @@ test('a page named in new writing is flagged at the next save, once, hidden on r
     const card = page.locator('.hoard-mark');
     await expect(card.locator('.hoard-who')).toContainText('Librarian');
     await card.locator('.hoard-body .hoard-wiki-link').click();
-    await expect(page.locator('.hoard-wiki-pane .hoard-wiki-title')).toHaveText('Kraken');
+    await expect(page.locator('#split-column .hoard-wiki-title')).toHaveText('Kraken');
     expect(await page.evaluate(() => window.hoard.wiki.pane.currentPage())).toBe('wiki/Kraken.html');
     expect(await page.evaluate(() => book.id)).toBe(bookId);
 

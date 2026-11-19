@@ -9,10 +9,9 @@
 //
 // The writer's comments are drawn on the page and listed in a Comments section beside
 // the manuscript (marks/window.ts), which needs API 3's side sections. The wiki
-// (wiki/window.ts) imports pages and follows links into its pane, which shows stored
-// pages. The pane edits the stored page shown in place (wiki/pane-edit.ts),
-// with API 5's wider pane while the writer types there, and carries the page's marks
-// (marks/pane-marks.ts). Search (search/window.ts) looks through every book and the wiki
+// (wiki/window.ts) imports pages and follows links into API 6's page column, which shows
+// stored pages, listed on a Pages tab of the left pane. The column edits the stored page
+// shown in place (wiki/pane-edit.ts) and carries the page's marks (marks/pane-marks.ts). Search (search/window.ts) looks through every book and the wiki
 // from a Search section beside the book. The librarian reads each chapter the writer
 // leaves and comments on the wiki pages its new words name (companion/window.ts). Ripple
 // (ripple/window.ts) lists what waits for its judge and the judge's proposals to rule on.
@@ -25,7 +24,7 @@ import { startWiki } from './wiki/window.ts';
 
 NeoPlugins.register({
   id: 'hoard',
-  apiVersion: 5,
+  apiVersion: 6,
   async activate(neo) {
     const ping = (payload: unknown) => neo.invoke('ping', payload);
     const sent = { n: 1 };

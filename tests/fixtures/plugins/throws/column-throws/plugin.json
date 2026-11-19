@@ -1,0 +1,5 @@
+{
+  "id": "column-throws",
+  "apiVersion": 6,
+  "renderer": "renderer.js"
+}

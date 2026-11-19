@@ -1,4 +1,4 @@
-// A library with one stored page, wiki/Vell.html, shown in the wiki pane beside an open
+// A library with one stored page, wiki/Vell.html, shown in the page column beside an open
 // book, for the specs that edit and mark a page there (pane-edit, pane-editor).
 import { expect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
@@ -7,6 +7,9 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { launchProfile, seedBook } from './electron-profile.mjs';
+import { columnSettled } from './library-pages.mjs';
+
+export { columnSettled };
 
 export const VELL = 'wiki/Vell.html';
 export const BOOK_HTML = '<p>See [[Vell]] today.</p>';
@@ -27,18 +30,9 @@ export const readMarks = (library, id = VELL) => {
   return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')).marks : [];
 };
 
-// The side pane slides in, and a click aimed while it moves lands outside the window.
-export async function paneSettled(page) {
-  await expect(page.locator('#side-pane')).toHaveClass(/\bopen\b/);
-  await page.waitForFunction(() => {
-    const pane = document.getElementById('side-pane');
-    return pane.getAnimations().length === 0 && pane.getBoundingClientRect().right <= innerWidth + 0.5;
-  });
-}
-
 /**
  * A tracked library holding wiki/Vell.html (html), the librarian's when librarian is set,
- * launched with a book open beside the pane showing the page once its first commit is in.
+ * launched with a book open beside the page column showing the page once its first commit is in.
  */
 export async function pageBeside(html, { librarian = false, extra = {} } = {}) {
   const profile = await mkdtemp(path.join(tmpdir(), 'neo-test-'));
@@ -72,8 +66,8 @@ export async function pageBeside(html, { librarian = false, extra = {} } = {}) {
     // the setup's own writes are in history before the pane changes anything
     await expect.poll(() => pageAuthors(library).length, { timeout: 10_000 }).toBeGreaterThan(0);
     await page.evaluate((id) => window.hoard.wiki.pane.open(id), VELL);
-    await expect(page.locator('.hoard-wiki-page > p').first()).toBeVisible();
-    await paneSettled(page);
+    await expect(page.locator('#split-column .hoard-wiki-page > p').first()).toBeVisible();
+    await columnSettled(page);
     // whose the page is has been read, so typing is an edit or a suggestion as it should be
     await expect(page.locator('.hoard-wiki-page')).toHaveAttribute('contenteditable', 'true');
     return { fixture, page, library, profile };
@@ -83,7 +77,7 @@ export async function pageBeside(html, { librarian = false, extra = {} } = {}) {
   }
 }
 
-/** The caret put in the pane's page at `at` (after, start or end) of `words`, as a click there would. */
+/** The caret put in the column's page at `at` (after, start or end) of `words`, as a click there would. */
 export const caretAt = (page, words, at = 'after') => page.evaluate(({ words, at }) => {
   const body = document.querySelector('.hoard-wiki-page');
   const p = [...body.querySelectorAll(':scope > p')].find((el) => el.textContent.includes(words));
@@ -95,10 +89,10 @@ export const caretAt = (page, words, at = 'after') => page.evaluate(({ words, at
     getSelection().collapse(node, at === 'start' ? 0 : at === 'end' ? node.textContent.length : i + words.length);
     return;
   }
-  throw new Error(`no words ${words} in the pane`);
+  throw new Error(`no words ${words} in the page column`);
 }, { words, at });
 
-/** `words` selected in the pane's page, as a writer's drag would. */
+/** `words` selected in the column's page, as a writer's drag would. */
 export const selectIn = (page, words) => page.evaluate((words) => {
   const body = document.querySelector('.hoard-wiki-page');
   const p = [...body.querySelectorAll(':scope > p')].find((el) => el.textContent.includes(words));
@@ -110,10 +104,10 @@ export const selectIn = (page, words) => page.evaluate((words) => {
     getSelection().setBaseAndExtent(node, i, node, i + words.length);
     return;
   }
-  throw new Error(`no words ${words} in the pane`);
+  throw new Error(`no words ${words} in the page column`);
 }, words);
 
-/** The pane's blocks as [class, id, text, alias]. */
+/** The column's blocks as [class, id, text, alias]. */
 export const shownBlocks = (page) => page.evaluate(() => [...document.querySelectorAll('.hoard-wiki-page > p')].map((p) => [
   [...p.classList].filter((c) => c !== 'hoard-wiki-line').join(' '), p.dataset.block ?? '', p.textContent, p.dataset.alias ?? '']));
 

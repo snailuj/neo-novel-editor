@@ -1,7 +1,7 @@
 // The wiki's main half: Import to Wiki asks for Markdown files, Import List for an import
 // list naming them (import-list.ts), and both say what would come in and import on the
 // writer's word; the window asks for the pages to follow links and for one page to show
-// in the wiki pane. The questions are OS message boxes, never while the writer types: the
+// in the page column. The questions are OS message boxes, never while the writer types: the
 // writer chose the command.
 //
 // Pages come in as page files (page-import.ts): Import to Wiki fills wiki/, and a list

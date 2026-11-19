@@ -1,4 +1,4 @@
-// Rule: the wiki pane's history goes back and forward as a browser's does: a new page
+// Rule: the page column's history goes back and forward as a browser's does: a new page
 // drops what was ahead, going back and forward moves along the trail without changing
 // it, and the same page twice in a row is one stop.
 import assert from 'node:assert/strict';
@@ -59,4 +59,18 @@ test('a rename onto the stop beside it leaves one stop', () => {
   assert.equal(h.canBack, false, 'A and B were one page after the rename');
   h.rename('ch-9', 'ch-10');
   assert.equal(h.current, 'wiki/B.html', 'a rename of an id not on the trail changes nothing');
+});
+
+// Rule: the trail says where Back and Forward lead before they are pressed, so their labels
+// can name the page, and says nothing where there is no step to take.
+test('the stops either side of the current one are named, or null at an end', () => {
+  const h = new PageHistory();
+  assert.deepEqual([h.previous, h.next], [null, null]);
+  h.visit('a');
+  h.visit('b');
+  assert.deepEqual([h.previous, h.next], ['a', null]);
+  h.back();
+  assert.deepEqual([h.previous, h.next], [null, 'b']);
+  h.rename('b', 'c');
+  assert.deepEqual([h.previous, h.next], [null, 'c']);
 });

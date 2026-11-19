@@ -1,11 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { pagesTab, rowOf } from '../support/library-pages.mjs';
 import {
-  caretAt, LINES, PAGE, pageAuthors, pageBeside, pageFile, paneAlert, paneSettled, readMarks, selectIn, VELL,
+  caretAt, columnSettled, LINES, PAGE, pageAuthors, pageBeside, pageFile, paneAlert, readMarks, selectIn, VELL,
 } from '../support/pane-page.mjs';
 
-// The wiki pane edits and marks a stored page (wiki/Vell.html) beside another book. Rules:
+// The page column edits and marks a stored page (wiki/Vell.html) beside another book. Rules:
 // a change is made on a copy of the page and only its paragraph's bytes change; on the
 // librarian's page, Suggest change in the pane goes to the librarian, who applies a clean
 // change between the writer's commit and its own, or flags it; a flagged suggestion
@@ -99,19 +100,20 @@ test('a refused change leaves the page as it was', async () => {
   }
 });
 
-// Rule: on the writer's own page, words typed in the pane are saved as the writer's, only
+// Rule: on the writer's own page, words typed in the column are saved as the writer's, only
 // their paragraph's bytes change, the saved page is handed to the librarian to read, and
-// the pane is wider while the writer types in it.
-test('typing in the pane on the writer\'s page is saved as theirs, and the pane widens meanwhile', async () => {
+// the column keeps its width while the writer types (the right-hand pane never widens).
+test('typing in the column on the writer\'s page is saved as theirs, and the column keeps its width', async () => {
   const { fixture, page, library } = await pageBeside(TEXT);
   try {
     await expect(page.locator('.hoard-pane-mode')).toBeHidden();
     expect(await page.evaluate(() => window.hoard.companion.pagesHanded())).toEqual([]);
 
     await caretAt(page, 'west');
-    await expect(page.locator('#side-pane')).not.toHaveClass(/\bwide\b/);
+    const width = () => page.evaluate(() => document.getElementById('split-column').getBoundingClientRect().width);
+    const before = await width();
+    expect(before).toBeGreaterThan(0);
     await page.keyboard.type(' and south');
-    await expect(page.locator('#side-pane')).toHaveClass(/\bwide\b/);
     await expect(page.locator(LINES).nth(0)).toHaveText('The harbour of Vell faces west and south.');
     await expect.poll(() => pageFile(library)).toBe('<p data-block="b1">The harbour of Vell faces west and south.</p><p data-block="b2">Its keeper rows at dawn.</p>');
     await expect.poll(() => pageAuthors(library)[0], { timeout: 10_000 }).toBe('Ada Author');
@@ -130,8 +132,7 @@ test('typing in the pane on the writer\'s page is saved as theirs, and the pane 
     await page.waitForTimeout(500);
     await expect(page.locator(`${PAGE} > p[data-kept]`)).toHaveCount(1);
 
-    // the writer goes back to the book: the pane is narrow again
-    await page.locator('.chapter-body p').first().click();
+    expect(await width()).toBe(before);
     await expect(page.locator('#side-pane')).not.toHaveClass(/\bwide\b/);
   } finally {
     await fixture.close();
@@ -291,10 +292,10 @@ const watchCtrlEnter = (page) => page.evaluate(() => {
 });
 const ctrlEnterReached = (page) => page.evaluate(() => window.ctrlEnterReached);
 
-// Rule: the Wiki pane shows a stored page's comments on its lines and under it, and a
+// Rule: the page column shows a stored page's comments on its lines and under it, and a
 // comment made there on selected words is kept in the page's own marks sidecar,
 // .neo/marks/<tree>/<path>.json.
-test('a comment made in the Wiki pane is drawn there and kept in the page\'s marks sidecar', async () => {
+test('a comment made in the page column is drawn there and kept in the page\'s marks sidecar', async () => {
   const { fixture, page, library } = await pageBeside(TEXT);
   try {
     expect(readMarks(library)).toEqual([]);
@@ -305,7 +306,7 @@ test('a comment made in the Wiki pane is drawn there and kept in the page\'s mar
     await expect(page.locator('#hoard-pane-compose-text')).toBeHidden();
     await expect(page.locator('#editor-view')).toBeVisible();
 
-    await paneSettled(page);
+    await columnSettled(page);
     await selectIn(page, 'west');
     await watchCtrlEnter(page);
     await page.locator('.hoard-pane-add').click({ force: true });
@@ -322,7 +323,7 @@ test('a comment made in the Wiki pane is drawn there and kept in the page\'s mar
     await cardIn.locator('textarea').press('Control+Enter');
     await expect.poll(() => readMarks(library)[0].thread.map((e) => e.body)).toEqual(['Why west?', 'Because of the sunset.']);
     expect(await ctrlEnterReached(page)).toBe(0);
-    await paneSettled(page);
+    await columnSettled(page);
     await page.locator(`.hoard-pane-marks .hoard-mark[data-mark="${made.id}"] button[data-action="Resolve"]`).click({ force: true });
     await expect.poll(() => readMarks(library)[0].state).toBe('resolved');
     await expect.poll(() => page.evaluate(() => CSS.highlights.has('hoard-pane-comment'))).toBe(false);
@@ -340,16 +341,21 @@ test('a comment made in the Wiki pane is drawn there and kept in the page\'s mar
 test('typing not yet saved goes with the page shown when the tree renames or moves it', async () => {
   const { fixture, page, library } = await pageBeside(TEXT);
   try {
-    const tree = page.locator('.hoard-wiki-pane .hoard-tree');
-    const row = (name) => tree.locator('.hoard-tree-name', { hasText: new RegExp(`^${name}`) }).first();
-    await tree.getByRole('button', { name: 'Pages' }).click();
+    const tree = await pagesTab(page);
+    const row = rowOf(tree);
     await expect(row('Vell')).toBeVisible();
+    // a row's menu, the Pages tab shown again first: the pane closes once the pointer leaves it
+    const menu = async (name, item) => {
+      await pagesTab(page);
+      await row(name).click({ button: 'right' });
+      await page.locator('.pop-menu').getByRole('menuitem', { name: item }).click();
+    };
 
     // rename, straight after typing
     await caretAt(page, 'west');
     await page.keyboard.type(' bay');
     expect(await page.evaluate(() => window.hoard.paneMarks.state().editing.pending)).toBe(true);
-    await page.evaluate(() => document.querySelector('.hoard-tree button[aria-label="Rename Vell"]').click());
+    await menu('Vell', 'Rename page…');
     const field = tree.getByLabel('New title for “Vell”');
     await field.fill('Port');
     await field.press('Enter');
@@ -360,7 +366,7 @@ test('typing not yet saved goes with the page shown when the tree renames or mov
     await expect(page.locator(paneAlert)).toHaveText('');
 
     // move, and type in the page while the move is under way
-    await page.evaluate(() => document.querySelector('.hoard-tree button[aria-label="Move Port"]').click());
+    await menu('Port', 'Move page…');
     const folder = tree.getByLabel(/^Folder in wiki to move/);
     await folder.fill('Places');
     await folder.press('Enter');

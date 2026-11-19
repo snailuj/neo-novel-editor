@@ -659,7 +659,14 @@ body.light .print-modal select, body.light .print-modal textarea { background: #
 
 /* ========================= EDITOR ========================= */
 
-#editor-view { position: absolute; inset: 0; animation: neo-fade 0.25s ease; }
+#editor-view {
+  position: absolute; inset: 0; animation: neo-fade 0.25s ease;
+  /* What is docked beside the page, in px with the zoom applied (see "Interface size"). The right
+     side is a pinned right pane (--side-dock) and, beside the book, the page column
+     (--split-dock, from --split-px: split-column.js). */
+  --dock-left: 0px; --side-dock: 0px; --split-dock: 0px;
+  --dock-right: calc(var(--side-dock) + var(--split-dock));
+}
 #bookshelf-view { animation: neo-fade 0.25s ease; }
 @keyframes neo-fade { from { opacity: 0; } to { opacity: 1; } }
 
@@ -691,8 +698,13 @@ body.night #aux-editor * { color: inherit; }
    zones at the window edges. */
 #paper-scroll {
   position: absolute; top: 0; bottom: 40px;
-  left: 50%; transform: translateX(-50%);
-  width: min(calc((var(--sheet-w) + var(--page-gutter)) * var(--page-zoom, 1)), 94%);
+  /* Centred in the room between what is docked on each side: --dock-left and
+     --dock-right on #editor-view (px, 0 when nothing is docked). They already
+     carry --ui-zoom, so this is the one place the page's position is decided. */
+  left: calc(var(--dock-left) + (100% - var(--dock-left) - var(--dock-right)) / 2);
+  transform: translateX(-50%);
+  /* never wider than 94% of that room, so a narrow room never puts the page under a pane or the column */
+  width: min(calc((var(--sheet-w) + var(--page-gutter)) * var(--page-zoom, 1)), calc((100% - var(--dock-left) - var(--dock-right)) * 0.94));
   overflow-y: auto;
 }
 
@@ -1019,9 +1031,7 @@ body.night .ol-part .ol-num, body.night .ol-part-name { color: #918b7d; }
 body.light #editor-view.board-on #outline-views button.on { color: #2b2926; }
 
 /* the board takes the whole window, in the room rather than on a page */
-#editor-view.board-on #paper-scroll { left: 0; right: 0; width: auto; transform: none; }
-#editor-view.board-on.nav-pinned #paper-scroll { left: 248px; }
-#editor-view.board-on.side-pinned #paper-scroll { right: 250px; }
+#editor-view.board-on #paper-scroll { left: var(--dock-left); right: var(--dock-right); width: auto; transform: none; }
 #editor-view.board-on #aux-paper {
   width: auto; max-width: none; background: none; box-shadow: none; border: none;
   margin: 0; padding: 30px clamp(18px, 3vw, 44px) 90px; min-height: 0; color: var(--muted);
@@ -1249,6 +1259,18 @@ body.focus-mode .walk-note { opacity: 0.6; }
   padding: 0 16px 10px 18px; font-size: 12px; text-transform: uppercase;
   letter-spacing: 2px; color: var(--muted);
 }
+/* the tabs: the view's own list, then a plugin's. A lone tab is the old title, so it draws no underline. */
+#nav-tabs { display: flex; flex-wrap: wrap; min-width: 0; margin-inline-start: -10px; }
+.nav-tab {
+  background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0;
+  min-height: 44px; padding: 0 10px; font: inherit; letter-spacing: inherit; text-transform: inherit; color: var(--muted);
+}
+.nav-tab:hover, .nav-tab[aria-selected="true"] { color: #eee; }
+body.light .nav-tab:hover, body.light .nav-tab[aria-selected="true"] { color: #1c1a17; }
+#nav-tabs.multi .nav-tab[aria-selected="true"] { border-bottom-color: var(--accent); }
+.nav-tab:focus-visible { outline-offset: -2px; }
+#nav-own[hidden], .plugin-nav-body[hidden] { display: none; }
+.plugin-nav-body { padding: 0 12px; }
 #nav-pin { background: none; border: none; color: #555; font-size: 15px; }
 #nav-pin.pinned { color: var(--accent); }
 .nav-item {
@@ -1367,6 +1389,49 @@ body.focus-mode .walk-note { opacity: 0.6; }
   background: none; border: none; color: #555; font-size: 15px;
 }
 #side-pin.pinned { color: var(--accent); }
+
+/* --- The page column (split-column.js; a plugin fills #split-body) ---
+   Beside the book it is the full editor height at the right, left of a pinned right pane; with
+   less than 960px of room (.split-overlay) it lies over the book instead. Closed, it slides out
+   and leaves the tab order (visibility). The divider is its left edge, with a grab area wider
+   than the 1px line: 12px over the book's margin, the rest over the column. */
+:root { --split-grip: #7d7d7d; }
+#split-column {
+  position: fixed; top: 0; bottom: calc(40px * var(--ui-zoom)); z-index: 65; /* over the left hover zone, under the panes */
+  inset-inline-end: var(--side-dock); width: var(--split-px, 0px);
+  padding-inline-end: calc(20px * var(--ui-zoom)); /* the strip where the right pane wakes */
+  background: var(--paper); color: var(--ink);
+  transform: translateX(100%); visibility: hidden;
+}
+#editor-view.split-open:not(.split-overlay) { --split-dock: var(--split-px); }
+#editor-view.split-open #split-column { transform: none; visibility: visible; }
+#editor-view.split-overlay #split-column { box-shadow: -10px 0 36px rgba(0, 0, 0, 0.55); }
+#split-body { height: 100%; overflow-y: auto; zoom: var(--ui-zoom); }
+#split-body:focus-visible { outline: 2px solid var(--ink); outline-offset: -4px; }
+#split-divider {
+  position: absolute; top: calc(28px * var(--ui-zoom)); bottom: 0; z-index: 1; /* below the window's drag strip */
+  inset-inline-start: calc(-12px * var(--ui-zoom)); width: max(44px, calc(44px * var(--ui-zoom)));
+  cursor: col-resize; touch-action: none;
+}
+#split-divider::before {
+  content: ''; position: absolute; inset-block: 0; inset-inline-start: calc(12px * var(--ui-zoom));
+  width: 1px; background: var(--split-grip);
+}
+.split-grip {
+  position: absolute; top: 50%; inset-inline-start: calc(12px * var(--ui-zoom) - 2px);
+  width: 5px; height: 36px; margin-top: -18px; border-radius: 3px; background: var(--split-grip);
+}
+#split-divider:hover .split-grip, #split-divider:focus-visible .split-grip, .split-dragging .split-grip { background: var(--accent); }
+#split-divider:focus-visible { outline: 2px solid var(--accent); box-shadow: inset 0 0 0 2px var(--bg); }
+/* While the column is open the right pane wakes on the column's outer strip, not on the page */
+#editor-view.split-open #side-hotzone { width: calc(20px * var(--ui-zoom)); z-index: 66; }
+@media (prefers-reduced-motion: no-preference) {
+  #split-column { transition: transform 0.18s ease, visibility 0s linear 0.18s; }
+  #editor-view.split-open #split-column { transition: transform 0.18s ease; }
+  #paper-scroll { transition: left 0.18s ease; }
+  /* the column follows the pointer as it drags, with no animation */
+  #editor-view.split-dragging #split-column, #editor-view.split-dragging #paper-scroll { transition: none; }
+}
 .sticky {
   margin: 0 12px 12px; background: #2a2a26; border-radius: 6px;
   padding: 10px 12px; font-size: 13px; line-height: 1.45; color: #ccc;
@@ -1565,9 +1630,6 @@ body.bright #add-shelf-btn, body.bright #import-btn { color: #b4b4b4; border-col
 body.bright .show-scrollbar::-webkit-scrollbar-thumb { background-color: rgba(255, 255, 255, 0.26); }
 body.bright .show-scrollbar::-webkit-scrollbar-thumb:hover { background-color: rgba(255, 255, 255, 0.4); }
 
-/* pinned notes pane: the page column shifts left to clear the pane */
-#editor-view.side-pinned #paper-scroll { left: calc(50% - 125px); }
-
 /* ================================================================== */
 /* ACCESSIBILITY                                                        */
 /* ================================================================== */
@@ -1667,16 +1729,16 @@ body.bright .pop-menu button:disabled { color: #8a8a8a; }
 :root { --ui-zoom: 1; }
 #bookshelf-view, #nav-pane, #side-pane, #bottombar, #searchbar, #hint, .modal { zoom: var(--ui-zoom); }
 #paper-scroll, #nav-hotzone, #side-hotzone { bottom: calc(40px * var(--ui-zoom)); }
-#editor-view.side-pinned #paper-scroll { left: calc(50% - 125px * var(--ui-zoom)); }
-#editor-view.nav-pinned #paper-scroll { left: calc(50% + 124px * var(--ui-zoom)); }
-#editor-view.nav-pinned.side-pinned #paper-scroll { left: calc(50% - 1px * var(--ui-zoom)); }
-#editor-view.side-pinned:has(#side-pane.wide) #paper-scroll { left: calc(50% - 220px * var(--ui-zoom)); }
-#editor-view.nav-pinned.side-pinned:has(#side-pane.wide) #paper-scroll { left: calc(50% - 96px * var(--ui-zoom)); }
-/* …except the Outline's cards, which fill the room between whichever panes
-   are pinned (these come after the page rules above, so they win, #312) */
-#editor-view.board-on.side-pinned #paper-scroll { left: 0; right: calc(250px * var(--ui-zoom)); }
-#editor-view.board-on.nav-pinned #paper-scroll { left: calc(248px * var(--ui-zoom)); }
-#editor-view.board-on.nav-pinned.side-pinned #paper-scroll { left: calc(248px * var(--ui-zoom)); right: calc(250px * var(--ui-zoom)); }
+/* What is docked beside the page, in px with the zoom applied once (the panes
+   scale by it): the pane widths above. The page centres itself in the room
+   they leave (#paper-scroll), and the Outline's cards fill it. */
+#editor-view { --nav-w: calc(248px * var(--ui-zoom)); --side-w: calc(250px * var(--ui-zoom)); }
+#editor-view:has(#side-pane.wide) { --side-w: calc(440px * var(--ui-zoom)); }
+/* a pinned pane that floats (split-column.js: the page column needs the room) docks nothing */
+#editor-view.nav-pinned:not(.nav-floating) { --dock-left: var(--nav-w); }
+#editor-view.side-pinned:not(.side-floating), #editor-view.darlings-tab { --side-dock: var(--side-w); }
+/* a floating pane's pin keeps its state and says so with a dashed ring, which is not colour alone */
+#nav-pin.floating, #side-pin.floating { border: 1px dashed var(--accent); border-radius: 4px; }
 .modal { max-height: calc(85vh / var(--ui-zoom)); max-width: calc(100vw / var(--ui-zoom) - 32px); }
 .font-list { max-height: calc(50vh / var(--ui-zoom)); }
 .shortcuts-modal {
@@ -2155,9 +2217,7 @@ body.full-screen #dragstrip, body.focus-mode #dragstrip { color: transparent; }
 #editor-view.darlings-tab .side-title-notes, #editor-view.darlings-tab #sticky-list { display: none; }
 #editor-view.darlings-tab .side-title-snaps { display: inline; }
 #editor-view.darlings-tab #snap-list { display: block; }
-/* the pane stays open there, so the page moves over to clear it */
-#editor-view.darlings-tab #paper-scroll { left: calc(50% - 125px * var(--ui-zoom)); }
-#editor-view.darlings-tab.nav-pinned #paper-scroll { left: calc(50% - 1px * var(--ui-zoom)); }
+/* the pane stays open there, so the page moves over to clear it (--dock-right, above) */
 #snap-list { padding-bottom: 12px; }
 .snap-item {
   display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left;

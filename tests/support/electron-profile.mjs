@@ -36,6 +36,8 @@ export async function launchProfile(existingProfile, options = {}) {
     // Not the developer's NEO_* settings (NEO_PLUGIN_DIRS would load their plugins), only the harness's own.
     const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('NEO_')));
     Object.assign(env, { NEO_TEST_PROFILE: profile, NEO_TEST_VISIBLE: options.visible === true ? '1' : '0' });
+    // options.env: what a spec sets on purpose, such as NEO_PLUGIN_DIRS to load fixture plugins
+    Object.assign(env, options.env);
     delete env.ELECTRON_RUN_AS_NODE;
     // Where a child process, Chromium or a library looks for the user's folders: the profile's own,
     // from the first moment, before the main script isolates the rest.

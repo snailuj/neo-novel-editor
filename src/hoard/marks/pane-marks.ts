@@ -1,4 +1,4 @@
-// Marks in the Wiki pane: the stored page shown beside the book (wiki/... or sources/...)
+// Marks in the page column: the stored page shown beside the book (wiki/... or sources/...)
 // carries its comments and suggestions, drawn on its lines and listed under it, so a page
 // looked up can be talked over without leaving the manuscript. They are kept by the page's
 // id (marks.* with {page}, in .neo/marks/<tree>/<path>.json). From here the writer comments
@@ -32,7 +32,6 @@ interface Pane {
   beforeLeave(fn: () => Promise<void>): void;
   onRenamed(fn: (from: string, to: string) => void): void;
   held(): Promise<void>;
-  wide(on: boolean): void;
 }
 interface Pages { get(target: string): string | undefined }
 interface Composing { kind: 'comment' | 'suggestion'; anchor: Omit<Mark['anchor'], 'commit'> }
@@ -84,7 +83,7 @@ function pointIn(lines: Element[], node: Node, offset: number): { pIdx: number; 
   return { pIdx, off: before.toString().length };
 }
 
-export function startPaneMarks(neo: NeoApiV5, pane: Pane, o: { pages: () => Pages; saved?: (change: PageSaved) => void }) {
+export function startPaneMarks(neo: NeoApiV6, pane: Pane, o: { pages: () => Pages; saved?: (change: PageSaved) => void }) {
   let page: ShownPage | null = null;
   let marks: Mark[] = [];
   let unreadable = false;
@@ -499,9 +498,9 @@ export function startPaneMarks(neo: NeoApiV5, pane: Pane, o: { pages: () => Page
       if (e.key === 'Enter' && (box === changeText ? !e.shiftKey : submitKey(e))) { claim(e); submitSuggestion(); }
     });
   }
-  // NEO takes an Esc from a side pane before the box sees it (capture on the document)
-  // and puts the writer back on the page; seen first, from the window, it also stops
-  // composing, and NEO still goes back to the page
+  // An Esc in the page column puts the writer back on the book's caret once the plugin has
+  // had it (the column's own listener); seen here first, from the window, it also stops
+  // composing, and NEO still goes back to the book
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !e.isComposing && composing && e.target instanceof Node && (composer.contains(e.target) || suggester.contains(e.target))) stopComposing();
   }, true);

@@ -1,32 +1,38 @@
-// The Pages tree in the wiki pane, as data. Pure: the view (wiki/pane-tree.ts) draws what
-// this works out. The pages come from one pages.list; each tree (wiki/, sources/) shows its
-// folders first, by name, then its pages, by title. Only the rows of open folders are
-// worked out, so a library of thousands of pages in closed folders draws a few rows.
+// The Pages tree on the Pages tab of the left pane, as data. Pure: the view
+// (wiki/pane-tree.ts) draws what this works out. The pages come from one pages.list; each
+// tree (wiki/, sources/) shows its folders first, by name, then its pages, by title. Only the
+// rows of open folders are worked out, so a library of thousands of pages in closed folders
+// draws a few rows.
 //
 // ---- State machine (ui-state-design) ------------------------------------------------------
 // Two regions, two tables. Fixed by the plan's rulings: a stored page's text is edited in
-// the pane (stage 6, wiki/pane-edit.ts), not from the tree; a move stays inside the page's tree (Move-Within-Tree); the
-// list is read when the tree unfolds, after each change and on Refresh (Tree-Refresh); there
-// is no folder rename, folder delete or page delete (Folder-Actions). Focus rule for every
-// cell: the tree moves the focus only when it is already in the pane; otherwise the writer
-// stays in the manuscript.
+// the page column (wiki/pane-edit.ts), not from the tree; a move stays inside the page's tree
+// (Move-Within-Tree); the list is read when the tab first shows after a book opens, after
+// each change and on Refresh (Tree-Refresh); there is no folder rename, folder delete or page
+// delete (Folder-Actions). Focus rule for every cell: the tree moves the focus only when it
+// is already in the tab, or the writer asked for the tree (Show in Pages, Rename from the
+// column); otherwise the writer stays where they are.
 //
 // A. The list. States, and what tells them apart:
-//   Folded      Pages button says aria-expanded=false, ▸; nothing else of the tree shows.
+//   Unread      the tab not yet shown since the book opened; nothing read.
 //   Reading     "Reading pages…" in the status line; Refresh disabled; earlier rows stay.
 //   Listed      the rows; the page shown carries aria-current and a mark.
+//   Filtered    the filter holds words: only titles holding them, the folders above them
+//               open; none matching says so and how to see every page again.
 //   Empty       "No pages yet…" saying where pages live and that New page makes one.
 //   ReadFailed  an alert naming what failed and "Choose Refresh to try again".
-//   event          Folded             Reading                 Listed / Empty / ReadFailed
-//   Pages button   unfold, read list  fold (reply still kept) fold
+//   event          Unread             Reading                 Listed / Filtered / Empty / ReadFailed
+//   tab shows      read list          no-op                   no-op (read again only after a book opens)
 //   Refresh        hidden             no-op: disabled+guarded  read list -> Reading
-//   reply ok       kept for unfold    Listed or Empty          (a stale reply is dropped)
-//   reply failed   kept for unfold    ReadFailed               (a stale reply is dropped)
-//   page row       hidden             earlier rows still open  open in the pane; focus stays on the row
+//   reply ok       -                  Listed or Empty         (a stale reply is dropped)
+//   reply failed   -                  ReadFailed              (a stale reply is dropped)
+//   filter typed   -                  narrows the rows held   Filtered; cleared -> Listed as it was
+//   page row       hidden             earlier rows still open  open in the column; focus stays on the row
 //   folder row     hidden             toggles open/closed      toggles open/closed; focus stays
-//   Repeats: the Pages button toggles; Refresh twice reads once; a page row twice shows the
-//   page once (the trail takes no second stop); a folder row toggles. Only a newer read's
-//   reply is drawn. Mutates nothing, so there is no undo.
+//   Repeats: Refresh twice reads once; a page row twice shows the page once (the trail takes
+//   no second stop); a folder row toggles, in the filtered tree too, which keeps its own open
+//   folders so clearing the filter gives back the writer's. Only a newer read's reply is
+//   drawn. Mutates nothing, so there is no undo.
 //
 // B. The row editor (Rename, Move, New page). States:
 //   closed   no field.
@@ -35,8 +41,8 @@
 //   pending  the field read-only, aria-busy; the action button disabled and saying
 //            "Renaming…", "Moving…" or "Making…".
 //   event              closed           open / invalid                                pending
-//   start (F2, Rename, open the field;  same field: focus it; another row: focus the   focus the field ("busy"),
-//     Move, New page)  focus it         open field and say finish or cancel ("busy")  no request
+//   start (F2, menus,  open the field;  same field: focus it; another row: focus the   focus the field ("busy"),
+//     New page)        focus it         open field and say finish or cancel ("busy")  no request
 //   input              -                keep the value; invalid judges it again       no-op (read-only)
 //   blur               -                judge it if changed -> invalid / open         no-op
 //   submit (Enter,     -                refused -> invalid, focus field; unchanged ->  no-op: guarded and
@@ -44,21 +50,21 @@
 //   cancel (Esc)       -                closed, focus origin, nothing sent             no-op: it cannot be called back
 //                                                                                     (NEO's Esc takes the writer to the page)
 //   reply done         -                no-op                                          closed; list read again; focus the
-//                                                                                     page's row if focus was in the pane
+//                                                                                     page's row if focus was in the tab
 //   reply refused      -                no-op                                          invalid with the reason, value
-//                                                                                     kept; focus the field if in the pane
+//                                                                                     kept; focus the field if in the tab
 //   page gone (the     -                closed; the alert says it is gone and nothing  as open / invalid
-//     list read again                   changed; focus its folder row if in the pane
+//     list read again                   changed; focus its folder row if in the tab
 //     lacks it)
 //   folder gone (the   -                a new page's field moves to the nearest       as it is: the store makes the
 //     list read again                   folder above still there, title kept; the     folder; a refusal then moves it
 //     lacks a new                       status says where; the focus stays
 //     page's folder)
-//   A slow reply stays pending: the writer can keep writing, read pages and fold the tree;
+//   A slow reply stays pending: the writer can keep writing, read pages and leave the tab;
 //   nothing times out, because the store finishes a rename it started even after a restart.
 //   Origin is the row (or the New page button) that opened the field. Inverses: a rename or
 //   a move is undone by another (links follow both ways); a new page has no undo in the
-//   pane (Folder-Actions leaves out page delete): its file is removed from the folder.
+//   tree (Folder-Actions leaves out page delete): its file is removed from the folder.
 import { key } from '../../librarian/links.ts';
 import { checkPath, checkTitle, PageRefused, titleOf, TREES, type Tree } from '../pages/identity.ts';
 import { titleIndex } from '../pages/titles.ts';
@@ -143,6 +149,29 @@ export function visibleRows(roots: readonly Folder[], open: ReadonlySet<string>)
   for (const root of roots) walk(root, 0, null);
   return rows;
 }
+
+// a title as the filter compares it: case and accents aside
+const plain = (text: string) => text.normalize('NFD').replace(/\p{M}/gu, '').toLocaleLowerCase().trim();
+
+/** The pages whose title holds the words typed; all of them for no words. Built into a tree, only their folders show. */
+export function filterPages<T extends Listed>(entries: readonly T[], query: string): T[] {
+  const words = plain(query);
+  return words ? entries.filter((e) => plain(e.title).includes(words)) : [...entries];
+}
+
+/** Every folder's key, so a filtered tree draws each match with the folders above it open. */
+export function allFolders(roots: readonly Folder[]): Set<string> {
+  const keys = new Set<string>();
+  const walk = (f: Folder) => { keys.add(f.key); f.folders.forEach(walk); };
+  roots.forEach(walk);
+  return keys;
+}
+
+const ROOT_NAMES: Record<Tree, string> = { wiki: 'Wiki', sources: 'Sources' };
+/** What a row shows: a tree's own folder by its capitalised name, anything else as it is. */
+export const rowName = (row: Row) => (row.parent === null ? ROOT_NAMES[row.tree] : row.name);
+/** A row's accessible name: a folder's says how many pages it holds. */
+export const rowLabel = (row: Row) => (row.kind === 'folder' ? `${rowName(row)}, ${row.count} page${row.count === 1 ? '' : 's'}` : row.name);
 
 /** Every folder of one tree, as paths inside it, the top of the tree ('') first. */
 export function foldersIn(roots: readonly Folder[], tree: Tree): string[] {

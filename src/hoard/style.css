@@ -89,26 +89,78 @@
 :is(.chapter-body, .hoard-wiki-page) code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.9em; }
 .hoard-wiki-page p.scene-break { text-align: center; color: var(--muted); }
 
-/* The wiki pane beside the book: a page looked up, with Back and Forward.
-   Links on the page are buttons that look like links. */
-.hoard-wiki-pane { margin-inline: 12px; }
-.hoard-wiki-nav { display: flex; flex-wrap: wrap; gap: 4px; }
-.hoard-wiki-nav button {
-  background: none; border: none; color: var(--muted); font-size: 11px;
-  min-block-size: 44px; min-inline-size: 44px;
+/* The page column (wiki/pane.ts), in the host's #split-body: paper, not pane, so the page
+   takes NEO's --paper and --ink in every page look, and its quieter colours are mixed from
+   them. Four sizes: 12px labels, 13px comments, 15px page text, 20px title, the page in the
+   book's own typeface. Below the window's 28px drag strip, a toolbar that stays put, then the
+   page and its comments in one measure that scrolls. */
+.hoard-page-column {
+  --pc-muted: color-mix(in srgb, var(--ink) 66%, var(--paper));
+  --pc-rule: color-mix(in srgb, var(--ink) 14%, var(--paper));
+  --pc-card: color-mix(in srgb, var(--ink) 6%, var(--paper));
+  --pc-accent: var(--accent);
+  --pc-mark: color-mix(in srgb, var(--accent) 30%, transparent);
+  --muted: var(--pc-muted);
+  display: flex; flex-direction: column; block-size: 100%;
+  padding-block-start: calc(28px / var(--ui-zoom, 1));
+  color: var(--ink);
 }
-.hoard-wiki-nav button:hover:not(:disabled) { color: var(--accent); }
-.hoard-wiki-nav button:disabled { opacity: 0.4; cursor: default; }
-.hoard-wiki-title { margin-block: 4px 8px; font-size: 14px; }
-.hoard-wiki-title:focus-visible, .hoard-wiki-pane button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.hoard-wiki-line { margin-block: 0 6px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* white paper in NEO's dark room: its gold is too pale for words on white */
+body:not(.night):not(.light) .hoard-page-column { --pc-accent: color-mix(in srgb, var(--accent) 55%, var(--ink)); }
+.hoard-col-scroll { flex: 1; min-block-size: 0; overflow-y: auto; padding-inline: 32px 24px; }
+.hoard-col-inner { max-inline-size: 38em; margin-inline: auto; padding-block-end: 64px; font-size: 15px; }
+.hoard-col-bar {
+  position: sticky; inset-block-start: 0; z-index: 2;
+  display: flex; align-items: center; min-block-size: 44px; margin-block-end: 20px;
+  background: var(--paper); border-block-end: 1px solid var(--pc-rule);
+}
+/* no weight of its own, so each button's size below wins */
+:where(.hoard-page-column) button { font: inherit; cursor: pointer; }
+.hoard-col-button {
+  display: inline-grid; place-items: center; flex: none; min-inline-size: 44px; min-block-size: 44px;
+  padding: 0; background: none; border: none; border-radius: 6px; color: var(--pc-muted);
+}
+.hoard-col-button svg { inline-size: 16px; block-size: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.hoard-col-button svg.hoard-icon-more { fill: currentColor; stroke: none; }
+/* Back and Forward point the way the text runs */
+:dir(rtl) :is(.hoard-icon-back, .hoard-icon-forward) { scale: -1 1; }
+.hoard-col-button:hover:not(:disabled), .hoard-crumb:hover, .hoard-col-quiet:hover { color: var(--pc-accent); }
+.hoard-col-button:disabled { opacity: 0.4; cursor: default; }
+.hoard-wiki-back { margin-inline-start: -14px; }
+.hoard-col-close { margin-inline-end: -14px; }
+.hoard-col-gap { flex: 1; }
+/* the folders of the page; where they do not fit, the first ones go */
+.hoard-crumbs { flex: 0 1 auto; min-inline-size: 0; display: flex; justify-content: flex-end; overflow: hidden; }
+.hoard-crumbs ol { display: flex; align-items: center; margin: 0; padding: 0; list-style: none; }
+.hoard-crumbs li { display: flex; flex: none; align-items: center; white-space: nowrap; }
+.hoard-crumbs li + li::before { content: '›' / ''; padding-inline: 2px; color: var(--pc-muted); }
+.hoard-crumb, .hoard-col-quiet {
+  min-block-size: 44px; padding-inline: 4px; background: none; border: none; border-radius: 4px;
+  font-size: 12px; color: var(--pc-muted);
+}
+.hoard-page-column :is(button, [tabindex], textarea):focus-visible { outline: 2px solid var(--pc-accent); outline-offset: 2px; }
+.hoard-page-column .hoard-wiki-title {
+  margin: 0; font-family: var(--body-font); font-size: 20px; font-weight: 700; line-height: 1.3;
+  color: var(--ink); overflow-wrap: break-word;
+}
+.hoard-page-column .hoard-wiki-status { margin: 8px 0 0; font-size: 12px; color: var(--pc-muted); }
+.hoard-wiki-page { margin-block-start: 8px; font-family: var(--body-font); font-size: 15px; line-height: 1.65; }
+.hoard-wiki-line { margin-block: 0 0.6em; white-space: pre-wrap; overflow-wrap: break-word; }
+/* headings stay under the title: the title's size for #, the text's for the rest */
+.hoard-wiki-page p:is(.wiki-h1, .wiki-h2, .wiki-h3, .wiki-h4, .wiki-h5, .wiki-h6) { font-size: 1em; line-height: 1.3; margin-block: 1.4em 0.4em; }
+.hoard-wiki-page p.wiki-h1 { font-size: calc(20em / 15); }
+.hoard-wiki-page p:is(.wiki-h3, .wiki-h4, .wiki-h5, .wiki-h6) { font-style: italic; }
+.hoard-wiki-empty { font-size: 13px; color: var(--pc-muted); }
+.hoard-wiki-empty p { margin: 0; }
+/* Links on a page are buttons that look like links, the size of their line (WCAG's inline
+   exception); one to no page is dotted and muted, and says so in its tooltip. */
 .hoard-wiki-link {
-  background: none; border: none; padding: 0; font: inherit; color: var(--accent);
-  text-decoration: underline; cursor: pointer; text-align: start;
+  background: none; border: none; padding: 0; font: inherit; color: var(--pc-accent, var(--accent));
+  text-decoration: underline; text-underline-offset: 2px; cursor: pointer; text-align: start;
 }
 .hoard-marks .hoard-wiki-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.hoard-wiki-missing { color: var(--muted); text-decoration: underline dotted; }
-/* A real link or image on a page in the pane: one locked piece of the text, kept as written.
+.hoard-wiki-missing { color: var(--muted); text-decoration: underline dotted; text-underline-offset: 2px; }
+/* A real link or image on a page in the column: one locked piece of the text, kept as written.
    A border and a label mark it, not colour alone; an image has no words, so its label is
    drawn from its alt text. */
 .hoard-wiki-chip {
@@ -118,96 +170,152 @@
 .hoard-wiki-chip-link { text-decoration: underline dotted; }
 .hoard-wiki-chip-image::before { content: 'Image: ' attr(data-alt); color: var(--muted); font-style: italic; }
 .hoard-wiki-chip-image[data-alt='']::before { content: 'Image'; }
-.hoard-wiki-page[contenteditable='true']:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.hoard-wiki-empty { font-size: 12px; color: var(--muted); }
-.hoard-wiki-where { margin-block: -6px 8px; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
-.hoard-wiki-where:empty { display: none; }
 
-/* The Pages tree at the top of the wiki pane (wiki/pane-tree.ts): rows are buttons in
-   nested lists, indented by depth, each at least 44px tall; a row's Rename and Move show
-   on hover or while the row holds the focus, as NEO's controls do. The page shown is
-   marked by weight and a bar as well as colour. No transitions. */
-.hoard-tree { margin-block-end: 8px; border-block-end: 1px solid color-mix(in srgb, var(--muted) 30%, transparent); }
-.hoard-tree-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-.hoard-tree button {
-  background: none; border: none; color: var(--muted); font: inherit; font-size: 11px; cursor: pointer;
-  min-block-size: 44px; min-inline-size: 44px; padding-inline: 6px; text-align: start;
+/* The Pages tab of the left pane (wiki/pane-tree.ts). Rows are full-width buttons in nested
+   lists, 44px at least, in NEO's row colours: 18px in, and 14px more a level up to level 5,
+   with a faint guide under each open folder's chevron. A name wraps to two lines, then ends
+   in an ellipsis, all of it in the tooltip and shown while the row has the focus. The page
+   shown is marked by weight, aria-current and a gold bar, not colour alone. No transitions. */
+.plugin-nav-body.hoard-pages-tab { padding: 0; }
+.hoard-tree {
+  --hoard-row: #aaa; --hoard-row-hi: #eee; --hoard-row-hover: #282828; --hoard-line: #2c2c2c;
+  font-size: 13px;
 }
-.hoard-tree button:hover, .hoard-tree .hoard-tree-name[aria-current='page'] { color: var(--accent); }
-.hoard-tree button[aria-disabled='true'] { opacity: 0.4; cursor: default; }
-.hoard-tree button:focus-visible, .hoard-tree-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.hoard-tree .hoard-tree-fold { flex: 1; font-size: 12px; font-weight: 600; padding-inline-start: 0; }
-.hoard-tree-chevron { display: inline-block; inline-size: 1.2em; }
+body.light .hoard-tree { --hoard-row: #4a463f; --hoard-row-hi: #1c1a17; --hoard-row-hover: #ebe8e2; --hoard-line: #dedad2; }
+.hoard-tree button { font: inherit; cursor: pointer; }
+.hoard-tree-head { display: flex; padding-inline: 8px; }
+.hoard-tree-head button {
+  min-block-size: 44px; padding-inline: 10px; background: none; border: none; border-radius: 4px;
+  font-size: 12px; color: var(--muted);
+}
+.hoard-tree-new::before { content: '+ ' / ''; }
+.hoard-tree-head button:hover { color: var(--accent); }
+.hoard-tree-head button[aria-disabled='true'] { opacity: 0.4; cursor: default; }
+/* the label holds the field, so all of its 44px row puts the caret there */
+.hoard-tree-filter { display: flex; align-items: center; gap: 8px; min-block-size: 44px; padding-inline: 18px 14px; font-size: 12px; color: var(--muted); }
+.hoard-tree-filter-input {
+  flex: 1; min-inline-size: 0; min-block-size: 32px; padding-inline: 8px;
+  font: inherit; font-size: 13px; color: var(--hoard-row-hi); background: transparent;
+  border: 1px solid var(--muted); border-radius: 4px;
+}
+.hoard-tree :is(button, input):focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.hoard-tree .hoard-alert, .hoard-tree .hoard-status, .hoard-tree-empty { margin-inline: 18px 14px; }
+.hoard-tree-empty { font-size: 12px; color: var(--muted); }
 .hoard-tree-list, .hoard-tree-sub { list-style: none; margin: 0; padding: 0; }
-.hoard-tree-row { display: flex; align-items: center; padding-inline-start: calc(var(--depth, 0) * 0.9em); }
-.hoard-tree .hoard-tree-name { flex: 1; min-inline-size: 0; overflow-wrap: anywhere; font-size: 12px; }
-.hoard-tree-folder > .hoard-tree-row > .hoard-tree-name::before { content: '▸ '; color: var(--muted); }
-.hoard-tree-folder > .hoard-tree-row > .hoard-tree-name[aria-expanded='true']::before { content: '▾ '; }
-.hoard-tree .hoard-tree-name[aria-current='page'] { font-weight: 600; border-inline-start: 2px solid var(--accent); }
-.hoard-tree-count { font-size: 11px; color: var(--muted); padding-inline-end: 6px; }
-.hoard-tree-act { opacity: 0; }
-.hoard-tree-row:hover .hoard-tree-act, .hoard-tree-row:focus-within .hoard-tree-act { opacity: 1; }
-.hoard-tree-editor { margin-block: 4px 8px; margin-inline-start: 1.2em; }
-.hoard-tree-editor .hoard-label { margin-block-end: 6px; font-size: 11px; }
+.hoard-tree-sub { position: relative; }
+.hoard-tree-sub::before {
+  content: ''; position: absolute; inset-block: 0; z-index: 1; pointer-events: none;
+  inset-inline-start: calc(18px + min(var(--depth, 0), 5) * 14px + 5px);
+  border-inline-start: 1px solid var(--hoard-line);
+}
+.hoard-tree .hoard-tree-name {
+  position: relative; display: flex; align-items: center; gap: 6px; inline-size: 100%;
+  min-block-size: 44px; padding-block: 5px; padding-inline: calc(18px + min(var(--depth, 0), 5) * 14px) 14px;
+  background: none; border: none; border-radius: 0; text-align: start;
+  font-size: 13px; line-height: 1.3; color: var(--hoard-row);
+}
+.hoard-tree .hoard-tree-name:hover { background: var(--hoard-row-hover); color: var(--hoard-row-hi); }
+.hoard-tree .hoard-tree-name[aria-current='page'] { font-weight: 600; color: var(--hoard-row-hi); }
+.hoard-tree-name[aria-current='page']::before {
+  content: ''; position: absolute; z-index: 2; inset-block: 8px;
+  inset-inline-start: calc(8px + min(var(--depth, 0), 5) * 14px);
+  inline-size: 3px; border-radius: 2px; background: var(--accent);
+}
+.hoard-tree-chevron { flex: none; inline-size: 12px; font-size: 10px; color: var(--muted); text-align: center; }
+.hoard-tree-name[aria-expanded='false'] .hoard-tree-chevron::before { content: '▸'; }
+.hoard-tree-name[aria-expanded='true'] .hoard-tree-chevron::before { content: '▾'; }
+:dir(rtl) .hoard-tree-name[aria-expanded='false'] .hoard-tree-chevron { scale: -1 1; }
+.hoard-tree-label {
+  flex: 1; min-inline-size: 0; overflow: hidden; overflow-wrap: break-word;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
+.hoard-tree-name:focus-visible .hoard-tree-label { -webkit-line-clamp: unset; }
+.hoard-tree-count { flex: none; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* a tree's own folder reads as the pane's heads do, and stays in sight while its rows scroll */
+.hoard-tree .hoard-tree-root > .hoard-tree-name {
+  position: sticky; inset-block-start: 0; z-index: 3; background: var(--pane);
+  font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted);
+}
+.hoard-tree .hoard-tree-root > .hoard-tree-name:hover { background: var(--hoard-row-hover); }
+.hoard-tree-editor { margin-block: 4px 8px; margin-inline: 18px 14px; }
+.hoard-tree-editor .hoard-label { margin-block-end: 6px; font-size: 12px; }
+.hoard-tree-editor button {
+  min-block-size: 44px; min-inline-size: 44px; padding-inline: 6px; background: none; border: none;
+  font-size: 12px; color: var(--muted);
+}
+.hoard-tree-editor button:hover { color: var(--accent); }
+.hoard-tree-editor button[aria-disabled='true'] { opacity: 0.4; cursor: default; }
 .hoard-tree-input {
   display: block; box-sizing: border-box; inline-size: 100%; min-block-size: 44px; padding-inline: 6px;
-  font: inherit; font-size: 12px; color: inherit; background: transparent;
-  border: 1px solid color-mix(in srgb, var(--muted) 60%, transparent); border-radius: 3px;
+  font: inherit; font-size: 13px; color: var(--hoard-row-hi); background: transparent;
+  border: 1px solid var(--muted); border-radius: 3px;
 }
 /* NEO's red is too dark for small text on the dark pane, so it is lifted there */
 .hoard-tree-input[aria-invalid='true'] { border-color: color-mix(in srgb, var(--red) 70%, var(--paper)); border-width: 2px; }
 body.light .hoard-tree-input[aria-invalid='true'] { border-color: var(--red); }
 .hoard-tree-input[aria-busy='true'] { opacity: 0.6; }
-.hoard-tree-hint, .hoard-tree-error { margin-block: 4px 0; font-size: 11px; }
+.hoard-tree-hint, .hoard-tree-error { margin-block: 4px 0; font-size: 12px; }
 .hoard-tree-hint { color: var(--muted); }
 .hoard-tree-error { color: color-mix(in srgb, var(--red) 70%, var(--paper)); }
 body.light .hoard-tree-error { color: var(--red); }
 .hoard-tree-error:empty { display: none; }
 .hoard-tree-actions { display: flex; flex-wrap: wrap; gap: 4px; }
 .hoard-tree .hoard-tree-submit { color: var(--accent); font-weight: 600; }
-.hoard-tree-empty { font-size: 12px; color: var(--muted); }
-.hoard-tree-body[hidden], .hoard-tree-empty[hidden] { display: none; }
 
-/* Editing in the pane (wiki/pane-edit.ts): the page takes the caret as NEO's own pages
+/* Editing in the column (wiki/pane-edit.ts): the page takes the caret as NEO's own pages
    do, with no outline of its own; an empty line keeps a line's height so the caret can
-   go in. The librarian's mode line reads as the book's does. */
-.hoard-wiki-page[contenteditable='true'] { outline: none; cursor: text; caret-color: var(--accent); }
+   go in. The librarian's mode line reads as the column's meta does. */
+.hoard-wiki-page[contenteditable='true'] { outline: none; cursor: text; caret-color: var(--pc-accent); }
 .hoard-wiki-page[contenteditable='true'] .hoard-wiki-line { min-block-size: 1.2em; }
-.hoard-pane-mode { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-block-end: 8px; }
+.hoard-pane-mode { display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; margin-block-start: 8px; }
 .hoard-pane-mode[hidden] { display: none; }
-.hoard-pane-mode-text { flex: 1 1 100%; margin: 0; font-size: 11px; color: var(--muted); }
+.hoard-pane-mode-text { flex: 1 1 100%; margin: 0; font-size: 12px; color: var(--pc-muted); }
 .hoard-pane-direct {
-  background: none; border: none; color: var(--muted); font-size: 11px; padding: 0;
-  min-block-size: 44px; min-inline-size: 44px; opacity: 0;
+  background: none; border: none; color: var(--pc-muted); font-size: 12px; padding: 0;
+  min-block-size: 44px; min-inline-size: 44px;
 }
-.hoard-wiki-pane:hover .hoard-pane-direct, .hoard-pane-direct:focus-visible { opacity: 1; }
-.hoard-pane-direct:hover { color: var(--accent); }
+.hoard-pane-direct:hover { color: var(--pc-accent); }
 
 .hoard-extra { display: inline-flex; gap: 8px; margin-inline-start: 8px; }
 .hoard-extra[hidden] { display: none; }
 .hoard-mark .hoard-extra button { min-block-size: 44px; min-inline-size: 44px; }
 
-/* Marks in the Wiki pane (marks/pane-marks.ts): drawn on the pane's own lines with the
-   plugin's own highlights, the same look as on the page. */
-::highlight(hoard-pane-comment) { background-color: color-mix(in srgb, var(--accent) 26%, transparent); }
+/* Comments on the page shown (marks/pane-marks.ts): under the page after a rule, drawn on
+   its lines with the plugin's own highlights. The cards are NEO's sticky shape on paper. */
+::highlight(hoard-pane-comment) { background-color: var(--pc-mark); }
 ::highlight(hoard-pane-highlight) { background-color: color-mix(in srgb, var(--muted) 30%, transparent); }
 ::highlight(hoard-pane-suggestion) { text-decoration: underline dotted var(--accent); }
 ::highlight(hoard-pane-insertion) { text-decoration: underline double var(--accent); }
 ::highlight(hoard-pane-flagged) { background-color: color-mix(in srgb, var(--red) 26%, transparent); }
-.hoard-pane-marks { margin-block-start: 12px; }
-.hoard-pane-marks-head { display: flex; align-items: center; gap: 8px; margin-inline: 12px; }
-.hoard-pane-marks-title { flex: 1; margin: 0; font-size: 11px; font-weight: normal; color: var(--muted); }
+.hoard-pane-marks { margin-block-start: 40px; padding-block-start: 16px; border-block-start: 1px solid var(--pc-rule); font-size: 13px; }
+.hoard-pane-marks-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; margin-block-end: 8px; }
+.hoard-pane-marks-title { flex: 1 0 auto; margin: 0; font-size: 12px; font-weight: 400; text-transform: uppercase; letter-spacing: 2px; color: var(--pc-muted); }
 .hoard-pane-add, .hoard-pane-suggest {
-  background: none; border: none; color: var(--muted); font-size: 11px;
-  min-block-size: 44px; min-inline-size: 44px; opacity: 0;
+  min-block-size: 44px; padding-inline: 6px; background: none; border: none; border-radius: 4px;
+  font-size: 12px; color: var(--pc-muted);
 }
-.hoard-wiki-pane:hover :is(.hoard-pane-add, .hoard-pane-suggest), .hoard-pane-add:focus-visible, .hoard-pane-suggest:focus-visible { opacity: 1; }
-.hoard-pane-add:hover, .hoard-pane-suggest:hover { color: var(--accent); }
+.hoard-pane-add:hover, .hoard-pane-suggest:hover { color: var(--pc-accent); }
+.hoard-pane-marks .hoard-alert, .hoard-pane-marks .hoard-status { margin-inline: 0; }
 .hoard-pane-composer { cursor: default; }
-.hoard-pane-marks textarea:focus-visible, .hoard-pane-marks button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .hoard-pane-marks .s-actions button { min-block-size: 44px; min-inline-size: 44px; }
+#split-body .sticky:is(.hoard-mark, .hoard-pane-composer) {
+  margin: 0 0 12px; padding: 10px 12px; border-radius: 6px; box-shadow: none;
+  background: var(--pc-card); color: var(--ink); border-inline-start: 3px solid var(--pc-accent);
+  font-size: 13px; line-height: 1.45;
+}
+#split-body .sticky.hoard-mark.active { border-inline-start-width: 6px; }
+#split-body .sticky.hoard-mark.resolved { border-inline-start-color: var(--pc-muted); }
+#split-body .sticky .s-ch { font-size: 12px; font-style: italic; text-transform: none; letter-spacing: 0; color: var(--pc-muted); }
+#split-body .sticky .hoard-quote { display: flex; align-items: center; min-block-size: 44px; margin-block: -10px -4px; }
+#split-body .sticky :is(.hoard-who, .hoard-label) { font-size: 12px; color: var(--pc-muted); }
+#split-body .sticky textarea { color: var(--ink); }
+#split-body .sticky .s-actions button { font-size: 12px; color: var(--pc-muted); }
+#split-body .sticky .s-actions button:hover { color: var(--pc-accent); }
+#split-body .sticky .s-actions .s-sep { color: var(--pc-rule); }
+#split-body .stickies-empty { padding: 0; text-align: start; font-size: 13px; color: var(--pc-muted); }
 .hoard-pane-marks .hoard-mark .hoard-label, .hoard-pane-marks .hoard-mark .hoard-reply, .hoard-pane-marks .hoard-mark .s-actions { opacity: 0; }
 .hoard-pane-marks .hoard-mark:hover :is(.hoard-label, .hoard-reply, .s-actions),
+.hoard-pane-marks .hoard-mark.active :is(.hoard-label, .hoard-reply, .s-actions),
 .hoard-pane-marks .hoard-mark:focus-within :is(.hoard-label, .hoard-reply, .s-actions) { opacity: 1; }
 /* Search beside the book: a field, where to look, a line saying what was found, and the
    results in a group per book, each a button with the words around the match. */
