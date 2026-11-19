@@ -5,10 +5,13 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { test } from 'node:test';
+import { test as plainTest, type TestContext } from 'node:test';
 import { fakeUv } from './fake-uv.ts';
 import { tempHoard } from './hoard.ts';
 import { startServer, type Client, type Reply } from './support.ts';
+
+// Every test has a deadline, so a request that waits on a tool fails the test instead of hanging the run.
+const test = (name: string, fn: (t: TestContext) => Promise<void>) => plainTest(name, { timeout: 10_000 }, fn);
 
 const git = (repo: string, ...args: string[]) => execFileSync('git', args, { cwd: repo }).toString();
 const blob = (repo: string, text: string) => execFileSync('git', ['hash-object', '--no-filters', '--stdin'], { cwd: repo, input: text }).toString().trim();
