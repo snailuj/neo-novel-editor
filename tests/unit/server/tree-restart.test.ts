@@ -85,7 +85,7 @@ test('an unreadable state.json is moved aside, not deleted, and the index is reb
   await tree.close();
 });
 
-test('the library folder is created when missing, and temp files and unacceptable names are skipped with a warning', async (t) => {
+test('the library folder is created when missing, and leftover temp files are removed and unacceptable names are skipped, each with a warning', async (t) => {
   const h = tempHoard(t);
   assert.equal(existsSync(lib(h, '')), false);
   const first = await openTestTree(h);
@@ -97,7 +97,9 @@ test('the library folder is created when missing, and temp files and unacceptabl
   write(h, 'wiki/ok.html', 'ok');
   const { tree, lines } = await openTestTree(h);
   assert.deepEqual(tree.changes(0, 10).changes.map((c) => c.path), ['wiki/ok.html']);
-  assert.deepEqual(lines.filter((l) => l.level === 'warn').map((l) => l.msg).sort(), ['reconcile.skip_bad_path', 'reconcile.skip_bad_path', 'reconcile.skip_temp']);
+  assert.deepEqual(lines.filter((l) => l.level === 'warn').map((l) => l.msg).sort(), ['reconcile.skip_bad_path', 'reconcile.skip_bad_path', 'reconcile.temp_removed']);
+  assert.equal(existsSync(lib(h, 'wiki/.neo-tmp-abc')), false, 'nothing else is writing, so the leftover temp file goes');
+  assert.equal(existsSync(lib(h, 'wiki/ok.html')), true);
   await tree.close();
 });
 

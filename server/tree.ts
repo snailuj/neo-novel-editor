@@ -50,7 +50,17 @@ async function walk(root: string, log: Log): Promise<string[]> {
     }
     for (const entry of entries) {
       const relative = rel === '' ? entry.name : `${rel}/${entry.name}`;
-      if (entry.name.startsWith(TEMP_PREFIX)) { log('warn', 'reconcile.skip_temp', { path: relative }); continue; }
+      if (entry.name.startsWith(TEMP_PREFIX)) {
+        // Only this process writes here, and it has not started yet, so a temp file is the debris of a crash.
+        if (!entry.isFile()) { log('warn', 'reconcile.skip_bad_path', { path: relative }); continue; }
+        try {
+          await unlink(path.join(abs, entry.name));
+          log('warn', 'reconcile.temp_removed', { path: relative });
+        } catch (e) {
+          log('warn', 'reconcile.temp_remove_failed', { path: relative, code: (e as NodeJS.ErrnoException).code });
+        }
+        continue;
+      }
       try { checkPath(relative); } catch { log('warn', 'reconcile.skip_bad_path', { path: relative }); continue; }
       if (entry.isDirectory()) await visit(path.join(abs, entry.name), relative);
       else if (entry.isFile()) found.push(relative);
