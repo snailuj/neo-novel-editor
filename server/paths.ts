@@ -6,9 +6,16 @@ import { ApiError } from './errors.ts';
 /** Temp files are written under this name, so no client path may start a segment with it. */
 export const TEMP_PREFIX = '.neo-tmp-';
 
-const CONTROL = /[\u0000-\u001f\u007f]/;
 const WINDOWS_ILLEGAL = /[<>:"|?*]/;
 const WINDOWS_DEVICE = /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])$/i;
+
+function hasControl(p: string): boolean {
+  for (let i = 0; i < p.length; i += 1) {
+    const c = p.charCodeAt(i);
+    if (c < 0x20 || c === 0x7f) return true;
+  }
+  return false;
+}
 
 function refuse(p: string, why: string): never {
   throw new ApiError('bad_path', 400, `bad path ${JSON.stringify(p)}: ${why}`);
@@ -19,7 +26,7 @@ export function checkPath(p: string): string {
   if (p.startsWith('/')) refuse(p, 'leading slash');
   if (p.endsWith('/')) refuse(p, 'trailing slash');
   if (p.includes('\\')) refuse(p, 'backslash');
-  if (CONTROL.test(p)) refuse(p, 'control character');
+  if (hasControl(p)) refuse(p, 'control character');
   if (p !== p.normalize('NFC')) refuse(p, 'not NFC');
   for (const segment of p.split('/')) {
     if (segment === '') refuse(p, 'empty segment');

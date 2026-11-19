@@ -6,7 +6,7 @@ import { open, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { TEMP_PREFIX } from './paths.ts';
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Windows refuses a rename for a moment while a scanner or another handle lets go. */
 export async function renameRetrying(from: string, to: string, attempts = 8): Promise<void> {

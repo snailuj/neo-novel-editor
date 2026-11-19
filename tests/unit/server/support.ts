@@ -39,7 +39,7 @@ export function clientFor(server: Server, device = 'test-device'): Client {
     req.end(options.body);
   });
   const file = (p: string) => `/v1/files/${p.split('/').map(encodeURIComponent).join('/')}`;
-  const q = (v: string | undefined) => (v === undefined ? {} : { 'If-Match': `"${v}"` });
+  const q = (v: string | undefined): Record<string, string> => (v === undefined ? {} : { 'If-Match': `"${v}"` });
   return {
     url: `http://127.0.0.1:${port}`,
     call,
@@ -58,6 +58,6 @@ export async function startServer(t: Cleanup, hoard: Hoard, options: { bodyLimit
   const log = (level: string, msg: string, data?: Record<string, unknown>) => { lines.push({ level, msg, ...data }); };
   const server = createServer(tree, { log, ...options });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  t.after(async () => { server.closeAllConnections(); await new Promise((r) => server.close(r)); await tree.close(); });
+  t.after(async () => { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); await tree.close(); });
   return { tree, client: clientFor(server), server, lines };
 }
