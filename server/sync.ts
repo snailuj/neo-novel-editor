@@ -3,13 +3,11 @@
 // read meets a library that is half way through a pull. What the pull changed is
 // re-hashed through the tree, which raises the seq, so clients see the remote's changes
 // like any other. A rebase that conflicts is aborted before its markers can be read.
-import { existsSync } from 'node:fs';
-import path from 'node:path';
 import type { Clock } from './history/checkpoints.ts';
 import { systemClock } from './history/checkpoints.ts';
 import { libraryNames, wholeSpec } from './history/pathspec.ts';
 import { GitError } from './history/runner.ts';
-import type { History } from './history.ts';
+import { rebaseInProgress as rebaseInProgressIn, type History } from './history.ts';
 import type { Log } from './log.ts';
 import type { Tree } from './tree.ts';
 
@@ -77,13 +75,7 @@ export async function openSync(options: SyncOptions): Promise<Sync> {
     return { status: () => current, runOnce: async () => current, start() {}, stop() {}, settled: async () => {} };
   }
 
-  async function rebaseInProgress(): Promise<boolean> {
-    for (const name of ['rebase-merge', 'rebase-apply']) {
-      const { stdout } = await git.run(repo.top, ['rev-parse', '--git-path', name]);
-      if (existsSync(path.resolve(repo.top, stdout.trim()))) return true;
-    }
-    return false;
-  }
+  const rebaseInProgress = () => rebaseInProgressIn(git, repo.top);
 
   /** Library paths between two commits, relative to the library; `before` null lists everything `after` holds. */
   async function changedPaths(before: string | null, after: string): Promise<string[]> {

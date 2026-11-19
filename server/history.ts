@@ -3,6 +3,7 @@
 // restarts the idle timer, and the commit that follows names every device whose writes it
 // holds in a `Neo-Device` trailer. Commits run inside the tree's exclusive hold, so no
 // write lands between staging and committing and the trailers are exact.
+import { existsSync } from 'node:fs';
 import { mkdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { Checkpoints, systemClock, type Clock } from './history/checkpoints.ts';
@@ -61,6 +62,20 @@ export function deviceName(raw: unknown): string {
   return cleaned === '' ? 'unknown' : cleaned;
 }
 
+/** A rebase is stopped in the clone, so the work tree may hold conflict markers. */
+export async function rebaseInProgress(git: Git, top: string): Promise<boolean> {
+  for (const name of ['rebase-merge', 'rebase-apply']) {
+    const { stdout } = await git.run(top, ['rev-parse', '--git-path', name]);
+    if (existsSync(path.resolve(top, stdout.trim()))) return true;
+  }
+  return false;
+}
+
+/** A commit refused because a rebase is in progress; it is retried like any failed commit. */
+export class RebaseInProgress extends Error {
+  constructor() { super('a rebase is in progress in the clone, so the library is not committed until it is finished or aborted'); }
+}
+
 /** The library as a folder of the clone, with the tree's temp files kept out of every commit. */
 async function locate(repo: string, library: string): Promise<LibraryRepo> {
   const top = path.resolve(await topLevel(repo));
@@ -93,6 +108,16 @@ export async function openHistory(options: HistoryOptions): Promise<History> {
   const gitLog = (level: 'error' | 'warn' | 'info' | 'debug', message: string, data?: unknown) => log(level, message, asData(data));
   const git = createGit({ hooksPath: hooks, log: gitLog });
   const repo = await locate(options.repo, options.library);
+  // A crash mid-pull leaves the rebase stopped with markers in the library; the tree must
+  // never read them, so the rebase is undone before it opens.
+  if (await rebaseInProgress(git, repo.top)) {
+    try {
+      await git.run(repo.top, ['rebase', '--abort']);
+    } catch (err) {
+      throw new Error(`a rebase is in progress in ${repo.top} and \`git rebase --abort\` failed (${err instanceof Error ? err.message : String(err)}); finish or abort it by hand, then start the server again`);
+    }
+    log('warn', 'history.rebase_aborted: a rebase left in progress was aborted, so the library is as it was before it', { top: repo.top });
+  }
   // A missing identity must stop the server here, not at the first commit an hour later.
   const identity = options.author ?? await configuredAuthor(git, repo.top);
   const gate = new Gate({ library: () => repo.library, log: gitLog });
@@ -116,6 +141,7 @@ export async function openHistory(options: HistoryOptions): Promise<History> {
 
   async function commit(reason: Reason): Promise<string | null> {
     const start = performance.now();
+    if (await rebaseInProgress(git, repo.top)) throw new RebaseInProgress();
     const devices = pending;
     pending = new Set();
     try {
@@ -150,7 +176,8 @@ export async function openHistory(options: HistoryOptions): Promise<History> {
       const key = err instanceof GitError ? `${err.kind}:${err.stderr.trim()}` : String(err);
       if (key !== lastFailure) {
         lastFailure = key;
-        log('error', 'history.commit.failed', { reason, message: err instanceof Error ? err.message : String(err) });
+        if (err instanceof RebaseInProgress) log('warn', `history.commit.skipped: ${err.message}`, { reason });
+        else log('error', 'history.commit.failed', { reason, message: err instanceof Error ? err.message : String(err) });
       }
       armRetry(reason);
     },
