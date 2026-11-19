@@ -1,6 +1,6 @@
 // Shares the clone with its remote on a timer: commit what is waiting, `pull --rebase`,
-// `push`. The whole cycle runs inside the tree's exclusive hold, so no client write or
-// read meets a library that is half way through a pull. What the pull changed is
+// `push`. The commit, pull and rescan run inside the tree's exclusive hold, so no client
+// write or read meets a library that is half way through a pull. What the pull changed is
 // re-hashed through the tree, which raises the seq, so clients see the remote's changes
 // like any other. A rebase that conflicts is aborted before its markers can be read.
 import type { Clock } from './history/checkpoints.ts';
@@ -90,7 +90,9 @@ export async function openSync(options: SyncOptions): Promise<Sync> {
     const start = performance.now();
     const branch = (await run(['symbolic-ref', '--short', 'HEAD']).catch(() => ({ stdout: '' }))).stdout.trim();
     if (!branch) throw new Error('HEAD is not on a branch, so there is nothing to pull into or push from');
-    await tree.exclusive(async (held) => {
+    // The pull and rescan hold the tree; the push only sends commits already made, so the
+    // clients write and read while it is on the wire.
+    const { committed, before, head, changed } = await tree.exclusive(async (held) => {
       const committed = await history.commit('sync');
       const before = history.lastCommit();
       let pulled = true;
@@ -114,9 +116,10 @@ export async function openSync(options: SyncOptions): Promise<Sync> {
         changed = await held.rescan(await changedPaths(before, head));
         history.setLastCommit(head);
       }
-      await run(['push', 'origin', `HEAD:${branch}`]);
-      log('info', 'sync.cycle', { branch, committed, before, head, pulledChanges: changed, ms: Math.round(performance.now() - start) });
+      return { committed, before, head, changed };
     });
+    await run(['push', 'origin', `HEAD:${branch}`]);
+    log('info', 'sync.cycle', { branch, committed, before, head, pulledChanges: changed, ms: Math.round(performance.now() - start) });
   }
 
   let running = false;

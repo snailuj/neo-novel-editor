@@ -177,3 +177,29 @@ test('a sync period of 0 turns the sync off even with an origin', async (t) => {
   assert.equal(l.sync.status().state, 'off');
   assert.equal(git(h.remote, 'log', 'main', '--format=%s').trim(), 'seed');
 });
+
+test('the push runs after the tree is released, so clients read and write while it is on the wire', async (t) => {
+  const h = syncHoard(t);
+  const l = await openWithHistory(t, h, SYNC);
+  const entered = path.join(h.root, 'push-entered');
+  const release = path.join(h.root, 'push-release');
+  const hook = path.join(h.remote, 'hooks', 'pre-receive');
+  const slash = (p: string) => p.replace(/\\/g, '/');
+  writeFileSync(hook, `#!/bin/sh\ntouch "${slash(entered)}"\nwhile [ ! -e "${slash(release)}" ]; do sleep 0.05; done\n`);
+  chmodSync(hook, 0o755);
+  await l.tree.put('wiki/mine.html', Buffer.from('mine'), { ...NEW, device: 'tablet' });
+
+  const cycle = l.sync.runOnce();
+  try {
+    for (let i = 0; i < 400 && !existsSync(entered); i += 1) await new Promise((r) => setTimeout(r, 25));
+    assert.ok(existsSync(entered), 'the push reached the remote');
+    const within = <T>(p: Promise<T>) => Promise.race([p, new Promise<never>((_, reject) => setTimeout(() => reject(new Error('held while the push ran')), 3_000))]);
+    assert.equal((await within(l.tree.read('wiki/mine.html'))).bytes.toString(), 'mine');
+    await within(l.tree.put('wiki/during.html', Buffer.from('during'), { ...NEW, device: 'tablet' }));
+  } finally {
+    // Released whatever the outcome, or the held cycle would keep the test from ending.
+    writeFileSync(release, '');
+  }
+  assert.equal((await cycle).state, 'ok');
+  assert.ok(remoteFiles(h).includes('library/wiki/mine.html'));
+});
