@@ -1029,7 +1029,8 @@ function loadMain(profile, appDir) {
     },
     ready(order) {
       for (const name of ['createWindow', 'announceLibraryFallback', 'initSpell', 'buildMenu', 'dailyBackup', 'checkForUpdates']) {
-        context[name] = () => { order.push(name); };
+        // (initSpell is async: startup attaches a catch to what it returns)
+        context[name] = () => { order.push(name); return name === 'initSpell' ? Promise.resolve() : undefined; };
       }
       whenReady();
     }
@@ -1156,12 +1157,12 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
       host.onAfterWrite((event) => heard.push(event))
     ];
     try {
-      const book = main.call('book:create', { title: 'Owls', author: 'Ada' });
-      assert.equal(main.call('chapter:write', book.id, 'c1', '<p>Owl</p>'), true);
+      const book = await main.call('book:create', { title: 'Owls', author: 'Ada' });
+      assert.equal(await main.call('chapter:write', book.id, 'c1', '<p>Owl</p>'), true);
       assert.deepEqual(heard, [], 'the write answered before any listener ran');
       await turn();
       assert.deepEqual(heard, [{ kind: 'chapter', bookId: book.id, name: 'c1' }]);
-      assert.equal(main.call('chapter:read', book.id, 'c1'), '<p>Owl</p>');
+      assert.equal(await main.call('chapter:read', book.id, 'c1'), '<p>Owl</p>');
       assert.match(errorLog(), /\[plugin probe: after-write\] Error: an after-write listener throws on purpose\r?\n\s+at /);
     } finally {
       for (const off of offs) off();
@@ -1173,11 +1174,11 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
     const heard = [];
     const off = host.onAfterWrite((event) => heard.push(event));
     try {
-      const book = main.call('book:create', { title: 'Foxes', author: 'Ada' });
-      main.call('aux:write', book.id, 'notes', '<p>margin</p>');
-      main.call('json:write', book.id, 'darlings', []);
-      main.call('book:writeMeta', book.id, { ...book });
-      main.call('chapter:write', book.id, 'c1', '<p>Fox</p>');
+      const book = await main.call('book:create', { title: 'Foxes', author: 'Ada' });
+      await main.call('aux:write', book.id, 'notes', '<p>margin</p>');
+      await main.call('json:write', book.id, 'darlings', []);
+      await main.call('book:writeMeta', book.id, { ...book });
+      await main.call('chapter:write', book.id, 'c1', '<p>Fox</p>');
       await turn();
       assert.deepEqual(heard, [
         { kind: 'aux', bookId: book.id, name: 'notes' },
@@ -1186,7 +1187,7 @@ describe('main.js and the plugins\' main halves', { concurrency: 1 }, () => {
         { kind: 'chapter', bookId: book.id, name: 'c1' }
       ]);
       // another device wrote other words since: nothing is written, so nothing is heard
-      const refused = main.call('chapter:write', book.id, 'c1', '<p>Badger</p>', '<p>An older text</p>');
+      const refused = await main.call('chapter:write', book.id, 'c1', '<p>Badger</p>', '<p>An older text</p>');
       assert.equal(JSON.stringify(refused), '{"conflict":"<p>Fox</p>"}');
       await turn();
       assert.equal(heard.length, 4);

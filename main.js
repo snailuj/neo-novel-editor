@@ -8,6 +8,26 @@ const fs = require('fs');
 const os = require('os');
 const { Buffer } = require('buffer');
 const plugins = require('./plugins-main.js');
+const { createFsStore, createICloud, createJsonFiles, libName } = require('./src/store/index.ts');
+
+// The store owns every library file. These are shared with the code that has not moved
+// behind it yet (covers, art, the error log, backup, folder moves), and are the same
+// objects the store uses, so there is one iCloud queue and one set of recovery rules.
+const icloud = createICloud({ platform: process.platform });
+const jsonFiles = createJsonFiles({ log: (source, detail) => logError(source, detail), icloud, platform: process.platform });
+const { readJSON, writeJSON, parseJSONFile, writeFileDurable } = jsonFiles;
+const { cloudOnlyAmong, isCloudOnly, whenLocal, afterLocal, cloudError } = icloud;
+
+// One store per library folder. The folder is set at startup and changes with a relaunch,
+// but a test (or a fall-back to another folder) can point LIBRARY_DIR elsewhere, so the
+// store follows it.
+let fsStore = null;
+function libraryStore() {
+  if (!fsStore || fsStore.root !== LIBRARY_DIR) {
+    fsStore = createFsStore({ root: LIBRARY_DIR, log: (source, detail) => logError(source, detail), t, platform: process.platform, icloud, json: jsonFiles });
+  }
+  return fsStore;
+}
 
 // Every disk request from the page passes through here: a write the system
 // refuses (see reportBlockedWrite) is explained to the writer, then the error
@@ -149,13 +169,15 @@ ipcMain.on('i18n:get', (e) => {
 
 // View → Language: save the choice, redraw the menus, and let the window
 // save its pages before it reloads in the new language
-function setUiLanguage(code) {
+async function setUiLanguage(code) {
   loadLanguage(code);
   const settings = readSettings();
   settings.uiLanguage = uiLanguage;
   writeSettings(settings);
   // no dictionary picked yet: spellcheck moves with the interface
-  if (!SPELL_LANGUAGES[chosenSpellLanguage()] && defaultSpellLanguage() !== spellLanguage) {
+  let picked;
+  try { picked = await chosenSpellLanguage(); } catch (err) { logError('spell', err); }
+  if (!SPELL_LANGUAGES[picked] && defaultSpellLanguage() !== spellLanguage) {
     spellLanguage = defaultSpellLanguage();
     loadSpellDictionary(spellLanguage);
   }
@@ -286,7 +308,7 @@ async function moveLibraryAndClose(win, from, to) {
     await dialog.showMessageBox({
       type: 'warning',
       message: t('Your books weren’t moved'),
-      detail: (err && err.code === 'ECLOUD'
+      detail: (err && err.code === 'cloud_only'
         ? t('iCloud is still bringing NEO Pocket’s books to this Mac. Try again in a minute.')
         : String((err && err.message) || err)) + '\n\n' + t('Nothing was changed. Your books are still in:\n{dir}', { dir: from }),
       buttons: [t('OK')]
@@ -634,164 +656,12 @@ function reportBlockedWrite(err) {
   (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts)).catch(() => {});
 }
 
-// A brand-new library starts with one empty shelf. A library.json that has
-// gone missing beside its spare copies or its books is not a new library:
-// library:read recovers it (from .tmp/.bak, else from the book folders)
-// instead of an empty seed hiding every book.
-function libraryHasHistory() {
-  if (fs.existsSync(LIBRARY_FILE + '.bak') || fs.existsSync(LIBRARY_FILE + '.tmp')) return true;
-  try { return fs.readdirSync(LIBRARY_DIR).some((d) => d.startsWith('book-')); } catch { return false; }
-}
-function ensureLibrary() {
-  if (!fs.existsSync(LIBRARY_DIR)) fs.mkdirSync(LIBRARY_DIR, { recursive: true });
-  if (!fs.existsSync(LIBRARY_FILE) && !libraryHasHistory()) {
-    const seed = {
-      authorName: '',
-      penNames: [],
-      firstRunDone: false,
-      pageTheme: 'night',
-      shelves: [{ id: 'shelf-1', name: t('Works in Progress'), bookIds: [] }]
-    };
-    fs.writeFileSync(LIBRARY_FILE, JSON.stringify(seed, null, 2));
-  }
-}
-
-// Every book, chapter and sidecar name the page sends is one plain name
-// inside the library: ".", ".." and path separators never reach the disk.
-// Any name NEO ever made passes, and so does a folder named by hand.
-function libName(name) {
-  if (typeof name !== 'string' || !name || name === '.' || name === '..' || /[\\/\0]/.test(name)) {
-    throw new Error('Invalid library name');
-  }
-  return name;
-}
-
+// Library files are opened by the store (src/store), never here. What stays in main.js
+// is the path of a book folder for the covers, and this look over the library for iCloud.
 function bookDir(bookId) {
   return path.join(LIBRARY_DIR, libName(bookId));
 }
 
-// A human-readable map of the library, regenerated on every change:
-// which folder is which book, and what shelf it lives on. Sorts to the
-// top of the folder so browsing writers can always find their way.
-function writeCatalog() {
-  try {
-    const lib = readJSON(LIBRARY_FILE, { shelves: [] });
-    const onShelf = {};
-    for (const s of lib.shelves || []) {
-      for (const id of s.bookIds) onShelf[id] = s.name;
-    }
-    const lines = [];
-    const metas = fs.readdirSync(LIBRARY_DIR).filter((d) => d.startsWith('book-')).map((d) => path.join(LIBRARY_DIR, d, 'book.json'));
-    // a book still in iCloud would drop out of the catalog: leave it as it is
-    const away = cloudOnlyAmong(metas);
-    if (away.size) { requestDownload(away); return; }
-    for (const d of fs.readdirSync(LIBRARY_DIR)) {
-      if (!d.startsWith('book-')) continue;
-      try {
-        const m = JSON.parse(fs.readFileSync(path.join(LIBRARY_DIR, d, 'book.json'), 'utf8'));
-        lines.push(`${m.title || t('Untitled')}  —  ${d}  —  ${t('shelf:')} ${onShelf[m.id] || t('(none — removed from shelves)')}`);
-      } catch { /* not a valid book folder */ }
-    }
-    lines.sort((a, b) => a.localeCompare(b));
-    const text = t('NEO LIBRARY CATALOG — which folder is which book') + '\n' +
-      t('(regenerated automatically; edits here do nothing)') + '\n\n' +
-      lines.join('\n') + '\n';
-    const file = path.join(LIBRARY_DIR, '_catalog.txt');
-    // the catalog itself still in iCloud: reading it would wait on iCloud
-    // (on every save), and it's never written over. It's asked for, and
-    // brought up to date on the next save once it's here.
-    if (isCloudOnly(file)) { requestDownload(new Set([file])); return; }
-    // unchanged, it's left alone: a rewrite on every save is a file for
-    // iCloud and Syncthing to send back and forth (and to clash over)
-    let old = null;
-    try { old = fs.readFileSync(file, 'utf8'); } catch { /* none yet */ }
-    if (old !== text) fs.writeFileSync(file, text);
-  } catch (err) {
-    logError('catalog', err);
-  }
-}
-
-// Writing that survives the power going out. A new file is written beside
-// the old one, pushed all the way to the disk (fsync), and only then swapped
-// in. Without the push, a power cut right after the swap can leave the swap
-// done and the words not: an empty book.json, and the book gone from its
-// shelf (#219). A missing file or an unlucky moment never costs more than
-// the last few seconds.
-// On Windows the swap is refused while anything else has the file open, even
-// for a moment: antivirus looking at what was just written, the search
-// indexer, a backup or sync client, a tool reading the library. Wait a beat
-// and try again (up to ~0.6 s) before calling the save failed, so a passing
-// glance never reaches the writer as "NEO can't save". A folder that really
-// refuses writes still fails, and is still explained.
-const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-function renameIntoPlace(from, to) {
-  for (let wait = 5; ; wait *= 2) {
-    try { return fs.renameSync(from, to); } catch (err) {
-      if (process.platform !== 'win32' || wait > 320 || !['EPERM', 'EACCES', 'EBUSY'].includes(err.code)) throw err;
-      sleepSync(wait);
-    }
-  }
-}
-
-function writeFileDurable(file, data) {
-  const tmp = file + '.tmp';
-  const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
-  const fd = fs.openSync(tmp, 'w');
-  try {
-    // a write can take less than it was given; keep going until every byte
-    // is down, and never swap in a file that's only partly written
-    for (let off = 0; off < buf.length;) {
-      const n = fs.writeSync(fd, buf, off, buf.length - off);
-      if (!(n > 0)) throw Object.assign(new Error('Short write: ' + tmp), { code: 'EIO', path: tmp });
-      off += n;
-    }
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
-  renameIntoPlace(tmp, file);
-  // the swap itself, on systems that let a folder be pushed too
-  if (process.platform !== 'win32') {
-    try { const d = fs.openSync(path.dirname(file), 'r'); try { fs.fsyncSync(d); } finally { fs.closeSync(d); } } catch { /* fine */ }
-  }
-}
-
-// JSON reads fall back on the copies a write leaves: the .tmp a write was
-// making when it stopped, then .bak, the last version that read whole. What
-// they recover is put back as the file itself.
-function parseJSONFile(file) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return undefined; }
-}
-
-// Files iCloud has taken off this Mac ("Optimize Mac Storage") stay in the
-// folder as placeholders: the name and size are there, the words aren't.
-// Reading one makes macOS fetch it first, and if iCloud is stuck that read
-// never ends. NEO's main process would wait with it: no window, no menus,
-// nothing. So a placeholder is never read directly. NEO asks iCloud for it,
-// waits without freezing, and if it still hasn't come, leaves it be (and
-// never writes over it) until it does.
-const SF_DATALESS = 0x40000000;
-// the placeholders among these files: no blocks on disk for a file that has
-// a size, confirmed by its "dataless" flag (one stat for the lot)
-function cloudOnlyAmong(files) {
-  const out = new Set();
-  if (process.platform !== 'darwin') return out;
-  const maybe = [];
-  for (const f of files) {
-    try { const st = fs.statSync(f); if (st.isFile() && st.size > 0 && st.blocks === 0) maybe.push(f); } catch { /* not there */ }
-  }
-  if (!maybe.length) return out;
-  let flags = null;
-  try {
-    const r = require('child_process').spawnSync('/usr/bin/stat', ['-f', '%Xf', ...maybe], { encoding: 'utf8', timeout: 3000 });
-    if (r.status === 0) flags = String(r.stdout).trim().split('\n');
-  } catch { /* no stat: the blocks decide */ }
-  maybe.forEach((f, i) => {
-    if (!flags || flags.length !== maybe.length || (parseInt(flags[i], 16) & SF_DATALESS)) out.add(f);
-  });
-  return out;
-}
-function isCloudOnly(file) { return cloudOnlyAmong([file]).has(file); }
 // A minute after launch, the whole library is looked over (without reading
 // a word, and without holding anything up) and iCloud is asked for anything
 // it has taken off this Mac, so the books are here before they're opened.
@@ -813,448 +683,48 @@ async function fetchLibraryFromICloud() {
   const away = cloudOnlyAmong(found);
   if (!away.size) return;
   logError('icloud', new Error(`${away.size} library files were in iCloud only; asked iCloud to bring them back to this Mac`));
-  requestDownload(away);
+  icloud.requestDownload(away);
 }
-function cloudError(file) {
-  return Object.assign(new Error('Still in iCloud, not on this Mac yet: ' + file), { code: 'ECLOUD', path: file });
-}
-// asks iCloud to bring files down, in the background: each file once at a
-// time, a few asks at once however many there are
-const cloudAsked = new Set();
-const cloudQueue = [];
-let cloudAsking = 0;
-function requestDownload(files) {
-  for (const f of files) {
-    if (cloudAsked.has(f)) continue;
-    cloudAsked.add(f);
-    cloudQueue.push(f);
-  }
-  while (cloudAsking < 4 && cloudQueue.length) {
-    const f = cloudQueue.shift();
-    cloudAsking++;
-    const done = () => { cloudAsking--; cloudAsked.delete(f); requestDownload([]); };
-    try {
-      require('child_process').execFile('/usr/bin/brctl', ['download', f], { timeout: 60000 }, done);
-    } catch { done(); }
-  }
-}
-// null when every file is here (the caller goes on at once, as always);
-// otherwise a promise that settles once they've come down, or after `ms`
-// with whatever is still in iCloud
-let CLOUD_WAIT = 30000; // (a test shortens it)
-function whenLocal(files, ms = CLOUD_WAIT) {
-  let away = cloudOnlyAmong(files);
-  if (!away.size) return null;
-  requestDownload(away);
-  const until = Date.now() + ms;
-  return new Promise((resolve) => {
-    const look = () => {
-      away = cloudOnlyAmong([...away]);
-      if (!away.size || Date.now() >= until) return resolve(away);
-      setTimeout(look, 300);
-    };
-    setTimeout(look, 300);
-  });
-}
-// run `read` once the files are here: at once when they are, later when
-// iCloud has to bring them down (or `away` if it never does)
-function afterLocal(files, read, away) {
-  const wait = whenLocal(files);
-  if (!wait) return read();
-  return wait.then((left) => (left.size ? away(left) : read()));
-}
-function readJSON(file, fallback) {
-  // still in iCloud: not unreadable, just not here. Falling back on .bak
-  // would write an older copy over it.
-  if (isCloudOnly(file)) throw cloudError(file);
-  const main = parseJSONFile(file);
-  if (main !== undefined) return main;
-  if (!fs.existsSync(file) && !fs.existsSync(file + '.bak') && !fs.existsSync(file + '.tmp')) return fallback;
-  for (const spare of [file + '.tmp', file + '.bak']) {
-    if (isCloudOnly(spare)) continue;
-    const v = parseJSONFile(spare);
-    if (v === undefined) continue;
-    logError('recovered', `${file} was unreadable; restored from ${path.basename(spare)}`);
-    try { writeFileDurable(file, JSON.stringify(v, null, 2)); } catch (err) { logError('recover write', err); }
-    return v;
-  }
-  return fallback;
-}
-
-function writeJSON(file, data) {
-  // the version on disk, while it reads whole, becomes the .bak (one still
-  // in iCloud can't be read without waiting on it, so it isn't kept)
-  if (!isCloudOnly(file) && parseJSONFile(file) !== undefined) {
-    try { fs.copyFileSync(file, file + '.bak'); } catch { /* the write still goes ahead */ }
-  }
-  writeFileDurable(file, JSON.stringify(data, null, 2));
-}
-
-// A book whose book.json is gone for good (and no .bak) still has its
-// chapters: the book comes back with them in the order they were made, its
-// title from the catalog, rather than vanishing from the shelf.
-function rebuildBookMeta(bookId) {
-  const dir = bookDir(bookId);
-  const chDir = path.join(dir, 'chapters');
-  if (!fs.existsSync(chDir)) return null;
-  let title = '';
-  try {
-    const catFile = path.join(LIBRARY_DIR, '_catalog.txt');
-    const cat = isCloudOnly(catFile) ? '' : fs.readFileSync(catFile, 'utf8');
-    const line = cat.split('\n').find((l) => l.includes('  —  ' + bookId + '  —  '));
-    if (line) title = line.split('  —  ')[0].trim();
-  } catch { /* no catalog */ }
-  const order = fs.readdirSync(chDir).filter((f) => f.endsWith('.html')).map((f) => f.slice(0, -5)).sort();
-  const meta = {
-    id: bookId,
-    title: title || t('Untitled'),
-    subtitle: '', series: '', author: t('Anonymous'), wordGoal: 0,
-    created: new Date().toISOString(), modified: new Date().toISOString(),
-    chapterOrder: order,
-    tabNames: { notes: 'Notes', outline: 'Outline' }
-  };
-  logError('recovered', `${bookId}/book.json was lost; rebuilt from ${order.length} chapter files`);
-  try { writeJSON(path.join(dir, 'book.json'), meta); } catch (err) { logError('recover write', err); }
-  return meta;
-}
-
 // ---------------------------------------------------------------------------
 // IPC — the renderer's whole view of the disk
 // ---------------------------------------------------------------------------
 
-ipcMain.handle('library:read', () => {
-  ensureLibrary();
-  return afterLocal([LIBRARY_FILE], readLibraryFile, () => { throw cloudError(LIBRARY_FILE); });
-});
-function readLibraryFile() {
-  const lib = readJSON(LIBRARY_FILE, null);
-  if (lib) return lib;
-  // library.json lost with no copy to fall back on: every book in the
-  // folder goes onto one shelf, so nothing disappears
-  const ids = [];
-  try {
-    for (const d of fs.readdirSync(LIBRARY_DIR)) {
-      if (d.startsWith('book-') && fs.existsSync(path.join(LIBRARY_DIR, d, 'chapters'))) ids.push(d);
-    }
-  } catch { /* empty */ }
-  const seed = { authorName: '', penNames: [], firstRunDone: ids.length > 0, pageTheme: 'night',
-    shelves: [{ id: 'shelf-1', name: t('Works in Progress'), bookIds: ids }] };
-  logError('recovered', `library.json was lost; ${ids.length} books put back on one shelf`);
-  try { writeJSON(LIBRARY_FILE, seed); } catch (err) { logError('recover write', err); }
-  return seed;
-}
-
-ipcMain.handle('library:write', (_e, data) => {
-  ensureLibrary();
-  writeJSON(LIBRARY_FILE, data);
-  writeCatalog();
-  return true;
-});
-
-// A book is a folder: book.json + chapters/*.html + notes.html + outline.html + darlings.json
-ipcMain.handle('book:create', (_e, meta) => {
-  ensureLibrary();
-  // folders carry a slug of the title when it's known at creation (imports),
-  // so the library reads like a bookshelf in Finder too. Accents come off
-  // first, so "Capítulo" reads "capitulo", not "cap-tulo"
-  const slug = String(meta.title || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30);
-  const id = 'book-' + (slug ? slug + '-' : '') +
-    Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
-  const dir = bookDir(id);
-  fs.mkdirSync(path.join(dir, 'chapters'), { recursive: true });
-  const book = {
-    id,
-    title: meta.title || t('Untitled'),
-    subtitle: '',
-    series: '',
-    author: meta.author || t('Anonymous'),
-    wordGoal: 0,
-    created: new Date().toISOString(),
-    modified: new Date().toISOString(),
-    chapterOrder: [],
-    tabNames: { notes: 'Notes', outline: 'Outline' } // shown translated (see tabName in app/)
-  };
-  writeJSON(path.join(dir, 'book.json'), book);
-  fs.writeFileSync(path.join(dir, 'notes.html'), '');
-  fs.writeFileSync(path.join(dir, 'outline.html'), '');
-  writeJSON(path.join(dir, 'darlings.json'), []);
-  writeJSON(path.join(dir, 'stickies.json'), []);
-  return book;
-});
-
-// A copy of a book, for a backup or a version to play with: every file in
-// its folder (chapters, notes, darlings, covers) written whole into a new
-// folder, then its book.json under the new id and title. A half-made copy
-// is removed; the original is only ever read.
-ipcMain.handle('book:duplicate', (_e, bookId, title) => {
-  ensureLibrary();
-  const src = bookDir(bookId);
-  const meta = readJSON(path.join(src, 'book.json'), null);
-  if (!meta) throw new Error('That book could not be read');
-  const slug = String(title || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30);
-  const id = 'book-' + (slug ? slug + '-' : '') +
-    Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
-  const dest = bookDir(id);
-  // a chapter iCloud hasn't brought down yet would be missing from the copy
-  const waiting = (dir) => fs.readdirSync(dir, { withFileTypes: true }).some((e) => (e.isDirectory() ? waiting(path.join(dir, e.name)) : /\.icloud$/.test(e.name)));
-  const files = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(path.join(dir, e.name)) : [path.join(dir, e.name)]));
-  const away = cloudOnlyAmong(files(src));
-  if (away.size) requestDownload(away);
-  if (away.size || waiting(src)) throw new Error('Some of this book is still downloading from iCloud. Try again in a moment');
-  const copyDir = (from, to) => {
-    fs.mkdirSync(to, { recursive: true });
-    for (const ent of fs.readdirSync(from, { withFileTypes: true })) {
-      // (a write caught halfway, a spare copy, a placeholder: not the book)
-      if (/\.(tmp|bak|icloud)$/.test(ent.name) || ent.name === 'book.json') continue;
-      const a = path.join(from, ent.name);
-      const b = path.join(to, ent.name);
-      if (ent.isDirectory()) copyDir(a, b);
-      else if (ent.isFile()) writeFileDurable(b, fs.readFileSync(a));
-    }
-  };
-  try {
-    copyDir(src, dest);
-    const now = new Date().toISOString();
-    const copy = { ...meta, id, title: title || meta.title, created: now, modified: now };
-    delete copy.uuid; // an ebook store sees a new book
-    writeJSON(path.join(dest, 'book.json'), copy);
-    writeCatalog();
-    return copy;
-  } catch (err) {
-    logError('duplicate', err);
-    try { fs.rmSync(dest, { recursive: true, force: true }); } catch { /* left for the writer */ }
-    throw err;
-  }
-});
-
-// every book folder in the library, shelved or not — for File → Reshelve
-ipcMain.handle('library:listBooks', () => {
-  let metas = [];
-  try { metas = fs.readdirSync(LIBRARY_DIR).filter((d) => d.startsWith('book-')).map((d) => path.join(LIBRARY_DIR, d, 'book.json')); } catch { /* no library */ }
-  return afterLocal(metas, listBooks, () => listBooks());
-});
-function listBooks() {
-  const out = [];
-  try {
-    for (const d of fs.readdirSync(LIBRARY_DIR)) {
-      if (!d.startsWith('book-')) continue;
-      let m = null;
-      try { m = readJSON(path.join(LIBRARY_DIR, d, 'book.json'), null); } catch { continue; } // still in iCloud
-      // the folder is the book: a copied folder ("book-x copy") is its own
-      // book, even though the book.json inside still names the original
-      if (m && m.id) out.push({ id: d, title: m.title || t('Untitled'), author: m.author || '', modified: m.modified || '', kind: m.kind || '' });
-    }
-  } catch (err) { logError('listBooks', err); }
-  return out;
-}
-
-ipcMain.handle('book:readMeta', (_e, bookId) => {
-  const dir = bookDir(bookId);
-  // a book.json iCloud never brings down is a book that's there, just not
-  // here yet: null, as for the older ".icloud" stand-in below
-  return afterLocal([path.join(dir, 'book.json')], () => readBookMeta(bookId), () => null);
-});
-function readBookMeta(bookId) {
-  const dir = bookDir(bookId);
-  const meta = readJSON(path.join(dir, 'book.json'), null);
-  if (meta) {
-    if (meta.id !== bookId) meta.id = bookId; // a copied folder answers to its own name
-    return meta;
-  }
-  // iCloud (on older macOS) holds a file it hasn't downloaded as
-  // ".book.json.icloud": the book is there, just not here yet. Rebuilding
-  // it would put a bare book.json over the real one.
-  if (fs.existsSync(path.join(dir, '.book.json.icloud'))) return null;
-  return rebuildBookMeta(bookId);
-}
-
-// `known` is every chapter the window holds or has held for this book. When
-// book.json on disk lists one it has never seen, another device added a
-// chapter since this window last looked: nothing is written, and the window
-// is told, so it takes the chapter in first. (book.json is saved whole at
-// every pause in typing; written blind, it dropped the other device's new
-// chapter from the book, its words left in a file no list named.)
-ipcMain.handle('book:writeMeta', (_e, bookId, meta, known) => {
-  const file = path.join(bookDir(bookId), 'book.json');
-  if (Array.isArray(known)) {
-    const unseen = unseenChapters(file, known);
-    if (unseen.length) return { unseen };
-  }
-  meta.modified = new Date().toISOString();
-  writeJSON(file, meta);
-  plugins.afterWrite('meta', bookId, 'book');
-  writeCatalog();
-  return meta.modified;
-});
-
-// shared with Pocket's bridge (same rule)
-function unseenChapters(file, known) {
-  let disk = null;
-  try {
-    if (isCloudOnly(file)) return [];
-    disk = JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch { return []; } // no book.json yet, or one that can't be read: nothing to compare
-  if (!disk || !Array.isArray(disk.chapterOrder)) return [];
-  const seen = new Set(known);
-  return disk.chapterOrder.filter((c) => typeof c === 'string' && !seen.has(c));
-}
-
-// {chapterId: mtime and size} for a book's chapter files — how refreshFromDisk
-// tells what changed without re-reading every chapter. The size is there
-// because sync tools hand over the other device's mtime, and on disks that
-// keep whole seconds two saves a second apart would otherwise look the same.
-ipcMain.handle('chapter:stamps', (_e, bookId) => {
-  const out = {};
-  try {
-    const dir = path.join(bookDir(bookId), 'chapters');
-    for (const f of fs.readdirSync(dir)) {
-      if (!f.endsWith('.html')) continue;
-      try {
-        const st = fs.statSync(path.join(dir, f));
-        out[f.slice(0, -5)] = st.mtimeMs + ':' + st.size;
-      } catch { /* vanished */ }
-    }
-  } catch { /* no chapters folder yet */ }
+ipcMain.handle('library:read', () => libraryStore().readLibrary());
+ipcMain.handle('library:write', (_e, data) => libraryStore().writeLibrary(data));
+ipcMain.handle('book:create', (_e, meta) => libraryStore().createBook(meta));
+ipcMain.handle('book:duplicate', (_e, bookId, title) => libraryStore().duplicateBook(bookId, title));
+// every book folder in the library, shelved or not: for File → Reshelve
+ipcMain.handle('library:listBooks', () => libraryStore().listBooks());
+ipcMain.handle('book:readMeta', (_e, bookId) => libraryStore().readBookMeta(bookId));
+// `known` is every chapter the window holds or has held: an answer of { unseen } means
+// nothing was written and the window must take those chapters in first
+ipcMain.handle('book:writeMeta', async (_e, bookId, meta, known) => {
+  const out = await libraryStore().writeBookMeta(bookId, meta, known);
+  if (typeof out === 'string') plugins.afterWrite('meta', bookId, 'book');
   return out;
 });
-
-ipcMain.handle('chapter:read', (_e, bookId, chapterId) => {
-  const file = path.join(bookDir(bookId), 'chapters', libName(chapterId) + '.html');
-  const read = () => { try { return fs.readFileSync(file, 'utf8'); } catch { return ''; } };
-  // (one iCloud never brings down reads as empty, like a missing file; a
-  // save over it is refused below until it's here)
-  return afterLocal([file], read, () => '');
+ipcMain.handle('chapter:stamps', (_e, bookId) => libraryStore().chapterStamps(bookId));
+// A chapter that cannot be read rejects (see storeErrorCode): never an empty string
+ipcMain.handle('chapter:read', (_e, bookId, chapterId) => libraryStore().readChapter(bookId, chapterId));
+ipcMain.handle('chapter:write', async (_e, bookId, chapterId, html, expected) => {
+  const out = await libraryStore().writeChapter(bookId, chapterId, html, expected);
+  if (out === true) plugins.afterWrite('chapter', bookId, chapterId);
+  return out;
 });
-
-// `expected` is the text the window last read or wrote for this chapter.
-// When the file holds something else (another device wrote it since, even
-// if only formatting, order or a deletion changed), nothing is written: the
-// window is handed that text to keep as its own chapter first, so neither
-// version is lost to a save that happened before the next look at the disk.
-ipcMain.handle('chapter:write', (_e, bookId, chapterId, html, expected) => {
-  const dir = path.join(bookDir(bookId), 'chapters');
-  const file = path.join(dir, libName(chapterId) + '.html');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  // still in iCloud: the words there aren't known yet, so nothing goes over
-  // them. The save fails, and the next one tries again.
-  if (isCloudOnly(file)) { requestDownload([file]); throw cloudError(file); }
-  if (typeof expected === 'string') {
-    let cur = null;
-    try { cur = fs.readFileSync(file, 'utf8'); } catch { /* not there: nothing to keep */ }
-    if (cur !== null && chapterDiverged(cur, expected, html)) return { conflict: cur };
-  }
-  writeFileDurable(file, html);
-  plugins.afterWrite('chapter', bookId, chapterId);
-  return true;
-});
-// shared with Pocket's bridge (same rule): the disk copy is not exactly what
-// this device last knew (`expected`) and is not already the new text (a
-// retry or an identical write), and it holds words. Any other revision,
-// formatting, order and deletions included, is a conflict: the disk text
-// is handed back to be kept as a twin before anything is replaced.
-function chapterDiverged(cur, expected, html) {
-  if (cur === expected || cur === html) return false;
-  const words = String(cur || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').trim();
-  return words !== '';
-}
-
-ipcMain.handle('chapter:delete', (_e, bookId, chapterId) => {
-  const file = path.join(bookDir(bookId), 'chapters', libName(chapterId) + '.html');
-  if (fs.existsSync(file)) fs.unlinkSync(file);
-  return true;
-});
-
-// A notes or outline page (aux:*): the same revision contract as chapters.
-// A page the disk can't read is an error, never an empty page: an empty read
-// that is then saved would wipe the page.
-function readAuxFile(file) {
-  try { return fs.readFileSync(file, 'utf8'); } catch (err) {
-    if (err && err.code === 'ENOENT') return null;
-    throw err;
-  }
-}
-// The displaced disk text is kept as <page>.bak, or .bak2, .bak3 … when that
-// name holds other words. A retry that finds its own copy already there adds nothing.
-function keepAuxBackup(file, text) {
-  for (let n = 1; n < 1000; n++) {
-    const bak = file + (n === 1 ? '.bak' : '.bak' + n);
-    const have = readAuxFile(bak);
-    if (have === text) return bak;
-    if (have === null) { writeFileDurable(bak, text); return bak; }
-  }
-  throw new Error('too many kept copies of ' + path.basename(file));
-}
-
-ipcMain.handle('aux:read', (_e, bookId, name) => {
-  // name: 'notes' | 'outline' | 'notes-<chapter>'
-  const file = path.join(bookDir(bookId), libName(name) + '.html');
-  const read = () => readAuxFile(file) || '';
-  return afterLocal([file], read, () => '');
-});
-
-// `expected` is the text the window last read or wrote for this page (as for
-// chapter:write). When the file holds words the new text lacks, another device
-// wrote it since: the file's text is kept as a .bak beside the page before the
-// new text goes in, so neither version is lost. Returns {kept: '<name>.bak'}
-// when that happened, else true.
-ipcMain.handle('aux:write', (_e, bookId, name, html, expected) => {
-  const file = path.join(bookDir(bookId), libName(name) + '.html');
-  if (isCloudOnly(file)) { requestDownload([file]); throw cloudError(file); }
-  let kept = null;
-  if (typeof expected === 'string') {
-    const cur = readAuxFile(file);
-    if (cur !== null && chapterDiverged(cur, expected, html)) kept = keepAuxBackup(file, cur);
-  }
-  writeFileDurable(file, html);
+ipcMain.handle('chapter:delete', (_e, bookId, chapterId) => libraryStore().deleteChapter(bookId, chapterId));
+// A page the book has never had still answers '' here: the window keeps what it read as the
+// base its next save is checked against (aux:write), and takes null for words that are not
+// there. The store tells the two apart, and the window will once it handles the difference.
+ipcMain.handle('aux:read', async (_e, bookId, name) => (await libraryStore().readAux(bookId, name)) ?? '');
+ipcMain.handle('aux:write', async (_e, bookId, name, html, expected) => {
+  const out = await libraryStore().writeAux(bookId, name, html, expected);
   plugins.afterWrite('aux', bookId, name);
-  return kept ? { kept: path.basename(kept) } : true;
-});
-
-// Snapshots of a book (SNAPSHOTS in app/saving.js): book-…/snapshots/<name>/ holds the
-// chapters that changed since the snapshot before it and, written last, its
-// snapshot.json. A snapshot's files are written once and never rewritten, so
-// a sync tool only ever sees new files arrive and two devices have nothing to
-// clash over. The window decides what to keep; this lists, reads, writes a new
-// file and removes a snapshot it has already carried forward.
-function snapshotDir(bookId, name) {
-  if (!/^[A-Za-z0-9-]+$/.test(libName(name))) throw new Error('Invalid snapshot name');
-  return path.join(bookDir(bookId), 'snapshots', name);
-}
-function snapshotFile(bookId, name, file) {
-  if (!/^[\w-][\w.-]*\.(html|json)$/.test(libName(file))) throw new Error('Invalid snapshot file');
-  return path.join(snapshotDir(bookId, name), file);
-}
-ipcMain.handle('snapshot:list', (_e, bookId) => {
-  const root = path.join(bookDir(bookId), 'snapshots');
-  let names = [];
-  try { names = fs.readdirSync(root).filter((n) => /^[A-Za-z0-9-]+$/.test(n)); } catch { return []; }
-  const out = [];
-  for (const name of names) {
-    try { out.push({ name, files: fs.readdirSync(path.join(root, name)).filter((f) => /\.(html|json)$/.test(f)) }); } catch { /* not a folder */ }
-  }
   return out;
 });
-// A file that can't be read throws (missing, no permission, still in iCloud):
-// only a chapter that is really empty reads as ''. Thinning relies on telling
-// them apart, so it never carries an empty stand-in forward.
-ipcMain.handle('snapshot:read', (_e, bookId, name, file) => {
-  const fp = snapshotFile(bookId, name, file);
-  const read = () => fs.readFileSync(fp, 'utf8');
-  return afterLocal([fp], read, () => { throw cloudError(fp); });
-});
-ipcMain.handle('snapshot:write', (_e, bookId, name, file, text) => {
-  const target = snapshotFile(bookId, name, file);
-  if (fs.existsSync(target)) return false; // written once
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  writeFileDurable(target, text);
-  return true;
-});
-ipcMain.handle('snapshot:remove', (_e, bookId, name) => {
-  try { fs.rmSync(snapshotDir(bookId, name), { recursive: true, force: true }); } catch (err) { logError('snapshot remove', err); }
-  return true;
-});
+ipcMain.handle('snapshot:list', (_e, bookId) => libraryStore().listSnapshots(bookId));
+ipcMain.handle('snapshot:read', (_e, bookId, name, file) => libraryStore().readSnapshotFile(bookId, name, file));
+ipcMain.handle('snapshot:write', (_e, bookId, name, file, text) => libraryStore().writeSnapshotFile(bookId, name, file, text));
+ipcMain.handle('snapshot:remove', (_e, bookId, name) => libraryStore().removeSnapshot(bookId, name));
 
 // macOS only: the system dictionary panel for the word selected in the window (#179). Other
 // platforms have no equivalent, and the renderer only offers the menu item on darwin.
@@ -1265,14 +735,12 @@ ipcMain.handle('app:lookUp', (e) => {
   return true;
 });
 
-ipcMain.handle('json:read', (_e, bookId, name, fallback) => {
-  return readJSON(path.join(bookDir(bookId), libName(name) + '.json'), fallback);
-});
+ipcMain.handle('json:read', (_e, bookId, name, fallback) => libraryStore().readJSON(bookId, name, fallback));
 
-ipcMain.handle('json:write', (_e, bookId, name, data) => {
-  writeJSON(path.join(bookDir(bookId), libName(name) + '.json'), data);
+ipcMain.handle('json:write', async (_e, bookId, name, data) => {
+  const out = await libraryStore().writeJSON(bookId, name, data);
   plugins.afterWrite('json', bookId, name);
-  return true;
+  return out;
 });
 
 ipcMain.handle('book:delete', async (_e, bookId, title) => {
@@ -1285,24 +753,20 @@ ipcMain.handle('book:delete', async (_e, bookId, title) => {
     message: process.platform === 'win32' ? t('Move “{title}” to the Recycle Bin?', { title }) : t('Move “{title}” to the Trash?', { title }),
     detail: t('The book folder goes to your system trash, so you can recover it.')
   });
-  if (response === 1) {
-    const { shell } = require('electron');
-    try {
-      await shell.trashItem(bookDir(bookId));
-      return true;
-    } catch (err) {
-      // Some filesystems have no Trash (network mounts, odd drives).
-      // Words are never lost: leave the book alone and show the writer where it lives.
-      logError('trash', err);
-      shell.showItemInFolder(bookDir(bookId));
-      dialog.showMessageBox(win, {
-        message: t('NEO couldn’t move that folder to the Trash.'),
-        detail: t('The book is untouched. Its folder is highlighted so you can deal with it yourself.')
-      });
-      return false;
-    }
+  if (response !== 1) return false;
+  const { shell } = require('electron');
+  const moved = await libraryStore().trashBook(bookId, {
+    trash: (folder) => shell.trashItem(folder),
+    reveal: (folder) => shell.showItemInFolder(folder)
+  });
+  if (!moved) {
+    // the store has left the book alone and shown the writer where it lives
+    dialog.showMessageBox(win, {
+      message: t('NEO couldn’t move that folder to the Trash.'),
+      detail: t('The book is untouched. Its folder is highlighted so you can deal with it yourself.')
+    });
   }
-  return false;
+  return moved;
 });
 
 // ---------------------------------------------------------------------------
@@ -2412,7 +1876,7 @@ const ERROR_LOG = () => path.join(LIBRARY_DIR, 'neo-errors.log');
 function logError(source, err) {
   const line = `[${new Date().toISOString()}] [${source}] ${err && err.stack ? err.stack : String(err)}\n`;
   try {
-    ensureLibrary();
+    libraryStore().ensureLibrary();
     fs.appendFileSync(ERROR_LOG(), line);
   } catch {
     // the library can't be written (the very case worth logging): NEO's own
@@ -2442,7 +1906,7 @@ function dailyBackup() {
   if (backupRunning) return Promise.resolve(); // one at a time (the hourly look can meet a slow one)
   let target;
   try {
-    ensureLibrary();
+    libraryStore().ensureLibrary();
     const backupsDir = path.join(LIBRARY_DIR, 'Backups');
     if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir, { recursive: true });
     target = path.join(backupsDir, `neo-backup-${new Date().toISOString().slice(0, 10)}.zip`);
@@ -2472,7 +1936,7 @@ function dailyBackup() {
     timer = setTimeout(() => finish(new Error('the backup took longer than ' + BACKUP_LIMIT_MS / 60000 + ' minutes and was stopped')), BACKUP_LIMIT_MS);
     child.on('message', (msg) => {
       if (!msg || !msg.ok) { finish(new Error((msg && msg.error) || 'the backup failed')); return; }
-      if (msg.away && msg.away.length) requestDownload(new Set(msg.away));
+      if (msg.away && msg.away.length) icloud.requestDownload(new Set(msg.away));
       if (msg.missed && msg.missed.length) logError('backup', new Error("left out of today's backup: " + msg.missed.join(', ')));
       finish(null);
     });
@@ -2690,7 +2154,7 @@ async function loadSpellDictionary(code) {
   const entry = SPELL_LANGUAGES[known];
   startSpellProcess();
   let custom = [];
-  try { custom = readJSON(LIBRARY_FILE, {}).customWords || []; } catch { /* a nicety */ }
+  try { custom = ((await libraryStore().peekLibrary()) || {}).customWords || []; } catch { /* a nicety */ }
   const res = await spellRequest({ type: 'load', language: known, dir: path.join(__dirname, 'node_modules', entry.pkg), custom });
   if (!res.ok) { logError('spell', new Error(res.error || 'dictionary failed to load')); return false; }
   spellLanguage = known;
@@ -2703,9 +2167,9 @@ async function loadSpellDictionary(code) {
 // language when NEO has its dictionary (fr-CA → fr), else US English.
 // Nothing is saved on the writer's behalf, so switching the interface back
 // takes the dictionary (and the typed quotes) along with it.
-function chosenSpellLanguage() {
-  const saved = readJSON(LIBRARY_FILE, null);
-  return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved.spellLanguage : undefined;
+async function chosenSpellLanguage() {
+  const saved = await libraryStore().peekLibrary();
+  return saved ? saved.spellLanguage : undefined;
 }
 
 function defaultSpellLanguage() {
@@ -2718,8 +2182,8 @@ function defaultSpellLanguage() {
   return SPELL_LANGUAGES[base] ? base : 'en-US';
 }
 
-function initSpell() {
-  const chosen = chosenSpellLanguage();
+async function initSpell() {
+  const chosen = await chosenSpellLanguage();
   spellLanguage = SPELL_LANGUAGES[chosen] ? chosen : defaultSpellLanguage();
   loadSpellDictionary(spellLanguage);
 }
@@ -2907,7 +2371,7 @@ ipcMain.on('features:state', (_e, on) => {
 });
 // the menu bar's Options items and the window's own controls
 ipcMain.handle('i18n:languages', () => ({ list: listLanguages(), current: uiLanguage }));
-ipcMain.on('i18n:set', (_e, code) => { if (typeof code === 'string') setUiLanguage(code); });
+ipcMain.on('i18n:set', (_e, code) => { if (typeof code === 'string') setUiLanguage(code).catch((err) => logError('language', err)); });
 ipcMain.on('pressHold:set', (_e, on) => setPressAndHold(!!on));
 // a template without the items of features that are off, and without the
 // separators they leave at an end or side by side
@@ -3674,7 +3138,7 @@ app.whenReady().then(() => {
 
     try { initLanguage(); } catch (err) { logError('language', err); }
     try { checkLibraryWritable(); } catch (err) { logError('library check', err); }
-    try { ensureLibrary(); } catch (err) { logError('library', err); }
+    try { libraryStore().ensureLibrary(); } catch (err) { logError('library', err); }
     createWindow();
     // after the window; the main halves start a turn after it has its plugin
     // list (or 5 s on), so no plugin's code runs before its first requests are answered
@@ -3683,7 +3147,7 @@ app.whenReady().then(() => {
     // NEO Pocket's folder may be here already, or arrive while NEO is open
     setTimeout(() => { askAboutPocket().catch((err) => logError('pocket ask', err)); }, 2500).unref?.();
     app.on('browser-window-focus', () => { askAboutPocket().catch((err) => logError('pocket ask', err)); });
-    try { initSpell(); } catch (err) { logError('spell', err); }
+    initSpell().catch((err) => logError('spell', err));
     try { buildMenu(); } catch (err) { logError('menu', err); }
     // the day's backup waits until NEO is up and the writer is writing (it
     // used to start at launch, beside everything the window was waiting on)

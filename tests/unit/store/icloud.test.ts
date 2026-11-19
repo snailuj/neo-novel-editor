@@ -79,12 +79,12 @@ test('each file is asked for once however often it is wanted, a few at a time', 
   const files = Array.from({ length: 9 }, (_, i) => `/lib/${i}.html`);
   icloud.requestDownload(files);
   icloud.requestDownload(files);
-  await new Promise((r) => setTimeout(r, 200));
+  await new Promise((resolve) => setTimeout(resolve, 200));
   assert.deepEqual(asks.sort(), [...files].sort());
   assert.ok(most <= 4 && most > 1, `${most} at once`);
   // once a file has come it can be asked for again (it may go back)
   icloud.requestDownload(files.slice(0, 1));
-  await new Promise((r) => setTimeout(r, 50));
+  await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal(asks.length, 10);
 });
 

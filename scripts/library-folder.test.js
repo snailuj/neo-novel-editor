@@ -71,7 +71,7 @@ function computer({ documents = true, chosen = false } = {}) {
 }
 
 describe('a library folder that can\'t be written', { concurrency: 1 }, () => {
-  test('a first library goes in the home Documents folder, once, and stays there', () => {
+  test('a first library goes in the home Documents folder, once, and stays there', async () => {
     const pc = computer();
     try {
       pc.run('checkLibraryWritable()');
@@ -87,7 +87,7 @@ describe('a library folder that can\'t be written', { concurrency: 1 }, () => {
       assert.equal(pc.shown.async.length, 1);       // said once
 
       // and the first-run screen's save now works
-      assert.equal(pc.call('library:write', { firstRunDone: true, shelves: [] }), true);
+      assert.equal(await pc.call('library:write', { firstRunDone: true, shelves: [] }), true);
       assert.equal(JSON.parse(fs.readFileSync(path.join(want, 'library.json'), 'utf8')).firstRunDone, true);
     } finally {
       pc.done();

@@ -2,13 +2,13 @@ import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after } from 'node:test';
-import { createFsStore, createICloud, createJsonFiles, type BookMeta, type LibraryStore } from '../../../src/store/index.ts';
+import { createFsStore, createICloud, createJsonFiles, type BookMeta } from '../../../src/store/index.ts';
 
 // A store over a throwaway library folder, with iCloud played by the test: a file in `away`
 // is a placeholder, and one with an entry in `arrive` comes back that many ms after it is asked for.
 export interface Harness {
   dir: string;
-  store: LibraryStore;
+  store: ReturnType<typeof createFsStore>;
   logs: string[];
   away: Set<string>;
   asked: string[];

@@ -350,7 +350,10 @@ test('a book opened again is checked again: new pages, the same chapter ids', as
 // Run the real main-process startup functions against a temporary library.
 // Only Electron's window/worker APIs are replaced; settings and library IO
 // use the same code and files as the app.
-function mainContext(temp, systemLocale, settings = {}, library = {}, raw = null) {
+// the turn in which a dictionary request that main.js did not wait for reaches the helper
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+async function mainContext(temp, systemLocale, settings = {}, library = {}, raw = null) {
   fs.writeFileSync(path.join(temp, 'settings.json'), JSON.stringify(settings));
   fs.writeFileSync(path.join(temp, 'library.json'), raw === null ? JSON.stringify(library) : raw);
   const loads = [], handlers = new Map();
@@ -384,21 +387,24 @@ function mainContext(temp, systemLocale, settings = {}, library = {}, raw = null
   });
   // The string is the file on disk. filename is how Node attributes coverage to it.
   vm.runInContext(source('main.js'), context, { filename: path.join(root, 'main.js') });
-  vm.runInContext('LIBRARY_DIR = temp; LIBRARY_FILE = require("path").join(temp, "library.json"); initLanguage(); initSpell();', context);
+  // the library.json reads are the store's, so they answer a turn later
+  await vm.runInContext('LIBRARY_DIR = temp; LIBRARY_FILE = require("path").join(temp, "library.json"); initLanguage(); initSpell();', context);
+  await settle();
   return { context, loads, handlers, read: () => JSON.parse(fs.readFileSync(path.join(temp, 'library.json'))) };
 }
 
 test('spellcheck follows the interface until a dictionary is picked; nothing is saved for the writer', async (t) => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'neo-spell-test-'));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
-  const fresh = mainContext(temp, 'ro_RO', {}, { authorName: 'Autor', customWords: ['Zorțilă'] });
+  const fresh = await mainContext(temp, 'ro_RO', {}, { authorName: 'Autor', customWords: ['Zorțilă'] });
   assert.equal(fresh.read().spellLanguage, undefined); // not saved on the writer's behalf
   assert.equal(fresh.read().authorName, 'Autor');
   assert.equal(vm.runInContext('spellLanguage', fresh.context), 'ro');
   assert.equal(fresh.loads[0].language, 'ro');
   assert.deepEqual(Array.from(fresh.loads[0].custom), ['Zorțilă']);
   // switching the interface takes a dictionary nobody picked along with it
-  vm.runInContext('setUiLanguage("en")', fresh.context);
+  await vm.runInContext('setUiLanguage("en")', fresh.context);
+  await settle();
   assert.equal(vm.runInContext('spellLanguage', fresh.context), 'en-US');
   assert.equal(fresh.loads.length, 2);
   assert.equal(fresh.loads[1].language, 'en-US');
@@ -407,7 +413,7 @@ test('spellcheck follows the interface until a dictionary is picked; nothing is 
 
   // the same rule for every language: its own dictionary when NEO has one
   for (const [locale, code] of [['ru_RU', 'ru'], ['fr-CA', 'fr'], ['de', 'de'], ['pl', 'pl'], ['en-US', 'en-US'], ['it', 'en-US'], ['pt-BR', 'pt-BR'], ['pt-PT', 'en-US']]) {
-    const ui = mainContext(temp, locale);
+    const ui = await mainContext(temp, locale);
     assert.equal(ui.loads[0].language, code, locale);
     assert.equal(ui.read().spellLanguage, undefined);
     await Promise.resolve();
@@ -415,19 +421,21 @@ test('spellcheck follows the interface until a dictionary is picked; nothing is 
 
   // a dictionary picked in Edit → Spellcheck Language wins, whatever the interface
   for (const code of ['en-US', 'en-GB', 'fr', 'ro', 'sv', 'da']) {
-    const explicit = mainContext(temp, 'ro-RO', {}, { spellLanguage: code });
+    const explicit = await mainContext(temp, 'ro-RO', {}, { spellLanguage: code });
     assert.equal(explicit.loads[0].language, code);
     assert.equal(explicit.read().spellLanguage, code);
-    vm.runInContext('setUiLanguage("de")', explicit.context);
+    await vm.runInContext('setUiLanguage("de")', explicit.context);
+    await settle();
     assert.equal(explicit.loads.length, 1);
     await Promise.resolve();
   }
 
   // Danish spellcheck with an English interface: nothing else changes with it
-  const danish = mainContext(temp, 'en-US', {}, { spellLanguage: 'da' });
+  const danish = await mainContext(temp, 'en-US', {}, { spellLanguage: 'da' });
   assert.equal(danish.loads[0].language, 'da');
   assert.match(danish.loads[0].dir, /dictionary-da$/);
-  vm.runInContext('setUiLanguage("en")', danish.context);
+  await vm.runInContext('setUiLanguage("en")', danish.context);
+  await settle();
   assert.equal(vm.runInContext('spellLanguage', danish.context), 'da');
   assert.equal(danish.read().spellLanguage, 'da');
   assert.equal(await danish.handlers.get('spell:setLanguage')(null, 'da'), true);
@@ -435,7 +443,7 @@ test('spellcheck follows the interface until a dictionary is picked; nothing is 
 
   // a library.json that doesn't parse is never touched
   const broken = '{"shelves": [{"id": "shelf-1", "name": "Mine"';
-  const unreadable = mainContext(temp, 'ro_RO', {}, {}, broken);
+  const unreadable = await mainContext(temp, 'ro_RO', {}, {}, broken);
   assert.equal(fs.readFileSync(path.join(temp, 'library.json'), 'utf8'), broken);
   assert.equal(unreadable.loads[0].language, 'ro');
   await Promise.resolve();

@@ -2,7 +2,9 @@
 
 // Loads main.js the way scripts/spellcheck.test.js does: Electron is replaced,
 // the real disk functions run, and LIBRARY_DIR points at a temporary folder.
-// main.js itself is not edited for these tests.
+// main.js itself is not edited for these tests. The rules of the store behind these
+// channels (conflicts, spare copies, iCloud, recovery) are tested in tests/unit/store;
+// what is here is that each channel reaches it and answers as the window expects.
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -11,6 +13,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { createRequire } = require('node:module');
 const { describe, test } = require('node:test');
+const { storeErrorCode } = require('../src/store/index.ts');
 
 const root = path.join(__dirname, '..');
 const localRequire = createRequire(path.join(root, 'main.js'));
@@ -62,11 +65,8 @@ function tempLibrary() {
 }
 
 describe('filesystem', { concurrency: 1 }, () => {
-  test('libName accepts one segment and rejects an escape', () => {
-    const name = (value) => {
-      main.context.probe = value;
-      return vm.runInContext('libName(probe)', main.context);
-    };
+  test('libName accepts one segment and rejects an escape', async () => {
+    const { libName: name } = require('../src/store/index.ts');
     assert.equal(name('book-hello'), 'book-hello');
     assert.equal(name('chapter 1'), 'chapter 1');
     for (const bad of ['', '.', '..', 'a/b', 'a\\b', 'a\0b']) {
@@ -74,10 +74,10 @@ describe('filesystem', { concurrency: 1 }, () => {
     }
   });
 
-  test('book:create writes the folder a new book has today', () => {
+  test('book:create writes the folder a new book has today', async () => {
     const dir = tempLibrary();
     try {
-      const book = main.call('book:create', { title: 'Capítulo', author: 'Ada' });
+      const book = await main.call('book:create', { title: 'Capítulo', author: 'Ada' });
       assert.match(book.id, /^book-capitulo-[0-9a-z]+-[0-9a-z]{5}$/);
       assert.equal(book.title, 'Capítulo');
       assert.equal(book.author, 'Ada');
@@ -91,7 +91,7 @@ describe('filesystem', { concurrency: 1 }, () => {
       assert.deepEqual(JSON.parse(fs.readFileSync(path.join(folder, 'darlings.json'), 'utf8')), []);
       assert.deepEqual(JSON.parse(fs.readFileSync(path.join(folder, 'stickies.json'), 'utf8')), []);
 
-      const blank = main.call('book:create', { title: '' });
+      const blank = await main.call('book:create', { title: '' });
       assert.match(blank.id, /^book-[0-9a-z]+-[0-9a-z]{5}$/);
       assert.equal(blank.title, 'Untitled');
       assert.equal(blank.author, 'Anonymous');
@@ -100,135 +100,81 @@ describe('filesystem', { concurrency: 1 }, () => {
     }
   });
 
-  test('book.json is not written over a chapter list naming a chapter the window has never seen', () => {
+  test('book.json is not written over a chapter list naming a chapter the window has never seen', async () => {
     const dir = tempLibrary();
     try {
-      const book = main.call('book:create', { title: 'Two', author: 'Ada' });
+      const book = await main.call('book:create', { title: 'Two', author: 'Ada' });
       const file = path.join(dir, book.id, 'book.json');
       const mine = { ...book, chapterOrder: ['c1', 'c2'] };
-      assert.equal(typeof main.call('book:writeMeta', book.id, mine, ['c1', 'c2']), 'string');
+      assert.equal(typeof await main.call('book:writeMeta', book.id, mine, ['c1', 'c2']), 'string');
       // another device adds c3 and its book.json arrives
       fs.writeFileSync(file, JSON.stringify({ ...mine, chapterOrder: ['c1', 'c2', 'c3'] }));
-      const r = main.call('book:writeMeta', book.id, { ...mine, wordCount: 9 }, ['c1', 'c2']);
+      const r = await main.call('book:writeMeta', book.id, { ...mine, wordCount: 9 }, ['c1', 'c2']);
       assert.equal(JSON.stringify(r), JSON.stringify({ unseen: ['c3'] }));
       assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).chapterOrder, ['c1', 'c2', 'c3'], 'left as the other device wrote it');
       // once the window has taken c3 in, or taken it out on purpose, the save lands
-      assert.equal(typeof main.call('book:writeMeta', book.id, { ...mine, chapterOrder: ['c1', 'c2', 'c3'] }, ['c1', 'c2', 'c3']), 'string');
-      assert.equal(typeof main.call('book:writeMeta', book.id, mine, ['c1', 'c2', 'c3']), 'string');
+      assert.equal(typeof await main.call('book:writeMeta', book.id, { ...mine, chapterOrder: ['c1', 'c2', 'c3'] }, ['c1', 'c2', 'c3']), 'string');
+      assert.equal(typeof await main.call('book:writeMeta', book.id, mine, ['c1', 'c2', 'c3']), 'string');
       assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).chapterOrder, ['c1', 'c2']);
       // a save that names no chapters it knows (the shelf's own) is not checked
       fs.writeFileSync(file, JSON.stringify({ ...mine, chapterOrder: ['c1', 'c2', 'c4'] }));
-      assert.equal(typeof main.call('book:writeMeta', book.id, mine), 'string');
+      assert.equal(typeof await main.call('book:writeMeta', book.id, mine), 'string');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test('chapters round-trip, and a missing chapter reads back empty', () => {
+  test('chapters round-trip, and a missing chapter rejects as not found', async () => {
     const dir = tempLibrary();
     try {
-      const book = main.call('book:create', { title: 'Hello', author: 'Ada' });
+      const book = await main.call('book:create', { title: 'Hello', author: 'Ada' });
       const html = '<p>Once upon a time</p>';
-      assert.equal(main.call('chapter:read', book.id, 'c1'), '');
-      assert.equal(main.call('chapter:write', book.id, 'c1', html), true);
-      assert.equal(main.call('chapter:read', book.id, 'c1'), html);
+      await assert.rejects(main.call('chapter:read', book.id, 'c1'), (err) => storeErrorCode(err) === 'not_found');
+      assert.equal(await main.call('chapter:write', book.id, 'c1', html), true);
+      assert.equal(await main.call('chapter:read', book.id, 'c1'), html);
       const file = path.join(dir, book.id, 'chapters', 'c1.html');
       const st = fs.statSync(file);
-      assert.equal(main.call('chapter:stamps', book.id).c1, st.mtimeMs + ':' + st.size);
-      assert.equal(main.call('chapter:delete', book.id, 'c1'), true);
+      assert.equal((await main.call('chapter:stamps', book.id)).c1, st.mtimeMs + ':' + st.size);
+      assert.equal(await main.call('chapter:delete', book.id, 'c1'), true);
       assert.equal(fs.existsSync(file), false);
-      assert.equal(main.call('chapter:read', book.id, 'c1'), '');
-      assert.equal(main.call('chapter:stamps', book.id).c1, undefined);
-      assert.equal(main.call('chapter:delete', book.id, 'missing'), true);
+      await assert.rejects(main.call('chapter:read', book.id, 'c1'), (err) => storeErrorCode(err) === 'not_found');
+      assert.equal((await main.call('chapter:stamps', book.id)).c1, undefined);
+      assert.equal(await main.call('chapter:delete', book.id, 'missing'), true);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test('notes round-trip, and a JSON replace leaves the whole file and no .tmp', () => {
+  test('notes round-trip, and a JSON replace leaves the whole file and no .tmp', async () => {
     const dir = tempLibrary();
     try {
-      const book = main.call('book:create', { title: 'Hello', author: 'Ada' });
-      assert.equal(main.call('aux:read', book.id, 'notes'), '');
-      assert.equal(main.call('aux:write', book.id, 'notes', '<p>margin</p>'), true);
-      assert.equal(main.call('aux:read', book.id, 'notes'), '<p>margin</p>');
+      const book = await main.call('book:create', { title: 'Hello', author: 'Ada' });
+      assert.equal(await main.call('aux:read', book.id, 'notes'), '');
+      assert.equal(await main.call('aux:write', book.id, 'notes', '<p>margin</p>'), true);
+      assert.equal(await main.call('aux:read', book.id, 'notes'), '<p>margin</p>');
       assert.equal(fs.readFileSync(path.join(dir, book.id, 'notes.html'), 'utf8'), '<p>margin</p>');
 
       const data = { kept: ['a line the writer cut'] };
-      assert.equal(main.call('json:write', book.id, 'darlings', data), true);
+      assert.equal(await main.call('json:write', book.id, 'darlings', data), true);
       const file = path.join(dir, book.id, 'darlings.json');
       assert.equal(fs.existsSync(file + '.tmp'), false);
       assert.equal(fs.readFileSync(file, 'utf8'), JSON.stringify(data, null, 2));
-      assert.equal(JSON.stringify(main.call('json:read', book.id, 'darlings', null)), JSON.stringify(data));
-      assert.equal(main.call('json:read', book.id, 'no-such-sidecar', 'fallback'), 'fallback');
-      assert.equal(main.call('aux:read', book.id, 'no-such-page'), '');
+      assert.equal(JSON.stringify(await main.call('json:read', book.id, 'darlings', null)), JSON.stringify(data));
+      assert.equal(await main.call('json:read', book.id, 'no-such-sidecar', 'fallback'), 'fallback');
+      assert.equal(await main.call('aux:read', book.id, 'no-such-page'), '');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test('a stale notes or outline save keeps the other device’s version as a .bak beside it', () => {
+  test('library:write regenerates the catalog and drops a hand edit', async () => {
     const dir = tempLibrary();
     try {
-      const book = main.call('book:create', { title: 'Hello', author: 'Ada' });
-      for (const name of ['notes', 'outline']) {
-        const file = path.join(dir, book.id, name + '.html');
-        const base = '<p>shared</p>';
-        assert.equal(main.call('aux:write', book.id, name, base), true);
-        // the other device saves its own line over the same page
-        fs.writeFileSync(file, '<p>shared</p><p>other device line</p>');
-        // this device saved from the base it read: it must not drop the other line
-        const mine = '<p>shared</p><p>this device line</p>';
-        const r = main.call('aux:write', book.id, name, mine, base);
-        assert.equal(r.kept, name + '.html.bak');
-        assert.equal(fs.readFileSync(file, 'utf8'), mine);
-        assert.equal(fs.readFileSync(file + '.bak', 'utf8'), '<p>shared</p><p>other device line</p>');
-        // a retry of the same stale save, or the same text again, makes no copy
-        assert.equal(main.call('aux:write', book.id, name, mine, base), true);
-        assert.equal(main.call('aux:write', book.id, name, mine, mine), true);
-        assert.equal(fs.existsSync(file + '.bak2'), false);
-        // a third device's different words are kept too, and the first copy stays
-        fs.writeFileSync(file, '<p>third device words</p>');
-        const again = main.call('aux:write', book.id, name, '<p>mine again</p>', mine);
-        assert.equal(again.kept, name + '.html.bak2');
-        assert.equal(fs.readFileSync(file + '.bak', 'utf8'), '<p>shared</p><p>other device line</p>');
-        assert.equal(fs.readFileSync(file + '.bak2', 'utf8'), '<p>third device words</p>');
-      }
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test('a clean notes page saves with no copy, and an unreadable page is never overwritten', () => {
-    const dir = tempLibrary();
-    try {
-      const book = main.call('book:create', { title: 'Hello', author: 'Ada' });
-      assert.equal(main.call('aux:write', book.id, 'notes', '<p>one</p>'), true);
-      assert.equal(main.call('aux:write', book.id, 'notes', '<p>two</p>', '<p>one</p>'), true);
-      assert.equal(fs.existsSync(path.join(dir, book.id, 'notes.html.bak')), false);
-      assert.equal(fs.readFileSync(path.join(dir, book.id, 'notes.html'), 'utf8'), '<p>two</p>');
-
-      // a page the disk can't read (not iCloud, not missing): reads and saves fail, nothing is replaced
-      const page = path.join(dir, book.id, 'outline.html');
-      fs.rmSync(page, { force: true });
-      fs.mkdirSync(page);
-      assert.throws(() => main.call('aux:read', book.id, 'outline'));
-      assert.throws(() => main.call('aux:write', book.id, 'outline', '<p>x</p>', '<p>x</p>'));
-      assert.equal(fs.statSync(page).isDirectory(), true);
-      assert.equal(fs.existsSync(page + '.bak'), false);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test('library:write regenerates the catalog and drops a hand edit', () => {
-    const dir = tempLibrary();
-    try {
-      const book = main.call('book:create', { title: 'Hello', author: 'Ada' });
+      const book = await main.call('book:create', { title: 'Hello', author: 'Ada' });
       const library = {
         shelves: [{ id: 'shelf-1', name: 'Works in Progress', bookIds: [book.id] }]
       };
-      assert.equal(main.call('library:write', library), true);
+      assert.equal(await main.call('library:write', library), true);
       const catalog = path.join(dir, '_catalog.txt');
       const text = fs.readFileSync(catalog, 'utf8');
       assert.match(text, /NEO LIBRARY CATALOG — which folder is which book/);
@@ -236,7 +182,7 @@ describe('filesystem', { concurrency: 1 }, () => {
       assert.match(text, new RegExp(`Hello  —  ${book.id}  —  shelf: Works in Progress`));
 
       fs.writeFileSync(catalog, 'a writer edited this file\n');
-      main.call('library:write', library);
+      await main.call('library:write', library);
       const again = fs.readFileSync(catalog, 'utf8');
       assert.equal(again.includes('a writer edited this file'), false);
       assert.match(again, new RegExp(book.id));
@@ -245,128 +191,53 @@ describe('filesystem', { concurrency: 1 }, () => {
     }
   });
 
-  test('a rejected name creates nothing outside the temp library', () => {
+  test('a rejected name creates nothing outside the temp library', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neo-library-fs-'));
     const dir = path.join(rootDir, 'library');
     fs.mkdirSync(dir);
     main.pointAt(dir);
     try {
-      const book = main.call('book:create', { title: 'Hello', author: 'Ada' });
+      const book = await main.call('book:create', { title: 'Hello', author: 'Ada' });
       const before = fs.readdirSync(rootDir).sort();
       const chaptersBefore = fs.readdirSync(path.join(dir, book.id, 'chapters'));
       for (const [bookId, chapterId] of [['..', 'c1'], [book.id, '..'], [book.id, 'a/b'], [book.id, 'a\\b'], [book.id, 'a\0b']]) {
-        assert.throws(() => main.call('chapter:write', bookId, chapterId, '<p>no</p>'), /Invalid library name/);
+        await assert.rejects(main.call('chapter:write', bookId, chapterId, '<p>no</p>'), /Invalid library name/);
       }
-      assert.throws(() => main.call('json:write', '..', 'darlings', []), /Invalid library name/);
-      assert.throws(() => main.call('aux:write', book.id, '../notes', '<p>no</p>'), /Invalid library name/);
+      await assert.rejects(main.call('json:write', '..', 'darlings', []), /Invalid library name/);
+      await assert.rejects(main.call('aux:write', book.id, '../notes', '<p>no</p>'), /Invalid library name/);
       assert.deepEqual(fs.readdirSync(rootDir).sort(), before);
       assert.deepEqual(fs.readdirSync(path.join(dir, book.id, 'chapters')), chaptersBefore);
       assert.equal(fs.existsSync(path.join(rootDir, 'c1.html')), false);
-      assert.equal(JSON.stringify(main.call('chapter:stamps', '..')), '{}');
+      assert.equal(JSON.stringify(await main.call('chapter:stamps', '..')), '{}');
     } finally {
       fs.rmSync(rootDir, { recursive: true, force: true });
     }
   });
 
-  // Chapter conflicts: a write whose `expected` is not the disk's current
-  // text is refused and the disk text handed back, whatever the change was.
-  // the handler's result comes from the vm context, so compare it without the realm check
-  const legacy = require('node:assert');
-  describe('chapter conflicts', () => {
-    const chapterFile = (dir, bookId, id) => path.join(dir, bookId, 'chapters', id + '.html');
-    // another device writes the file directly, as sync would
-    const remoteWrite = (dir, bookId, id, html) => fs.writeFileSync(chapterFile(dir, bookId, id), html);
-
-    test('the review repro: a stale save keeps the reordered, bold remote text', () => {
-      const dir = tempLibrary();
-      try {
-        const book = main.call('book:create', { title: 'Hello', author: 'Ada' });
-        main.call('chapter:write', book.id, 'c1', '<p>red blue</p>');
-        const remote = '<p><b>blue</b> red</p>';
-        remoteWrite(dir, book.id, 'c1', remote);
-        const r = main.call('chapter:write', book.id, 'c1', '<p>red blue green</p>', '<p>red blue</p>');
-        legacy.deepEqual(r, { conflict: remote });
-        assert.equal(fs.readFileSync(chapterFile(dir, book.id, 'c1'), 'utf8'), remote);
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    });
-
-    test('formatting-only and reorder changes on disk are not overwritten', () => {
-      const dir = tempLibrary();
-      try {
-        const book = main.call('book:create', { title: 'Hello', author: 'Ada' });
-        const base = '<p>red blue</p>';
-        for (const remote of ['<p><i>red</i> blue</p>', '<p>blue red</p>']) {
-          main.call('chapter:write', book.id, 'c1', base);
-          remoteWrite(dir, book.id, 'c1', remote);
-          const r = main.call('chapter:write', book.id, 'c1', '<p>red blue green</p>', base);
-          legacy.deepEqual(r, { conflict: remote }, remote);
-        }
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    });
-
-    test('a remote deletion is not restored by a stale save that holds the surviving words', () => {
-      const dir = tempLibrary();
-      try {
-        const book = main.call('book:create', { title: 'Hello', author: 'Ada' });
-        const base = '<p>red blue green</p>';
-        main.call('chapter:write', book.id, 'c1', base);
-        // the other device deleted "green"; this device's stale save still has it
-        const remote = '<p>red blue</p>';
-        remoteWrite(dir, book.id, 'c1', remote);
-        const r = main.call('chapter:write', book.id, 'c1', base, base);
-        legacy.deepEqual(r, { conflict: remote });
-        assert.equal(fs.readFileSync(chapterFile(dir, book.id, 'c1'), 'utf8'), remote);
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    });
-
-    test('repeated-word changes are a conflict too', () => {
-      const dir = tempLibrary();
-      try {
-        const book = main.call('book:create', { title: 'Hello', author: 'Ada' });
-        main.call('chapter:write', book.id, 'c1', '<p>red red blue</p>');
-        remoteWrite(dir, book.id, 'c1', '<p>red blue</p>');
-        const r = main.call('chapter:write', book.id, 'c1', '<p>red red blue red</p>', '<p>red red blue</p>');
-        legacy.deepEqual(r, { conflict: '<p>red blue</p>' });
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    });
-
-    test('an identical or retried write makes no twin', () => {
-      const dir = tempLibrary();
-      try {
-        const book = main.call('book:create', { title: 'Hello', author: 'Ada' });
-        const remote = '<p><b>blue</b> red</p>';
-        main.call('chapter:write', book.id, 'c1', '<p>red blue</p>');
-        remoteWrite(dir, book.id, 'c1', remote);
-        // identical: the disk already holds what is being written
-        assert.equal(main.call('chapter:write', book.id, 'c1', remote, '<p>red blue</p>'), true);
-        // retry after the window kept the disk text: expected is now that text
-        remoteWrite(dir, book.id, 'c1', remote);
-        legacy.deepEqual(main.call('chapter:write', book.id, 'c1', '<p>red blue green</p>', '<p>red blue</p>'), { conflict: remote });
-        assert.equal(main.call('chapter:write', book.id, 'c1', '<p>red blue green</p>', remote), true);
-        assert.equal(main.call('chapter:read', book.id, 'c1'), '<p>red blue green</p>');
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    });
-
-    test('a disk chapter with no words is not a conflict', () => {
-      const dir = tempLibrary();
-      try {
-        const book = main.call('book:create', { title: 'Hello', author: 'Ada' });
-        main.call('chapter:write', book.id, 'c1', '<p><br></p>');
-        remoteWrite(dir, book.id, 'c1', '<p><br></p>');
-        assert.equal(main.call('chapter:write', book.id, 'c1', '<p>new</p>', '<p>old</p>'), true);
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    });
+  test('chapter:write hands back what another device wrote, and leaves it', async () => {
+    const dir = tempLibrary();
+    try {
+      const book = await main.call('book:create', { title: 'Hello', author: 'Ada' });
+      await main.call('chapter:write', book.id, 'c1', '<p>red blue</p>');
+      const remote = '<p><b>blue</b> red</p>';
+      fs.writeFileSync(path.join(dir, book.id, 'chapters', 'c1.html'), remote);
+      assert.deepEqual(await main.call('chapter:write', book.id, 'c1', '<p>red blue green</p>', '<p>red blue</p>'), { conflict: remote });
+      assert.equal(fs.readFileSync(path.join(dir, book.id, 'chapters', 'c1.html'), 'utf8'), remote);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
+
+  test('aux:write keeps what another device wrote as a .bak, and answers with its name', async () => {
+    const dir = tempLibrary();
+    try {
+      const book = await main.call('book:create', { title: 'Hello', author: 'Ada' });
+      await main.call('aux:write', book.id, 'notes', '<p>shared</p>');
+      fs.writeFileSync(path.join(dir, book.id, 'notes.html'), '<p>shared</p><p>other device line</p>');
+      assert.deepEqual(await main.call('aux:write', book.id, 'notes', '<p>mine</p>', '<p>shared</p>'), { kept: 'notes.html.bak' });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
 });

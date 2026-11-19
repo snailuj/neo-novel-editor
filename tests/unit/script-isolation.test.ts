@@ -198,6 +198,10 @@ function run(target: Target): Run {
     if (name in names) return names[name];
     if (!request.startsWith('.')) return realRequire(request);
     const file = path.resolve(dir, request);
+    // The store is TypeScript and ES modules, which this wrapper cannot compile, and it is
+    // the only code that opens library files for main.js. It opens only the folder main.js
+    // gives it, and 'main.js starts with its library inside the temp folder' bounds that.
+    if (file.startsWith(path.join(root, 'src', 'store') + path.sep)) return realRequire(file);
     if (!cache.has(file)) {
       const module = { exports: {} };
       cache.set(file, module);

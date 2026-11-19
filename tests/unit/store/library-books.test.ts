@@ -101,7 +101,7 @@ test('writing the library regenerates the catalog and drops a hand edit, and lea
   assert.match(text, new RegExp(`The Long Night  —  ${book.id}  —  shelf: Works in Progress`));
 
   const before = fs.statSync(h.at('_catalog.txt'));
-  await new Promise((r) => setTimeout(r, 15));
+  await new Promise((resolve) => setTimeout(resolve, 15));
   await h.store.writeLibrary(lib);
   assert.equal(fs.statSync(h.at('_catalog.txt')).mtimeMs, before.mtimeMs, 'not rewritten when nothing changed');
 
@@ -318,4 +318,15 @@ test('a book goes to the system trash through the mover; when it cannot, the boo
   assert.deepEqual(revealed, [h.at(book.id)]);
   assert.match(h.logs.join('\n'), /trash: no trash on this drive/);
   assert.ok(fs.existsSync(h.at(book.id, 'book.json')));
+});
+
+test('opening a library makes the folder and one shelf when it is new, and changes nothing when it is not', () => {
+  const h = harness({ dir: path.join(fs.mkdtempSync(path.join(tmpdir(), 'neo-open-')), 'NEO Library') });
+  h.store.ensureLibrary();
+  const seeded = h.read('library.json');
+  assert.equal(shelves(JSON.parse(seeded)).length, 1);
+  h.write(['library.json'], '{"shelves":[]}');
+  h.store.ensureLibrary();
+  assert.equal(h.read('library.json'), '{"shelves":[]}');
+  fs.rmSync(path.dirname(h.dir), { recursive: true, force: true });
 });

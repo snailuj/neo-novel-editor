@@ -28,7 +28,13 @@ export interface FsStoreOptions {
 // runs its disk work in one synchronous stretch, so a check and the write that follows it
 // cannot be interleaved with another save (the async is the interface's, for stores that
 // cannot answer at once).
-export function createFsStore(options: FsStoreOptions): LibraryStore & { readonly root: string } {
+export interface FsStore extends LibraryStore {
+  readonly root: string;
+  /** Makes the folder and a one-shelf library.json when the library is new. Synchronous, for start-up and the error log. */
+  ensureLibrary(): void;
+}
+
+export function createFsStore(options: FsStoreOptions): FsStore {
   const { root, log } = options;
   const t: Translate = options.t ?? ((s) => s);
   const platform = options.platform ?? process.platform;
@@ -260,6 +266,7 @@ export function createFsStore(options: FsStoreOptions): LibraryStore & { readonl
 
   return {
     root,
+    ensureLibrary,
 
     async readLibrary() {
       ensureLibrary();

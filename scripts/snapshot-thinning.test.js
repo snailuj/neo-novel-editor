@@ -51,9 +51,9 @@ function loadMain() {
     setCloudOnly(files) {
       context.cloudFiles = new Set(files);
       vm.runInContext(`
-        cloudOnlyAmong = (files) => new Set(files.filter((f) => cloudFiles.has(f)));
-        requestDownload = () => {};
-        CLOUD_WAIT = 50;
+        icloud.cloudOnlyAmong = (files) => new Set([...files].filter((f) => cloudFiles.has(f)));
+        icloud.requestDownload = () => {};
+        icloud.waitMs = 50;
       `, context);
     },
     pointAt(dir) {
@@ -65,10 +65,10 @@ function loadMain() {
 
 const main = loadMain();
 
-function snapshotWithFiles(files) {
+async function snapshotWithFiles(files) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'neo-thin-'));
   main.pointAt(dir);
-  const book = main.call('book:create', { title: 'Salt Roads' });
+  const book = await main.call('book:create', { title: 'Salt Roads' });
   const snapDir = path.join(dir, book.id, 'snapshots', '20261001T000000Z-d-1-10-aaaa');
   fs.mkdirSync(snapDir, { recursive: true });
   for (const [file, text] of Object.entries(files)) fs.writeFileSync(path.join(snapDir, file), text);
@@ -77,25 +77,25 @@ function snapshotWithFiles(files) {
 
 describe('snapshot:read reports what it cannot read', { concurrency: 1 }, () => {
   test('a missing chapter file throws, it does not read as an empty chapter', async () => {
-    const { bookId, name } = snapshotWithFiles({ 'ch-a.html': '<p>A</p>' });
-    assert.throws(() => main.call('snapshot:read', bookId, name, 'ch-missing.html'), /ENOENT/);
+    const { bookId, name } = await snapshotWithFiles({ 'ch-a.html': '<p>A</p>' });
+    await assert.rejects(main.call('snapshot:read', bookId, name, 'ch-missing.html'), /ENOENT/);
   });
 
-  test('a chapter file that is empty reads as empty (legitimately)', () => {
-    const { bookId, name } = snapshotWithFiles({ 'ch-a.html': '' });
-    assert.equal(main.call('snapshot:read', bookId, name, 'ch-a.html'), '');
+  test('a chapter file that is empty reads as empty (legitimately)', async () => {
+    const { bookId, name } = await snapshotWithFiles({ 'ch-a.html': '' });
+    assert.equal(await main.call('snapshot:read', bookId, name, 'ch-a.html'), '');
   });
 
-  test('a chapter still in iCloud throws ECLOUD after the wait', async () => {
-    const { bookId, name, snapDir } = snapshotWithFiles({ 'ch-a.html': '<p>A</p>' });
+  test('a chapter still in iCloud throws cloud_only after the wait', async () => {
+    const { bookId, name, snapDir } = await snapshotWithFiles({ 'ch-a.html': '<p>A</p>' });
     main.setCloudOnly([path.join(snapDir, 'ch-a.html')]);
-    await assert.rejects(main.call('snapshot:read', bookId, name, 'ch-a.html'), { code: 'ECLOUD' });
+    await assert.rejects(main.call('snapshot:read', bookId, name, 'ch-a.html'), { code: 'cloud_only' });
   });
 
-  test('a name or file that is not a snapshot file throws', () => {
-    const { bookId, name } = snapshotWithFiles({ 'ch-a.html': '<p>A</p>' });
-    assert.throws(() => main.call('snapshot:read', bookId, name, '../book.json'), /Invalid/);
-    assert.throws(() => main.call('snapshot:read', bookId, '../x', 'ch-a.html'), /Invalid/);
+  test('a name or file that is not a snapshot file throws', async () => {
+    const { bookId, name } = await snapshotWithFiles({ 'ch-a.html': '<p>A</p>' });
+    await assert.rejects(main.call('snapshot:read', bookId, name, '../book.json'), /Invalid/);
+    await assert.rejects(main.call('snapshot:read', bookId, '../x', 'ch-a.html'), /Invalid/);
   });
 });
 

@@ -11,9 +11,9 @@
 // with a parent that was interrupted, and an orphan would rewrite 4 MiB files for ever.
 //
 // <dir> is a library holding one book folder; in chapter mode that book's chapters/ holds
-// one chapter, and that is the file written. --in-place first replaces writeFileDurable in
-// the vm context with writeInPlace, the truncate-then-write that the durable path exists to
-// avoid. The test uses it to show that a kill can leave a torn file.
+// one chapter, and that is the file written. --in-place first makes the store's durable
+// write an in-place one (writeInPlace), the truncate-then-write that the durable path exists
+// to avoid. The test uses it to show that a kill can leave a torn file.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -29,19 +29,20 @@ function payloads() {
   return { A: body('a'), B: body('b') };
 }
 
-// A kill was only ever seen to land between two write calls, never inside one, so
-// fs.writeFileSync, one 4 MiB call, tore the file only when the kill came between its
-// truncate and its write: an empty file in about 1 round in 30 under load. Written in
-// pieces, each encoded after the truncate, the file is part-written for most of the write.
+// A kill was only ever seen to land between two write calls, never inside one, so one
+// 4 MiB write call tore the file only when the kill came between its truncate and its write:
+// an empty file in about 1 round in 30 under load. Written in pieces, the file is part-written
+// for most of the write.
+//
+// The in-place writer is the store's own durable write with its `.tmp` taken away: the
+// open of `x.tmp` truncates `x` instead, the swap into `x` is skipped, and each write call
+// takes at most one piece. Nothing else about the store is replaced.
 const PIECE = 64 * 1024;
-function writeInPlace(file, data) {
-  const fd = fs.openSync(file, 'w');
-  try {
-    // the payloads are ASCII, so a slice of the string is a slice of its bytes
-    for (let off = 0; off < data.length; off += PIECE) fs.writeSync(fd, data.slice(off, off + PIECE));
-  } finally {
-    fs.closeSync(fd);
-  }
+function writeInPlace() {
+  const { openSync, renameSync, writeSync } = fs;
+  fs.openSync = (file, ...rest) => openSync(typeof file === 'string' && file.endsWith('.tmp') ? file.slice(0, -'.tmp'.length) : file, ...rest);
+  fs.renameSync = (from, to) => (String(from) === String(to) + '.tmp' ? undefined : renameSync(from, to));
+  fs.writeSync = (fd, buf, off, len, ...rest) => writeSync(fd, buf, off, Math.min(len, PIECE), ...rest);
 }
 
 function only(names, what) {
@@ -49,7 +50,7 @@ function only(names, what) {
   return names[0];
 }
 
-function run(dir, mode, inPlace) {
+async function run(dir, mode, inPlace) {
   const end = Date.now() + MAX_RUN_MS;
   const neo = loadMain();
   neo.pointAt(dir);
@@ -61,13 +62,13 @@ function run(dir, mode, inPlace) {
       return (html) => neo.call('chapter:write', bookId, chapterId, html);
     })()
     : (html) => neo.call('aux:write', bookId, 'notes', html);
-  if (inPlace) neo.context.writeFileDurable = writeInPlace;
+  if (inPlace) writeInPlace();
   const { A, B } = payloads();
   // synchronous, so the line is out before the first write starts
   fs.writeSync(1, 'writing\n');
   while (Date.now() < end) {
-    write(A);
-    write(B);
+    await write(A);
+    await write(B);
   }
 }
 
@@ -77,7 +78,7 @@ if (require.main === module) {
     process.stderr.write('usage: write-forever.cjs <dir> <chapter|aux> [--in-place]\n');
     process.exit(2);
   }
-  run(dir, mode, flag === '--in-place');
+  run(dir, mode, flag === '--in-place').catch((err) => { process.stderr.write(String(err && err.stack || err) + '\n'); process.exit(1); });
 }
 
 module.exports = { payloads };

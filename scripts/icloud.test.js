@@ -2,7 +2,8 @@
 
 // Files iCloud has taken off a Mac ("Optimize Mac Storage") are placeholders:
 // a read waits on iCloud, forever when iCloud is stuck, and NEO froze at
-// launch with no window. The real main.js runs against a temporary library,
+// launch with no window. The store's rules for them are tested in tests/unit/store; here the
+// real main.js runs against a temporary library,
 // with iCloud played by the test: a "placeholder" is a sparse file (a size and
 // no blocks on disk, as a placeholder looks), and "downloading" one writes its
 // words in.
@@ -64,19 +65,20 @@ function loadMain() {
     arrivals: new Map() // file → words iCloud brings down when asked
   });
   vm.runInContext(source, context, { filename: path.join(root, 'main.js') });
-  // a placeholder is a file with a size and no blocks; asking for one brings
-  // its words down a moment later, if iCloud has them to give
+  // a placeholder is a file with a size and no blocks; asking for one brings its words down
+  // a moment later, if iCloud has them to give. icloud is the object the store and main.js
+  // share, so replacing its methods plays iCloud for both.
   vm.runInContext(`
-    cloudOnlyAmong = (files) => new Set(files.filter((f) => {
+    icloud.cloudOnlyAmong = (files) => new Set([...files].filter((f) => {
       try { const st = fs.statSync(f); return st.size > 0 && st.blocks === 0; } catch { return false; }
     }));
-    requestDownload = (files) => {
+    icloud.requestDownload = (files) => {
       for (const f of files) {
         asked.push(f);
         if (arrivals.has(f)) setTimeout(() => fs.writeFileSync(f, arrivals.get(f)), 50);
       }
     };
-    CLOUD_WAIT = 600;
+    icloud.waitMs = 600;
   `, context);
   return {
     context,
@@ -101,20 +103,20 @@ function sendToICloud(file) {
   assert.equal(fs.statSync(file).blocks, 0, 'this disk makes sparse files');
 }
 
-function libraryWithBook() {
+async function libraryWithBook() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'neo-icloud-'));
   main.pointAt(dir);
-  const lib = main.call('library:read');
-  const book = main.call('book:create', { title: 'Salt Roads' });
-  main.call('chapter:write', book.id, 'ch-aaa', '<p>The harbor was empty.</p>');
+  const lib = await main.call('library:read');
+  const book = await main.call('book:create', { title: 'Salt Roads' });
+  await main.call('chapter:write', book.id, 'ch-aaa', '<p>The harbor was empty.</p>');
   book.chapterOrder = ['ch-aaa'];
-  main.call('book:writeMeta', book.id, book);
-  main.call('book:writeMeta', book.id, book); // a .bak, as a real library has
-  main.call('aux:write', book.id, 'notes', '<p>Ferry at dawn.</p>');
+  await main.call('book:writeMeta', book.id, book);
+  await main.call('book:writeMeta', book.id, book); // a .bak, as a real library has
+  await main.call('aux:write', book.id, 'notes', '<p>Ferry at dawn.</p>');
   lib.firstRunDone = true;
   lib.shelves[0].bookIds.push(book.id);
-  main.call('library:write', lib);
-  main.call('library:write', lib);
+  await main.call('library:write', lib);
+  await main.call('library:write', lib);
   return { dir, book, bookDir: path.join(dir, book.id) };
 }
 
@@ -122,26 +124,24 @@ describe('files still in iCloud', {
   concurrency: 1,
   skip: onMac ? false : 'st_blocks only means iCloud on macOS'
 }, () => {
-  test('everything on this Mac: reads answer at once, as before', () => {
-    const { book } = libraryWithBook();
-    assert.equal(main.call('chapter:read', book.id, 'ch-aaa'), '<p>The harbor was empty.</p>');
-    assert.equal(main.call('book:readMeta', book.id).title, 'Salt Roads');
+  test('everything on this Mac: reads answer at once, as before', async () => {
+    const { book } = await libraryWithBook();
+    assert.equal(await main.call('chapter:read', book.id, 'ch-aaa'), '<p>The harbor was empty.</p>');
+    assert.equal((await main.call('book:readMeta', book.id)).title, 'Salt Roads');
   });
 
-  test('a chapter in iCloud is waited for without holding NEO up, then read', async () => {
-    const { book, bookDir } = libraryWithBook();
+  test('a chapter in iCloud is waited for, then read', async () => {
+    const { book, bookDir } = await libraryWithBook();
     const file = path.join(bookDir, 'chapters', 'ch-aaa.html');
     const words = fs.readFileSync(file, 'utf8');
     sendToICloud(file);
     main.context.arrivals.set(file, words);
-    const answer = main.call('chapter:read', book.id, 'ch-aaa');
-    assert.ok(answer instanceof Promise || typeof answer.then === 'function', 'not read on the spot');
-    assert.equal(await answer, words);
+    assert.equal(await main.call('chapter:read', book.id, 'ch-aaa'), words);
     assert.ok(main.asked.includes(file), 'iCloud was asked for it');
   });
 
   test('library.json in iCloud arrives and the shelf is read', async () => {
-    const { dir, book } = libraryWithBook();
+    const { dir, book } = await libraryWithBook();
     const file = path.join(dir, 'library.json');
     const words = fs.readFileSync(file, 'utf8');
     sendToICloud(file);
@@ -151,35 +151,35 @@ describe('files still in iCloud', {
   });
 
   test('library.json iCloud never sends: an error, and no new shelf written over it', async () => {
-    const { dir } = libraryWithBook();
+    const { dir } = await libraryWithBook();
     const file = path.join(dir, 'library.json');
     sendToICloud(file);
-    await assert.rejects(Promise.resolve(main.call('library:read')), (err) => err.code === 'ECLOUD');
+    await assert.rejects(main.call('library:read'), (err) => err.code === 'cloud_only');
     assert.equal(fs.statSync(file).blocks, 0, 'left as it was');
   });
 
   test('book.json iCloud never sends: the book waits, never rebuilt or rolled back to .bak', async () => {
-    const { book, bookDir } = libraryWithBook();
+    const { book, bookDir } = await libraryWithBook();
     const file = path.join(bookDir, 'book.json');
     sendToICloud(file);
     assert.equal(await main.call('book:readMeta', book.id), null);
     assert.equal(fs.statSync(file).blocks, 0, 'not written over');
   });
 
-  test('a save never goes over a chapter or notes still in iCloud', () => {
-    const { book, bookDir } = libraryWithBook();
+  test('a save never goes over a chapter or notes still in iCloud', async () => {
+    const { book, bookDir } = await libraryWithBook();
     const ch = path.join(bookDir, 'chapters', 'ch-aaa.html');
     const notes = path.join(bookDir, 'notes.html');
     sendToICloud(ch);
     sendToICloud(notes);
-    assert.throws(() => main.call('chapter:write', book.id, 'ch-aaa', '<p>new</p>', ''), (err) => err.code === 'ECLOUD');
-    assert.throws(() => main.call('aux:write', book.id, 'notes', '<p>new</p>'), (err) => err.code === 'ECLOUD');
+    await assert.rejects(main.call('chapter:write', book.id, 'ch-aaa', '<p>new</p>', ''), (err) => err.code === 'cloud_only');
+    await assert.rejects(main.call('aux:write', book.id, 'notes', '<p>new</p>'), (err) => err.code === 'cloud_only');
     assert.equal(fs.statSync(ch).blocks, 0);
     assert.equal(fs.statSync(notes).blocks, 0);
   });
 
   test("the daily backup leaves out what's in iCloud and says so, instead of waiting on it", async () => {
-    const { dir, bookDir } = libraryWithBook();
+    const { dir, bookDir } = await libraryWithBook();
     sendToICloud(path.join(bookDir, 'chapters', 'ch-aaa.html'));
     await main.run('backupRunning = false; dailyBackup()');
     const zips = fs.readdirSync(path.join(dir, 'Backups')).filter((f) => f.endsWith('.zip'));
@@ -194,7 +194,7 @@ describe('files still in iCloud', {
   // a file that never answers (a named pipe: a read of one waits for ever, as
   // a stuck iCloud file does) once held NEO's whole main process, at launch
   test('a file that never answers is left out of the backup, and NEO goes on meanwhile', async () => {
-    const { dir, bookDir } = libraryWithBook();
+    const { dir, bookDir } = await libraryWithBook();
     const stuck = path.join(bookDir, 'stickies.json');
     fs.rmSync(stuck, { force: true });
     require('node:child_process').execFileSync('mkfifo', [stuck]);

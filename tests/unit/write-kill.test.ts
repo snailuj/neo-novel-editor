@@ -46,14 +46,14 @@ function removeLibrary(dir: string): void {
 
 // If book:create or a seeding write throws, the caller never receives `dir`, so the
 // folder is removed here before the error goes on.
-function library() {
+async function library() {
   const dir = mkdtempSync(path.join(tmpdir(), 'neo-kill-'));
   try {
     main.pointAt(dir);
-    main.call('library:read');
-    const book = main.call('book:create', { title: 'The Long Night' });
-    main.call('chapter:write', book.id, CHAPTER, A);
-    main.call('aux:write', book.id, 'notes', A);
+    await main.call('library:read');
+    const book = await main.call('book:create', { title: 'The Long Night' });
+    await main.call('chapter:write', book.id, CHAPTER, A);
+    await main.call('aux:write', book.id, 'notes', A);
     const bookDir = path.join(dir, book.id);
     return {
       dir,
@@ -137,15 +137,15 @@ function writeThenKill(dir: string, mode: Mode, delay: number, inPlace: boolean)
 async function rounds(
   mode: Mode,
   inPlace: boolean,
-  each: (lib: ReturnType<typeof library>, before: string[], round: number) => boolean | void,
+  each: (lib: Awaited<ReturnType<typeof library>>, before: string[], round: number) => boolean | void | Promise<boolean | void>,
   count = ROUNDS,
 ): Promise<void> {
   for (let round = 0; round < count; round++) {
-    const lib = library();
+    const lib = await library();
     try {
       const before = readdirSync(lib.bookDir);
       await writeThenKill(lib.dir, mode, Math.round(((round % ROUNDS) * KILL_WINDOW_MS) / (ROUNDS - 1)), inPlace);
-      if (each(lib, before, round) === false) return;
+      if (await each(lib, before, round) === false) return;
     } finally {
       removeLibrary(lib.dir);
     }
@@ -174,8 +174,8 @@ test('a writer that never says writing fails the round once the guard time passe
   assert.ok(Date.now() - started < 5000, `the round took ${Date.now() - started} ms`);
 });
 
-test('the writer stops by itself once its time limit passes', () => {
-  const lib = library();
+test('the writer stops by itself once its time limit passes', async () => {
+  const lib = await library();
   try {
     const run = spawnSync(process.execPath, [writer, lib.dir, 'chapter'], {
       env: { ...process.env, NEO_WRITE_FOREVER_MAX_MS: '300' },
@@ -191,7 +191,7 @@ test('the writer stops by itself once its time limit passes', () => {
   }
 });
 
-test('a library that fails to seed leaves no folder behind', () => {
+test('a library that fails to seed leaves no folder behind', async () => {
   const kept = () => readdirSync(tmpdir()).filter((name) => name.startsWith('neo-kill-'));
   const before = kept();
   const real = main.call;
@@ -200,7 +200,7 @@ test('a library that fails to seed leaves no folder behind', () => {
     return real(name, ...args);
   };
   try {
-    assert.throws(() => library(), /seed fault/);
+    await assert.rejects(library(), /seed fault/);
   } finally {
     main.call = real;
   }
@@ -218,7 +218,7 @@ function assertSomeKillLanded(t: TestContext, landed: number): void {
 
 test('a killed chapter save leaves the old or the new file whole', async (t) => {
   let landed = 0;
-  await rounds('chapter', false, (lib, _before, round) => {
+  await rounds('chapter', false, async (lib, _before, round) => {
     assertWhole(lib.chapterFile);
     const left = readdirSync(lib.chaptersDir).sort();
     assert.ok(
@@ -227,7 +227,7 @@ test('a killed chapter save leaves the old or the new file whole', async (t) => 
     );
     if (left.includes(CHAPTER + '.html.tmp')) landed++;
     const after = '<p>written after the kill</p>';
-    assert.equal(main.call('chapter:write', lib.bookId, CHAPTER, after), true);
+    assert.equal(await main.call('chapter:write', lib.bookId, CHAPTER, after), true);
     assert.equal(readFileSync(lib.chapterFile, 'utf8'), after);
   });
   assertSomeKillLanded(t, landed);
