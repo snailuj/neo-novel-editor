@@ -2,7 +2,8 @@
 // checks run as background jobs. Nothing here writes into the clone: projects are read with
 // `lstat`-style listing and hashed without `-w`, and the tools run with their environment
 // and bytecode redirected out of the tree.
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { ApiError } from './errors.ts';
@@ -33,6 +34,15 @@ export interface HoardTools {
   close(): Promise<void>;
 }
 
+const TOOLS = ['lint', 'verify', 'quotes'] as const;
+type Tool = (typeof TOOLS)[number];
+
+interface Job {
+  id: string; tool: Tool; state: 'running' | 'done' | 'failed';
+  exitCode: number | null; signal: string | null; stdout: string; stderr: string; truncated: boolean;
+  startedAt: string; endedAt: string | null; ms: number | null; reason?: string;
+}
+
 const methodNotAllowed = () => new ApiError('method_not_allowed', 405, 'method not allowed for this route');
 
 /** NFC, non-empty, no separators, no leading dot, no NUL. */
@@ -48,7 +58,8 @@ function projectName(encoded: string): string {
 }
 
 export async function openHoardTools(options: HoardToolsOptions): Promise<HoardTools> {
-  const { repo, log } = options;
+  const { repo, state, log, outputLimit = 2 * 1024 * 1024, keepJobs = 20, timeoutMs = 10 * 60_000 } = options;
+  const uv = { command: options.uv?.command ?? 'uv', args: options.uv?.args ?? [] };
   const git = createRepoGit(repo);
   const projectsDir = path.join(repo, 'projects');
 
@@ -83,11 +94,121 @@ export async function openHoardTools(options: HoardToolsOptions): Promise<HoardT
     return { status: 200, bytes, headers: { 'Content-Type': 'text/markdown; charset=utf-8', ETag: `"${await git.blobId(bytes)}"` } };
   }
 
+  // Why uv cannot run, or null. Probed at start and again on a request while it is down,
+  // so installing uv needs no restart.
+  let unavailable: string | null = null;
+  let probing: Promise<void> | null = null;
+  const probe = (): Promise<void> => probing ??= new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = (reason: string | null, extra: Record<string, unknown> = {}) => {
+      if (settled) return; // a failed spawn emits 'error' and may then emit 'close'
+      settled = true;
+      unavailable = reason;
+      log(reason === null ? 'info' : 'warn', 'hoard.uv.probe', { available: reason === null, reason, ...extra });
+      probing = null;
+      resolve();
+    };
+    const child = spawn(uv.command, [...uv.args, '--version'], { cwd: repo, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    let version = '';
+    child.stdout.on('data', (c: Buffer) => { version += c.toString('utf8'); });
+    child.on('error', (e: NodeJS.ErrnoException) => finish(e.code === 'ENOENT' ? `uv was not found on the host (${e.message})` : `uv could not be started (${e.message})`));
+    child.on('close', (code) => { finish(code === 0 ? null : `uv --version exited with code ${code}`, { version: version.trim() }); });
+  });
+  await probe();
+
+  const jobs = new Map<string, Job>(); // insertion order is start order
+  const running = new Map<Tool, Job>();
+  const live = new Map<string, { child: ChildProcess; exited: Promise<void> }>();
+
+  function evict(): void {
+    const finishedIds = [...jobs.values()].filter((j) => j.state !== 'running').map((j) => j.id);
+    for (const id of finishedIds.slice(0, Math.max(0, finishedIds.length - keepJobs))) jobs.delete(id);
+  }
+
+  function start(tool: Tool): Job {
+    const t0 = performance.now();
+    const job: Job = {
+      id: randomUUID(), tool, state: 'running', exitCode: null, signal: null, stdout: '', stderr: '', truncated: false,
+      startedAt: new Date().toISOString(), endedAt: null, ms: null,
+    };
+    const env = { ...process.env, UV_PROJECT_ENVIRONMENT: path.join(state, 'hoard-venv'), PYTHONDONTWRITEBYTECODE: '1' };
+    const args = [...uv.args, 'run', '--project', '_meta/infra/tools', 'python', '_meta/infra/tools/librarian/cli.py', tool];
+    const out: Buffer[][] = [[], []];
+    const kept = [0, 0];
+    const keep = (i: number) => (chunk: Buffer) => {
+      const room = Math.max(0, outputLimit - kept[i]);
+      if (chunk.length > room) job.truncated = true;
+      if (room > 0) { out[i].push(chunk.subarray(0, room)); kept[i] += Math.min(room, chunk.length); }
+    };
+    jobs.set(job.id, job);
+    running.set(tool, job);
+    log('info', 'hoard.job.start', { id: job.id, tool });
+
+    let settle!: () => void;
+    const exited = new Promise<void>((resolve) => { settle = resolve; });
+    const end = (state: 'done' | 'failed', exitCode: number | null, signal: string | null) => {
+      if (job.state !== 'running') return;
+      job.state = state;
+      job.exitCode = exitCode;
+      job.signal = signal;
+      job.stdout = Buffer.concat(out[0]).toString('utf8');
+      job.stderr = Buffer.concat(out[1]).toString('utf8');
+      job.endedAt = new Date().toISOString();
+      job.ms = Math.round(performance.now() - t0);
+      running.delete(tool);
+      live.delete(job.id);
+      clearTimeout(timer);
+      evict();
+      log(state === 'done' ? 'info' : 'warn', 'hoard.job.end', { id: job.id, tool, state, exitCode, signal, reason: job.reason, ms: job.ms, truncated: job.truncated });
+      settle();
+    };
+
+    const child = spawn(uv.command, args, { cwd: repo, shell: false, windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    live.set(job.id, { child, exited });
+    child.stdout.on('data', keep(0));
+    child.stderr.on('data', keep(1));
+    const timer = setTimeout(() => {
+      job.reason ??= 'timeout';
+      child.kill();
+      // A tool that ignores the polite kill must not hold the job open for ever.
+      setTimeout(() => child.kill('SIGKILL'), 2000).unref();
+    }, timeoutMs);
+    child.on('error', (e) => { job.reason ??= `spawn failed (${e.message})`; end('failed', null, null); });
+    child.on('close', (code, signal) => {
+      if (job.reason === undefined && code === null) job.reason = `killed by ${signal}`;
+      end(job.reason === undefined ? 'done' : 'failed', code, signal);
+    });
+    return job;
+  }
+
+  async function librarian(method: string, rest: string, readBody: () => Promise<Buffer>): Promise<HoardReply> {
+    const tail = rest.slice('/librarian/'.length);
+    if (tail.startsWith('jobs/')) {
+      if (method !== 'GET') throw methodNotAllowed();
+      let id = tail.slice('jobs/'.length);
+      try { id = decodeURIComponent(id); } catch { /* an undecodable id matches no job */ }
+      const found = jobs.get(id);
+      if (!found) throw new ApiError('not_found', 404, 'no such job');
+      return { status: 200, json: found };
+    }
+    if (method !== 'POST') throw methodNotAllowed();
+    const tool = TOOLS.find((name) => name === tail);
+    if (!tool) throw new ApiError('unknown_tool', 404, `unknown librarian tool ${JSON.stringify(tail)}`);
+    await readBody(); // ignored, but read so the limit applies and the connection is left clean
+    const job = running.get(tool) ?? start(tool);
+    return { status: 202, json: { id: job.id, tool: job.tool, state: job.state, startedAt: job.startedAt } };
+  }
+
   return {
-    async handle(method, rest) {
+    async handle(method, rest, readBody) {
       if (rest === '/projects' || rest.startsWith('/projects/')) return projects(method, rest);
+      if (rest.startsWith('/librarian/')) return librarian(method, rest, readBody);
       throw new ApiError('not_found', 404, `no route ${method} /v1/hoard${rest}`);
     },
-    async close() {},
+    async close() {
+      const pending = [...live.values()];
+      for (const { child } of pending) child.kill();
+      await Promise.all(pending.map((p) => p.exited));
+    },
   };
 }

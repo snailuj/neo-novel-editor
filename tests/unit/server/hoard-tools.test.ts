@@ -3,12 +3,12 @@
 // once and is polled; a host without uv loses only the librarian routes.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fakeUv } from './fake-uv.ts';
 import { tempHoard } from './hoard.ts';
-import { startServer } from './support.ts';
+import { startServer, type Client, type Reply } from './support.ts';
 
 const git = (repo: string, ...args: string[]) => execFileSync('git', args, { cwd: repo }).toString();
 const blob = (repo: string, text: string) => execFileSync('git', ['hash-object', '--no-filters', '--stdin'], { cwd: repo, input: text }).toString().trim();
@@ -60,4 +60,110 @@ test('a missing projects folder lists nothing and logs a warning', async (t) => 
   const list = await client.call('GET', '/v1/hoard/projects');
   assert.deepEqual([list.status, list.json], [200, { projects: [] }]);
   assert.ok(lines.some((l) => l.level === 'warn' && l.msg === 'hoard.projects.missing'));
+});
+
+const post = (client: Client, tool: string) => client.call('POST', `/v1/hoard/librarian/${tool}`, { body: 'ignored' });
+const job = (client: Client, id: string) => client.call('GET', `/v1/hoard/librarian/jobs/${id}`);
+
+/** Polls the job until it leaves `running`, so a job that never finishes fails the test instead of hanging it. */
+async function finished(client: Client, id: string): Promise<Reply> {
+  for (let i = 0; i < 500; i++) {
+    const r = await job(client, id);
+    if (r.json.state !== 'running') return r;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return assert.fail(`job ${id} never finished`);
+}
+
+test('a librarian job answers 202 while the tool still runs, is polled to done, and ran with the redirected environment', async (t) => {
+  const h = tempHoard(t);
+  const fake = fakeUv(t);
+  const { client, lines } = await startServer(t, h, { hoardTools: { uv: fake.uv } });
+  fake.steer({ exit: 0 });
+  fake.hold();
+
+  const started = await post(client, 'lint');
+  assert.equal(started.status, 202);
+  assert.deepEqual([started.json.tool, started.json.state, typeof started.json.id, typeof started.json.startedAt], ['lint', 'running', 'string', 'string']);
+  const during = await job(client, started.json.id);
+  assert.deepEqual([during.status, during.json.state, during.json.exitCode, during.json.endedAt], [200, 'running', null, null]);
+
+  fake.release();
+  const done = (await finished(client, started.json.id)).json;
+  assert.deepEqual([done.state, done.exitCode, done.signal, done.truncated, done.stderr], ['done', 0, null, false, 'fake stderr\n']);
+  assert.equal(typeof done.ms, 'number');
+  const seen = JSON.parse(done.stdout);
+  assert.deepEqual(seen.argv, ['run', '--project', '_meta/infra/tools', 'python', '_meta/infra/tools/librarian/cli.py', 'lint']);
+  assert.equal(seen.cwd, realpathSync(h.repo));
+  assert.equal(seen.env.UV_PROJECT_ENVIRONMENT, path.join(h.state, 'hoard-venv'));
+  assert.equal(seen.env.PYTHONDONTWRITEBYTECODE, '1');
+  assert.ok(lines.some((l) => l.msg === 'hoard.job.start' && l.tool === 'lint'));
+  assert.ok(lines.some((l) => l.msg === 'hoard.job.end' && l.exitCode === 0 && typeof l.ms === 'number'));
+});
+
+test('a non-zero exit is done, with that exit code', async (t) => {
+  const fake = fakeUv(t);
+  const { client } = await startServer(t, tempHoard(t), { hoardTools: { uv: fake.uv } });
+  fake.steer({ exit: 3 });
+  const ended = (await finished(client, (await post(client, 'verify')).json.id)).json;
+  assert.deepEqual([ended.state, ended.exitCode, ended.reason], ['done', 3, undefined]);
+});
+
+test('a second request for a running tool returns that job, and another tool gets its own', async (t) => {
+  const fake = fakeUv(t);
+  const { client } = await startServer(t, tempHoard(t), { hoardTools: { uv: fake.uv } });
+  fake.hold();
+  const first = await post(client, 'lint');
+  const again = await post(client, 'lint');
+  const other = await post(client, 'quotes');
+  assert.deepEqual([first.status, again.status, other.status], [202, 202, 202]);
+  assert.equal((await job(client, first.json.id)).json.state, 'running', 'the first job was still running when repeated');
+  assert.equal(again.json.id, first.json.id);
+  assert.notEqual(other.json.id, first.json.id);
+  assert.equal(other.json.tool, 'quotes');
+  fake.release();
+  await finished(client, first.json.id);
+  await finished(client, other.json.id);
+  assert.notEqual((await post(client, 'lint')).json.id, first.json.id, 'a finished tool starts a new job');
+});
+
+test('an unknown tool and an unknown job are 404, and a wrong method is 405', async (t) => {
+  const { client } = await startServer(t, tempHoard(t), { hoardTools: { uv: fakeUv(t).uv } });
+  const tool = await post(client, 'rm');
+  assert.deepEqual([tool.status, tool.json.code], [404, 'unknown_tool']);
+  const gone = await job(client, 'no-such-job');
+  assert.deepEqual([gone.status, gone.json.code], [404, 'not_found']);
+  assert.equal((await client.call('GET', '/v1/hoard/librarian/lint')).status, 405);
+  assert.equal((await client.call('POST', '/v1/hoard/librarian/jobs/x')).status, 405);
+});
+
+test('output over the limit is cut to its first bytes and flagged', async (t) => {
+  const fake = fakeUv(t);
+  const { client } = await startServer(t, tempHoard(t), { hoardTools: { uv: fake.uv, outputLimit: 100 } });
+  fake.steer({ stdoutBytes: 5000 });
+  const big = (await finished(client, (await post(client, 'lint')).json.id)).json;
+  assert.deepEqual([big.truncated, big.stdout.length, big.stderr], [true, 100, 'fake stderr\n']);
+  assert.ok(big.stdout.startsWith('{"argv":["run"'), 'the first bytes are the ones kept');
+});
+
+test('a job past its timeout is killed and failed with reason timeout', async (t) => {
+  const fake = fakeUv(t);
+  const { client } = await startServer(t, tempHoard(t), { hoardTools: { uv: fake.uv, timeoutMs: 300 } });
+  fake.hold();
+  const id = (await post(client, 'lint')).json.id;
+  const ended = (await finished(client, id)).json;
+  assert.deepEqual([ended.state, ended.reason], ['failed', 'timeout']);
+  assert.equal(typeof ended.endedAt, 'string');
+});
+
+test('only the latest keepJobs finished jobs are remembered', async (t) => {
+  const fake = fakeUv(t);
+  const { client } = await startServer(t, tempHoard(t), { hoardTools: { uv: fake.uv, keepJobs: 1 } });
+  const first = (await post(client, 'lint')).json.id;
+  assert.equal((await finished(client, first)).json.state, 'done');
+  const second = (await post(client, 'lint')).json.id;
+  assert.equal((await finished(client, second)).json.state, 'done');
+  assert.notEqual(first, second);
+  assert.equal((await job(client, first)).status, 404);
+  assert.equal((await job(client, second)).status, 200);
 });
