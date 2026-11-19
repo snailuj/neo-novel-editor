@@ -172,6 +172,8 @@
       "!.github/**",
       "!scripts/**",
       "!src/**",
+      "src/package.json",
+      "src/store/**",
       "!tools/**",
       "!tests/**",
       "!docs/**",
