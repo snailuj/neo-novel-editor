@@ -2663,7 +2663,10 @@ const auxQueue = {};
 function auxRead(bookId, kind) {
   const key = bookId + '/' + kind;
   const seq = auxSeq[key] || 0;
-  return window.neo.readAux(bookId, kind).then((html) => {
+  return window.neo.readAux(bookId, kind).then((got) => {
+    // null: no page yet. It is an empty one whose base is '', so a page that
+    // arrives from another device before the first save is kept, not replaced
+    const html = got ?? '';
     if ((auxSeq[key] || 0) === seq) auxBase[key] = html;
     return html;
   });
@@ -2707,7 +2710,7 @@ async function refreshOpenAux() {
   const key = bookId + '/' + kind;
   if (auxDirty || auxPending[key] || auxBase[key] === undefined) return;
   const seq = auxSeq[key] || 0;
-  const html = await window.neo.readAux(bookId, kind);
+  const html = (await window.neo.readAux(bookId, kind)) ?? '';
   if (ed.dataset.book !== bookId || ed.dataset.kind !== kind || auxDirty || auxPending[key]) return;
   if ((auxSeq[key] || 0) !== seq || html === auxBase[key]) return;
   auxBase[key] = html;

@@ -413,7 +413,7 @@
     readAux: async (bookId, name) => {
       const cur = await readAuxText(p(bookId, name + '.html'));
       if (cur !== null) return cur;
-      try { return await readText(p(bookId, name + '.html.tmp')); } catch { return ''; }
+      try { return await readText(p(bookId, name + '.html.tmp')); } catch { return null; } // null: no page yet, as aux:read
     },
     // the same revision contract as main.js aux:write: a stale save keeps the
     // disk's words as a .bak beside the page first, and says so

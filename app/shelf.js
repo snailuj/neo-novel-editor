@@ -927,7 +927,7 @@ async function openPageSheet(shelf, meta, label) {
     live.chapterOrder = [chId];
     await writeBookMeta(live.id, live);
   }
-  const html = await window.neo.readChapter(live.id, chId);
+  const html = await readNewChapter(live.id, chId);
   const bd = sheetBackdrop(live.kind, label, '<div class="ps-label" hidden></div><div class="ps-body" contenteditable="true" role="textbox" aria-multiline="true"></div>');
   const lab = bd.querySelector('.ps-label');
   if (live.kind === 'part') { lab.hidden = false; lab.textContent = label; }
@@ -1475,14 +1475,26 @@ async function requestPaint(meta, text) {
   else await writeBookMeta(meta.id, meta);
   markPainting(meta.id, true);
   if (text == null) {
-    const m = await window.neo.readBookMeta(meta.id);
     const parts = [];
-    for (const chId of (m && m.chapterOrder) || []) {
-      if (!isStory(chId, m)) continue; // (the story alone, as bookPlainText)
-      const holder = document.createElement('div');
-      holder.innerHTML = await window.neo.readChapter(meta.id, chId);
-      holder.querySelectorAll(UNCOUNTED).forEach((n) => n.remove());
-      parts.push(holder.innerText);
+    try {
+      const m = await window.neo.readBookMeta(meta.id);
+      for (const chId of (m && m.chapterOrder) || []) {
+        if (!isStory(chId, m)) continue; // (the story alone, as bookPlainText)
+        const holder = document.createElement('div');
+        holder.innerHTML = await window.neo.readChapter(meta.id, chId);
+        holder.querySelectorAll(UNCOUNTED).forEach((n) => n.remove());
+        parts.push(holder.innerText);
+      }
+    } catch (err) {
+      // a chapter that cannot be read is not an empty one: no painting is
+      // asked for from half a book, and the tile stops waiting
+      window.neo.logError('paint request: a chapter could not be read: ' + (err && err.stack || err));
+      meta.coverArt = { status: 'failed', error: String((err && err.message) || err), at: new Date().toISOString() };
+      if (book && book.id === meta.id) scheduleMetaSave();
+      else await writeBookMeta(meta.id, meta);
+      markPainting(meta.id, false);
+      toast(t('NEO couldn’t paint that cover: {error}', { error: meta.coverArt.error }), 7000);
+      return;
     }
     text = parts.join('\n\n');
   }

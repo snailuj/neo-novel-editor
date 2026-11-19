@@ -551,7 +551,7 @@ ipcMain.handle('chapter:delete', (_e, bookId, chapterId) => libraryStore().delet
 // A page the book has never had still answers '' here: the window keeps what it read as the
 // base its next save is checked against (aux:write), and takes null for words that are not
 // there. The store tells the two apart, and the window will once it handles the difference.
-ipcMain.handle('aux:read', async (_e, bookId, name) => (await libraryStore().readAux(bookId, name)) ?? '');
+ipcMain.handle('aux:read', (_e, bookId, name) => libraryStore().readAux(bookId, name)); // null: no page yet
 ipcMain.handle('aux:write', async (_e, bookId, name, html, expected) => {
   const out = await libraryStore().writeAux(bookId, name, html, expected);
   plugins.afterWrite('aux', bookId, name);

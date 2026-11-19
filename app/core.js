@@ -11,6 +11,23 @@
 })();
 const { t, fmtNum, fmtDate } = NeoI18n;
 
+// The store marks every refusal it throws with `[store:<code>]` at the front of
+// its message, and Electron carries that message across IPC inside its own
+// wrapper. This reads the code back out (null when the error is not the store's).
+function storeErrorCode(err) {
+  const m = /\[store:([a-z_]+)\]/.exec(String(err && err.message !== undefined ? err.message : err));
+  return m ? m[1] : null;
+}
+// A chapter this device has not seen yet may have no file yet (its book.json
+// arrived before the chapter did): that is an empty new chapter, and every
+// other failure is the caller's to handle, never read as empty.
+async function readNewChapter(bookId, chId) {
+  try { return await window.neo.readChapter(bookId, chId); } catch (err) {
+    if (storeErrorCode(err) === 'not_found') return '';
+    throw err;
+  }
+}
+
 // index.html marks its words with data-i18n (text), data-i18n-title,
 // data-i18n-placeholder and data-i18n-ph (the empty-field hints)
 function applyStaticI18n(root = document) {

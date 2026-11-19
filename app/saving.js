@@ -1137,6 +1137,7 @@ function wordsBeyond(a, b) {
 }
 
 let refreshing = false;
+const refreshReadLogged = new Set(); // chapters whose failed read has been logged (see refreshFromDisk)
 async function refreshFromDisk() {
   if (refreshing || shelfExport) return;
   refreshing = true;
@@ -1177,7 +1178,7 @@ async function refreshFromDisk() {
     if (theirs) {
       for (const chId of meta.chapterOrder) {
         if (chapterHTML[chId] !== undefined) continue;
-        incoming[chId] = await window.neo.readChapter(bookId, chId);
+        incoming[chId] = await readNewChapter(bookId, chId);
         if (!book || book.id !== bookId) return;
       }
     }
@@ -1193,7 +1194,24 @@ async function refreshFromDisk() {
       const st = stamps ? stamps[chId] : undefined;
       if (st !== undefined && st === diskStamps[chId]) continue;
       const before = savedHTML[chId];
-      const disk = await window.neo.readChapter(bookId, chId);
+      let disk;
+      try { disk = await window.neo.readChapter(bookId, chId); } catch (err) {
+        if (!book || book.id !== bookId) return;
+        // No file yet is a chapter another device has not synced: nothing to
+        // take in. Any other failure leaves the chapter as it is, never read
+        // as empty, and is logged once for each chapter and reason, not at
+        // every look.
+        const code = storeErrorCode(err);
+        if (code !== 'not_found') {
+          const tag = bookId + '/' + chId + ':' + code;
+          if (!refreshReadLogged.has(tag)) {
+            refreshReadLogged.add(tag);
+            console.error('refresh: chapter not read', tag, err);
+            try { window.neo.logError('refresh: chapter not read ' + tag + ' ' + (err && err.message || err)); } catch { /* the log is a courtesy */ }
+          }
+        }
+        continue;
+      }
       if (!book || book.id !== bookId) return;
       fresh.push({ chId, st, before, disk });
     }
