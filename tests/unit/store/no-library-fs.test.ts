@@ -27,8 +27,9 @@ const NAMES = ['library:read', 'library:write', 'library:listBooks', 'book:creat
 
 type Seen = { fn: string; path: string };
 
-// A stand-in for an fs module: every function passes through, and every absolute path it is
-// given as an argument is written down with the name of the function that was given it.
+// A stand-in for an fs module: every function passes through, and every path it is given as
+// an argument is written down with the name of the function that was given it. A relative
+// path is written down as the real fs would take it, against the working folder.
 function recordingFs<T extends object>(real: T, seen: Seen[], name = 'fs'): T {
   return new Proxy(real, {
     get(target, prop, receiver) {
@@ -38,7 +39,7 @@ function recordingFs<T extends object>(real: T, seen: Seen[], name = 'fs'): T {
         return (...args: unknown[]) => {
           for (const arg of args) {
             const p = arg instanceof URL ? arg.pathname : Buffer.isBuffer(arg) ? arg.toString() : arg;
-            if (typeof p === 'string' && path.isAbsolute(p)) seen.push({ fn: `${name}.${String(prop)}`, path: p });
+            if (typeof p === 'string' && p !== '') seen.push({ fn: `${name}.${String(prop)}`, path: path.resolve(process.cwd(), p) });
           }
           return value.apply(target, args);
         };
@@ -127,9 +128,24 @@ function loadMain(seen: Seen[], pc: Computer, platform = 'darwin') {
   const realFs = recordingFs(fs, seen);
   const proxied: Record<string, unknown> = {
     fs: realFs, 'node:fs': realFs, 'fs/promises': recordingFs(fs.promises, seen, 'fsp'), 'node:fs/promises': recordingFs(fs.promises, seen, 'fsp'),
+    // Electron's fs without its asar layer: the same files, so the same watch
+    'original-fs': recordingFs(fs, seen, 'original-fs'), 'node:original-fs': recordingFs(fs, seen, 'original-fs'),
+  };
+  // Any other module that could open a file would pass unseen: requiring one fails the test,
+  // written down as a library read so every sweep reports it, and thrown so main.js stops.
+  const fsLike = (name: string) => /(^|[/:])(original-)?fs([/-]|$)|graceful-fs|fs-extra/.test(name);
+  const requireFor = (name: string) => {
+    if (name === 'electron') return electron;
+    if (name === './art.js') return art;
+    if (name in proxied) return proxied[name];
+    if (fsLike(name)) {
+      seen.push({ fn: `require(${JSON.stringify(name)}), a file module the guard does not watch`, path: pc.library });
+      throw new Error(`main.js required ${name}, which the guard does not watch: add it to the recorded modules`);
+    }
+    return localRequire(name);
   };
   const context = vm.createContext({
-    require: (name: string) => (name === 'electron' ? electron : name === './art.js' ? art : name in proxied ? proxied[name] : localRequire(name)),
+    require: requireFor,
     __dirname: root,
     process: { platform, on() {}, env: {} },
     console,
@@ -140,6 +156,8 @@ function loadMain(seen: Seen[], pc: Computer, platform = 'darwin') {
     libraryRoot: pc.library,
   });
   vm.runInContext(source, context, { filename: path.join(root, 'main.js') });
+  // LIBRARY_DIR is the computer's library from the first line, so loading is watched too
+  assert.deepEqual(sweep(seen, pc.libraries), [], 'main.js opened these library files itself while loading');
   return {
     trashed, spellLoads, forked, timers, opened, asked, did, answers, art,
     call: (name: string, ...args: unknown[]) => handlers.get(name)!(null, ...args) as Promise<any>,
@@ -154,11 +172,11 @@ function loadMain(seen: Seen[], pc: Computer, platform = 'darwin') {
   };
 }
 
-const sweep = (seen: Seen[], libraries: string[]) => {
+function sweep(seen: Seen[], libraries: string[]) {
   const direct = seen.filter((s) => libraries.some((l) => insideOf(l, s.path)));
   seen.length = 0;
   return direct;
-};
+}
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 test('the recorder sees a path given to fs, so a clean run means something', () => {
@@ -168,6 +186,10 @@ test('the recorder sees a path given to fs, so a clean run means something', () 
   assert.equal(f.existsSync(probe), false);
   assert.throws(() => f.readFileSync(probe));
   assert.deepEqual(seen.map((s) => s.fn), ['fs.existsSync', 'fs.readFileSync']);
+  assert.equal(seen[0].path, probe);
+  // a relative path is the file the real fs opens, against the working folder
+  seen.length = 0;
+  assert.equal(f.existsSync(path.relative(process.cwd(), probe)), false);
   assert.equal(seen[0].path, probe);
 });
 
@@ -190,7 +212,6 @@ test('every channel reaches the library only through the store', async () => {
     const main = loadMain(seen, pc);
     for (const name of NAMES) assert.ok(main.has(name), `${name} is a channel`);
     main.pointAt(pc.library);
-    seen.length = 0; // what main.js did while loading is not a channel
     const direct: Seen[] = [];
     const check = () => direct.push(...sweep(seen, pc.libraries));
 
@@ -255,7 +276,7 @@ test('every channel reaches the library only through the store', async () => {
     await main.run('initSpell()');
     assert.equal(await main.call('spell:setLanguage', 'de'), true);
     assert.ok(main.spellLoads.length >= 2, 'the dictionary was asked for');
-    seen.length = 0;
+    check();
     fs.writeFileSync(path.join(pc.library, 'library.json'), JSON.stringify(lib));
 
     // NEO Pocket's folder, the folder choice and the move, with the writer's answers
@@ -377,5 +398,6 @@ test('main.js names no library file and holds no way round the store', () => {
   for (const banned of ['ensureLibrary', 'LIBRARY_FILE', 'cloudOnlyAmong', 'afterLocal', 'libraryStore().root', 'bookDir(']) {
     assert.equal(text.includes(banned), false, `main.js mentions ${banned}`);
   }
-  assert.doesNotMatch(text, /path\.join\(LIBRARY_DIR/, 'no path is joined onto the library folder');
+  // (path.resolve(LIBRARY_DIR) alone only names the folder, to compare it with another)
+  assert.doesNotMatch(text, /path\.(join|resolve)\(\s*LIBRARY_DIR\s*,/, 'no path is joined onto, or resolved from, the library folder');
 });
