@@ -116,13 +116,14 @@ export async function openHoardTools(options: HoardToolsOptions): Promise<HoardT
   });
   await probe();
 
-  const jobs = new Map<string, Job>(); // insertion order is start order
+  const jobs = new Map<string, Job>();
+  const ended: string[] = []; // finished job ids, oldest end first
   const running = new Map<Tool, Job>();
   const live = new Map<string, { child: ChildProcess; exited: Promise<void> }>();
 
-  function evict(): void {
-    const finishedIds = [...jobs.values()].filter((j) => j.state !== 'running').map((j) => j.id);
-    for (const id of finishedIds.slice(0, Math.max(0, finishedIds.length - keepJobs))) jobs.delete(id);
+  function evict(id: string): void {
+    ended.push(id);
+    for (const old of ended.splice(0, Math.max(0, ended.length - keepJobs))) jobs.delete(old);
   }
 
   function start(tool: Tool): Job {
@@ -158,7 +159,7 @@ export async function openHoardTools(options: HoardToolsOptions): Promise<HoardT
       running.delete(tool);
       live.delete(job.id);
       clearTimeout(timer);
-      evict();
+      evict(job.id);
       log(state === 'done' ? 'info' : 'warn', 'hoard.job.end', { id: job.id, tool, state, exitCode, signal, reason: job.reason, ms: job.ms, truncated: job.truncated });
       settle();
     };

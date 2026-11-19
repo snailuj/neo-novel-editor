@@ -2,7 +2,7 @@
 // The test steers it through a control folder named by FAKE_UV_DIR (set on the test process,
 // which the server passes down): `control.json` holds { exit, stdoutBytes, hangVersion, ignoreTerm, grandchildMs }, and a `hold` file makes
 // a run wait until a `release` file appears.
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { tempDir } from '../git-support.ts';
 
@@ -10,7 +10,7 @@ interface Cleanup { after(fn: () => void): void }
 
 const SCRIPT = `
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 const args = process.argv.slice(2);
@@ -33,6 +33,7 @@ if (control.stdoutBytes) process.stdout.write('x'.repeat(control.stdoutBytes));
 process.stderr.write('fake stderr\\n');
 process.exitCode = control.exit ?? 0;
 if (existsSync(path.join(dir, 'hold'))) {
+  appendFileSync(path.join(dir, 'held'), 'x');
   const timer = setInterval(() => { if (existsSync(path.join(dir, 'release'))) clearInterval(timer); }, 20);
 }
 }
@@ -45,6 +46,8 @@ export interface FakeUv {
   /** Runs started after this wait until `release()`. */
   hold(): void;
   release(): void;
+  /** Resolves once `n` runs are waiting on the hold, so a test never races the fake's start-up. */
+  waitHeld(n: number): Promise<void>;
   /** Runs started after this do not wait; runs already waiting still need `release()`. */
   unhold(): void;
   /** Writes the script, for a fake made with `installed: false`. */
@@ -66,6 +69,13 @@ export function fakeUv(t: Cleanup, { installed = true } = {}): FakeUv {
     uv: { command: process.execPath, args: [script] },
     steer: (c) => writeFileSync(path.join(control, 'control.json'), JSON.stringify(c)),
     hold: () => writeFileSync(path.join(control, 'hold'), ''),
+    waitHeld: async (n) => {
+      for (let i = 0; i < 500; i++) {
+        if (existsSync(path.join(control, 'held')) && readFileSync(path.join(control, 'held'), 'utf8').length >= n) return;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      throw new Error(`fewer than ${n} runs reached the hold`);
+    },
     unhold: () => rmSync(path.join(control, 'hold'), { force: true }),
     release: () => writeFileSync(path.join(control, 'release'), ''),
     install,

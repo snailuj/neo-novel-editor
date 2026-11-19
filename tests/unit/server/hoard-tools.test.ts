@@ -216,3 +216,19 @@ test('close kills a running job and waits for it', async (t) => {
   const after = (await job(client, id)).json;
   assert.deepEqual([after.state, after.exitCode], ['failed', null]);
 });
+
+test('a finished job is evicted by when it ended, not when it started', async (t) => {
+  const fake = fakeUv(t);
+  const { client } = await startServer(t, tempHoard(t), { hoardTools: { uv: fake.uv, keepJobs: 1 } });
+  fake.hold();
+  const lint = (await post(client, 'lint')).json.id;
+  await fake.waitHeld(1);
+  fake.unhold();
+  const verify = (await post(client, 'verify')).json.id;
+  assert.equal((await finished(client, verify)).json.state, 'done');
+  assert.equal((await job(client, lint)).json.state, 'running', 'lint was still running when verify ended');
+  fake.release();
+  assert.equal((await finished(client, lint)).json.state, 'done', 'the job that ended last is kept');
+  assert.equal((await job(client, lint)).status, 200);
+  assert.equal((await job(client, verify)).status, 404, 'the job that ended first is the one forgotten');
+});
