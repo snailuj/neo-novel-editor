@@ -48,6 +48,14 @@ export interface CoverImage {
   ext: string;
 }
 
+/** A painted cover: the image, and what art.json keeps beside it so a repaint can start from the brief. */
+export interface Painting {
+  buffer: Uint8Array;
+  /** png, jpg or webp; jpg when absent. */
+  ext?: string;
+  art: Record<string, unknown>;
+}
+
 export interface SnapshotListing {
   name: string;
   files: string[];
@@ -95,6 +103,12 @@ export interface LibraryStore {
   removeCover(bookId: string): Promise<true>;
   /** A cover or painting by name; null when it is not there, not an image name, or still in iCloud. */
   readCover(bookId: string, name: string): Promise<CoverImage | null>;
+  hasBook(bookId: string): Promise<boolean>;
+  /**
+   * The new painting and the art.json naming it are written before the older paintings go,
+   * so art.json never names a file that is not there. Throws not_found for a book that is not there.
+   */
+  writePainting(bookId: string, painting: Painting): Promise<string>;
 }
 
 /** The two things only Electron's shell can do with a book folder. */

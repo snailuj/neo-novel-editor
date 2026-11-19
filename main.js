@@ -842,8 +842,7 @@ ipcMain.handle('cover:paint', (_e, bookId, text, options) => {
     const provider = (options && options.provider) || 'openai';
     const apiKey = readSecret(provider);
     if (!apiKey) return { error: t('No API key for {provider} — add one under File → Cover Art…', { provider }) };
-    const dir = bookDir(bookId);
-    if (!fs.existsSync(dir)) return { error: t('Book folder is missing') };
+    if (!(await libraryStore().hasBook(bookId))) return { error: t('Book folder is missing') };
     try {
       const art = require('./art.js');
       const out = await art.paintCover({
@@ -854,22 +853,12 @@ ipcMain.handle('cover:paint', (_e, bookId, text, options) => {
         imageModel: options && options.imageModel,
         quality: options && options.quality
       });
-      // sweep older paintings; the writer's own cover-*.png files are untouched
-      for (const f of fs.readdirSync(dir)) {
-        if (/^art-\d+\.(png|jpg|webp)$/.test(f)) fs.unlinkSync(path.join(dir, f));
-      }
-      const fname = 'art-' + Date.now() + '.' + (out.ext || 'jpg');
-      fs.writeFileSync(path.join(dir, fname), out.buffer);
-      // the brief sits beside the picture, so a future repaint can start from it
-      writeJSON(path.join(dir, 'art.json'), {
-        file: fname,
-        brief: out.brief,
-        provider,
-        textModel: out.textModel,
-        imageModel: out.imageModel,
-        painted: new Date().toISOString()
+      const file = await libraryStore().writePainting(bookId, {
+        buffer: out.buffer,
+        ext: out.ext,
+        art: { brief: out.brief, provider, textModel: out.textModel, imageModel: out.imageModel }
       });
-      return { file: fname, brief: out.brief };
+      return { file, brief: out.brief };
     } catch (err) {
       logError('paint', err);
       return { error: String((err && err.message) || err) };

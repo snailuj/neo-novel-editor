@@ -553,6 +553,27 @@ export function createFsStore(options: FsStoreOptions): FsStore {
 
     // A cover is decoration: whatever stops it being read (not there, a bad name, still in
     // iCloud) is "no cover", never an error for the shelf to survive.
+    async hasBook(bookId) {
+      return fs.existsSync(bookDir(bookId));
+    },
+
+    async writePainting(bookId, painting) {
+      const dir = bookDir(bookId);
+      if (!fs.existsSync(dir)) throw new StoreError('not_found', 'Book folder is missing');
+      const name = 'art-' + Date.now() + '.' + (painting.ext || 'jpg');
+      writeFileDurable(path.join(dir, name), Buffer.from(painting.buffer));
+      try {
+        // the brief sits beside the picture, so a future repaint can start from it
+        writeJSON(path.join(dir, 'art.json'), { file: name, ...painting.art, painted: new Date().toISOString() });
+      } catch (err) {
+        try { fs.unlinkSync(path.join(dir, name)); } catch { /* the old pair is still whole */ }
+        throw err;
+      }
+      // older paintings go last; the writer's own cover-*.png files are untouched
+      try { removeMatching(dir, /^art-\d+\.(png|jpg|webp)$/, name); } catch (err) { log('painting', err); }
+      return name;
+    },
+
     async readCover(bookId, name) {
       let file: string;
       try {
