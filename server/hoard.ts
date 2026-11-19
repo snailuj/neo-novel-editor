@@ -184,9 +184,12 @@ export async function openHoardTools(options: HoardToolsOptions): Promise<HoardT
     running.set(tool, job);
     log('info', 'hoard.job.start', { id: job.id, tool });
 
+    const timer = setTimeout(() => {
+      job.reason ??= 'timeout';
+      terminate(child);
+    }, timeoutMs);
     let settle!: () => void;
     const exited = new Promise<void>((resolve) => { settle = resolve; });
-    let timer: NodeJS.Timeout | undefined;
     const end = (state: 'done' | 'failed', exitCode: number | null, signal: string | null) => {
       if (job.state !== 'running') return;
       job.state = state;
@@ -214,12 +217,8 @@ export async function openHoardTools(options: HoardToolsOptions): Promise<HoardT
       return job;
     }
     live.set(job.id, { child, exited });
-    child.stdout.on('data', keep(0));
-    child.stderr.on('data', keep(1));
-    timer = setTimeout(() => {
-      job.reason ??= 'timeout';
-      terminate(child);
-    }, timeoutMs);
+    child.stdout?.on('data', keep(0));
+    child.stderr?.on('data', keep(1));
     child.on('error', (e) => { job.reason ??= `spawn failed (${e.message})`; end('failed', null, null); });
     const finish = (code: number | null, signal: NodeJS.Signals | null) => {
       if (job.state !== 'running') return;
