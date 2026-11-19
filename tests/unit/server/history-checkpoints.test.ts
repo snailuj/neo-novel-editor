@@ -113,7 +113,7 @@ test('closing makes one last commit of whatever is still waiting', async (t) => 
 });
 
 test('a device name is cut to letters, digits, dot, dash and underscore and to 64 characters; no name, or nothing left, is unknown', () => {
-  assert.equal(deviceName('Julian-Tablet_2.local'), 'Julian-Tablet_2.local');
+  assert.equal(deviceName('writer-tablet_2.local'), 'writer-tablet_2.local');
   assert.equal(deviceName('my phone\nNeo-Checkpoint: x'), 'myphoneNeo-Checkpointx');
   assert.equal(deviceName('a'.repeat(100)), 'a'.repeat(64));
   for (const none of [undefined, '', '   ', 'éè', '\n']) assert.equal(deviceName(none), 'unknown');
