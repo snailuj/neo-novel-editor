@@ -24,7 +24,7 @@ test('create with If-None-Match returns the blob id of the bytes, and the file i
   assert.equal(read.bytes.toString(), '<p>One</p>');
   assert.deepEqual(readdirSync(path.join(h.repo, 'library/book-1/chapters')), ['one.html']);
   const state = await tree.state();
-  assert.deepEqual({ ...state, serverTime: undefined }, { seq: 1, head: null, library: 'library/', serverTime: undefined });
+  assert.deepEqual({ ...state, serverTime: undefined, epoch: undefined }, { seq: 1, head: null, library: 'library/', serverTime: undefined, epoch: undefined });
   assert.ok(Math.abs(Date.parse(state.serverTime) - Date.now()) < 60_000);
   await tree.close();
 });
@@ -84,11 +84,12 @@ test('changes lists each path once with its latest version, in seq order, and pa
   await tree.put('b.html', Buffer.from('b'), NEW);
   const a2 = await tree.put('a.html', Buffer.from('a2'), { ifMatch: a1.version });
   const all = await tree.changes(0, 500);
-  assert.deepEqual(all, { seq: 3, more: false, changes: [{ path: 'b.html', version: blob(h.repo, 'b') }, { path: 'a.html', version: a2.version }] });
+  const { epoch } = all;
+  assert.deepEqual(all, { epoch, seq: 3, more: false, changes: [{ path: 'b.html', version: blob(h.repo, 'b') }, { path: 'a.html', version: a2.version }] });
   const page = await tree.changes(0, 1);
   assert.deepEqual([page.seq, page.more, page.changes.map((c) => c.path)], [2, true, ['b.html']]);
-  assert.deepEqual(await tree.changes(2, 1), { seq: 3, more: false, changes: [{ path: 'a.html', version: a2.version }] });
-  assert.deepEqual(await tree.changes(99, 5), { seq: 3, more: false, changes: [] });
+  assert.deepEqual(await tree.changes(2, 1), { epoch, seq: 3, more: false, changes: [{ path: 'a.html', version: a2.version }] });
+  assert.deepEqual(await tree.changes(99, 5), { epoch, seq: 3, more: false, changes: [] });
   await tree.close();
 });
 

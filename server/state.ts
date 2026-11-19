@@ -9,14 +9,15 @@ import { writeFileDurable } from './durable.ts';
 import type { Log } from './log.ts';
 
 export interface Entry { version: string | null; seq: number }
-export interface PersistedState { format: 1; seq: number; entries: Record<string, Entry> }
+/** `epoch` names one life of the index: a client that sees a different one must resync from 0. */
+export interface PersistedState { format: 1; epoch: string; seq: number; entries: Record<string, Entry> }
 
 const FILE = 'state.json';
 
 function valid(x: unknown): x is PersistedState {
   if (typeof x !== 'object' || x === null) return false;
   const s = x as Partial<PersistedState>;
-  if (s.format !== 1 || !Number.isInteger(s.seq) || (s.seq as number) < 0) return false;
+  if (s.format !== 1 || typeof s.epoch !== 'string' || s.epoch === '' || !Number.isInteger(s.seq) || (s.seq as number) < 0) return false;
   if (typeof s.entries !== 'object' || s.entries === null) return false;
   return Object.values(s.entries).every((e) => (
     typeof e === 'object' && e !== null && Number.isInteger(e.seq) && e.seq >= 0 && e.seq <= (s.seq as number)

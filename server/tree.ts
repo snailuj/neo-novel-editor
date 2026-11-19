@@ -1,6 +1,7 @@
 // The library tree: the only module that writes library files. It owns the path-to-version
 // index and the seq, and one queue serialises every write, so the HTTP handlers and any
 // later server code that go through it cannot disagree about either.
+import { randomUUID } from 'node:crypto';
 import { access, mkdir, readFile, readdir, rmdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { ApiError } from './errors.ts';
@@ -15,9 +16,9 @@ export interface Preconditions { ifMatch?: string; ifNoneMatch?: string }
 export interface Change { path: string; version: string | null }
 
 export interface Tree {
-  state(): Promise<{ seq: number; head: string | null; library: string; serverTime: string }>;
+  state(): Promise<{ epoch: string; seq: number; head: string | null; library: string; serverTime: string }>;
   currentSeq(): number;
-  changes(since: number, limit: number): { seq: number; changes: Change[]; more: boolean };
+  changes(since: number, limit: number): { epoch: string; seq: number; changes: Change[]; more: boolean };
   read(p: string): Promise<{ bytes: Buffer; version: string }>;
   put(p: string, bytes: Buffer, pre: Preconditions): Promise<{ version: string; seq: number }>;
   remove(p: string, ifMatch: string | undefined): Promise<{ seq: number }>;
@@ -72,6 +73,8 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
 
   const loaded = await loadState(stateDir, log);
   if (loaded === null) log('warn', 'state.fresh', { stateDir, note: 'seq restarts from 0: clients must resync when state.seq is below their own' });
+  // A fresh or rebuilt index starts a new epoch: its seqs mean nothing to a client of the old one.
+  const epoch = loaded?.epoch ?? randomUUID();
   let seq = loaded?.seq ?? 0;
   const index = new Map<string, Entry>(Object.entries(loaded?.entries ?? {}));
   /** Fold key of every live path, for the case-clash scan. */
@@ -95,7 +98,7 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
       }
     }
   }
-  const persist = () => saveState(stateDir, { format: 1, seq, entries: Object.fromEntries(index) });
+  const persist = () => saveState(stateDir, { format: 1, epoch, seq, entries: Object.fromEntries(index) });
 
   // Reconcile the index with the disk: whatever differs was changed while the server was
   // down (or the state folder was lost), and gets a seq like any other change.
@@ -153,7 +156,7 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
 
   return {
     async state() {
-      return { seq, head: await git.head(), library: `${libraryName}/`, serverTime: new Date().toISOString() };
+      return { epoch, seq, head: await git.head(), library: `${libraryName}/`, serverTime: new Date().toISOString() };
     },
 
     currentSeq: () => seq,
@@ -169,6 +172,7 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
       const page = later.slice(0, end);
       const more = end < later.length;
       return {
+        epoch,
         seq: more ? page[page.length - 1][1].seq : seq,
         changes: page.map(([p, e]) => ({ path: p, version: e.version })),
         more,

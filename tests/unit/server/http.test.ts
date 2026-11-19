@@ -17,6 +17,8 @@ test('state, create, read with ETag, update, move and delete answer as the contr
   const { client } = await startServer(t, h);
   const state = await client.call('GET', '/v1/state');
   assert.deepEqual([state.status, state.json.seq, state.json.head, state.json.library], [200, 0, null, 'library/']);
+  assert.equal(typeof state.json.epoch, 'string');
+  assert.equal((await client.changes(0)).json.epoch, state.json.epoch);
 
   const created = await client.put('wiki/place.html', '<p>x</p>', NEW);
   const v1 = blob(h.repo, '<p>x</p>');
@@ -33,7 +35,7 @@ test('state, create, read with ETag, update, move and delete answer as the contr
   assert.deepEqual([moved.status, moved.json], [200, { version: v2, seq: 3 }]);
   const deleted = await client.call('DELETE', '/v1/files/wiki/spot.html', { headers: { 'If-Match': v2 } });
   assert.deepEqual([deleted.status, deleted.json], [200, { seq: 4 }]);
-  assert.deepEqual((await client.changes(0)).json, { seq: 4, more: false, changes: [
+  assert.deepEqual((await client.changes(0)).json, { epoch: state.json.epoch, seq: 4, more: false, changes: [
     { path: 'wiki/place.html', version: null }, { path: 'wiki/spot.html', version: null },
   ] });
 });

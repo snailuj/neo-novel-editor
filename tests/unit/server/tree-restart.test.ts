@@ -45,7 +45,7 @@ test('a lost state folder is rebuilt from the disk: every file is listed with it
   rmSync(h.state, { recursive: true });
   const { tree, lines } = await openTestTree(h);
   assert.deepEqual(tree.changes(0, 500), {
-    seq: 2, more: false,
+    epoch: tree.changes(0, 1).epoch, seq: 2, more: false,
     changes: [
       { path: 'book-1/chapters/two.html', version: blob(h.repo, 'one') },
       { path: 'wiki/other.html', version: blob(h.repo, 'other') },
@@ -121,4 +121,25 @@ test('a move that crashed between the rename and the state save replays correctl
   assert.deepEqual([...client], [['wiki/a.html', blob(h.repo, 'a')]]);
   assert.deepEqual(tree.changes(1, 10).changes.map((c) => c.version === null), [true, false]);
   await tree.close();
+});
+
+test('the epoch survives a restart with intact state and changes when the state is lost or unreadable', async (t) => {
+  const { h } = await seeded(t);
+  const epochOf = async () => {
+    const { tree } = await openTestTree(h);
+    const state = await tree.state();
+    assert.equal(tree.changes(0, 10).epoch, state.epoch);
+    await tree.close();
+    return state;
+  };
+  const original = await epochOf();
+  assert.match(original.epoch, /^[0-9a-f-]{36}$/);
+  assert.equal((await epochOf()).epoch, original.epoch);
+  // Seq was 4 and one file is left: after the loss seq restarts at 1, below what a client holds.
+  rmSync(h.state, { recursive: true });
+  const rebuilt = await epochOf();
+  assert.equal(rebuilt.seq, 1);
+  assert.notEqual(rebuilt.epoch, original.epoch);
+  writeFileSync(path.join(h.state, 'state.json'), 'not json');
+  assert.notEqual((await epochOf()).epoch, rebuilt.epoch);
 });

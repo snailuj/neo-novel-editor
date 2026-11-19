@@ -60,7 +60,7 @@ test('move is one seq for both paths, keeps the version, and a retry answers the
   ]);
   assert.deepEqual(await tree.move('wiki/a.html', 'wiki/deep/b.html', v), { version: v, seq: 2 });
   // A page limit of one still returns both halves of the move.
-  assert.deepEqual(tree.changes(1, 1), { seq: 2, more: false, changes: tree.changes(1, 10).changes });
+  assert.deepEqual(tree.changes(1, 1), { ...tree.changes(1, 10), seq: 2, more: false });
   await tree.close();
 });
 
