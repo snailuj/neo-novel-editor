@@ -203,6 +203,27 @@ export function createFsStore(options: FsStoreOptions): LibraryStore & { readonl
     return disk.chapterOrder.filter((c): c is string => typeof c === 'string' && !seen.has(c));
   }
 
+  // the disk copy is not exactly what this device last knew (`expected`) and is not already
+  // the new text (a retry or an identical write), and it holds words. Any other revision,
+  // formatting, order and deletions included, is a conflict: the disk text is handed back to
+  // be kept as a twin before anything is replaced.
+  function chapterDiverged(cur: string, expected: string, html: string): boolean {
+    if (cur === expected || cur === html) return false;
+    const words = String(cur || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').trim();
+    return words !== '';
+  }
+
+  const chapterFile = (bookId: string, chapterId: string) => path.join(bookDir(bookId), 'chapters', libName(chapterId) + '.html');
+
+  // a file that cannot be read says which kind of cannot: absent, or something else
+  function readFailure(err: unknown): StoreError {
+    const e = err as NodeJS.ErrnoException;
+    return new StoreError(e && e.code === 'ENOENT' ? 'not_found' : 'unreadable', String(e && e.message || e), { cause: err });
+  }
+  function readText(file: string): string {
+    try { return fs.readFileSync(file, 'utf8'); } catch (err) { throw readFailure(err); }
+  }
+
   const unfinished = (what: string) => async (): Promise<never> => { throw new Error('not yet in the store: ' + what); };
 
   return {
@@ -337,10 +358,61 @@ export function createFsStore(options: FsStoreOptions): LibraryStore & { readonl
       }
     },
 
-    chapterStamps: unfinished('chapterStamps'),
-    readChapter: unfinished('readChapter'),
-    writeChapter: unfinished('writeChapter'),
-    deleteChapter: unfinished('deleteChapter'),
+    // {chapterId: mtime and size} for a book's chapter files: how the window tells what
+    // changed without re-reading every chapter. The size is there because sync tools hand
+    // over the other device's mtime, and on disks that keep whole seconds two saves a second
+    // apart would otherwise look the same.
+    async chapterStamps(bookId) {
+      const out: Record<string, string> = {};
+      try {
+        const dir = path.join(bookDir(bookId), 'chapters');
+        for (const f of fs.readdirSync(dir)) {
+          if (!f.endsWith('.html')) continue;
+          try {
+            const st = fs.statSync(path.join(dir, f));
+            out[f.slice(0, -5)] = st.mtimeMs + ':' + st.size;
+          } catch { /* vanished */ }
+        }
+      } catch { /* no chapters folder yet */ }
+      return out;
+    },
+
+    // An empty answer that is then saved would wipe the chapter, so a chapter that cannot be
+    // read is an error: not_found (no file yet), unreadable, or cloud_only.
+    async readChapter(bookId, chapterId) {
+      const file = chapterFile(bookId, chapterId);
+      return icloud.afterLocal([file], () => readText(file), () => { throw icloud.cloudError(file); });
+    },
+
+    // `expected` is the text the window last read or wrote for this chapter. When the file
+    // holds something else (another device wrote it since, even if only formatting, order
+    // or a deletion changed), nothing is written: the window is handed that text to keep as
+    // its own chapter first, so neither version is lost to a save that happened before the
+    // next look at the disk.
+    async writeChapter(bookId, chapterId, html, expected) {
+      const file = chapterFile(bookId, chapterId);
+      const dir = path.dirname(file);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      // still in iCloud: the words there aren't known yet, so nothing goes over them. The
+      // save fails, and the next one tries again.
+      if (icloud.isCloudOnly(file)) { icloud.requestDownload([file]); throw icloud.cloudError(file); }
+      if (typeof expected === 'string') {
+        let cur: string | null = null;
+        try { cur = fs.readFileSync(file, 'utf8'); } catch { /* not there: nothing to keep */ }
+        if (cur !== null && chapterDiverged(cur, expected, html)) {
+          log('conflict', `${bookId}/${chapterId}: another device changed this chapter since it was read; its text is handed back to be kept, nothing written`);
+          return { conflict: cur };
+        }
+      }
+      writeFileDurable(file, html);
+      return true;
+    },
+
+    async deleteChapter(bookId, chapterId) {
+      const file = chapterFile(bookId, chapterId);
+      if (fs.existsSync(file)) fs.unlinkSync(file);
+      return true;
+    },
     readAux: unfinished('readAux'),
     writeAux: unfinished('writeAux'),
     listSnapshots: unfinished('listSnapshots'),
