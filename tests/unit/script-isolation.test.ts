@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
-import fs, { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import os, { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -86,7 +86,7 @@ type Run = {
   context: Anything;
   // What the registered resolve hook answers for a specifier (the next resolver says 'resolved <it>').
   resolve: (specifier: string) => unknown;
-  main: { dir: string; file: string };
+  main: { dir: string };
 };
 
 const inside = (parent: string, child: unknown): boolean => {
@@ -226,7 +226,7 @@ function run(target: Target): Run {
   // What the setup asked to run once the app is ready, before main.js asks for its own.
   const setupReady = ready.slice();
 
-  // main.js reads os.homedir() when it loads, to start LIBRARY_DIR and LIBRARY_FILE.
+  // main.js reads os.homedir() when it loads, to start LIBRARY_DIR.
   context.require = requireFrom(root);
   context.__dirname = root;
   new Script(readFileSync(path.join(root, 'main.js'), 'utf8'), { filename: 'main.js' }).runInContext(context);
@@ -241,10 +241,9 @@ function run(target: Target): Run {
       assert.ok(hooks.resolve, 'a resolve hook was registered');
       return hooks.resolve(specifier, {}, (next) => `resolved ${next}`);
     },
-    main: { dir: '', file: '' },
+    main: { dir: '' },
   };
   result.main.dir = runInContext('LIBRARY_DIR', context);
-  result.main.file = runInContext('LIBRARY_FILE', context);
   return result;
 }
 
@@ -444,16 +443,19 @@ for (const target of TARGETS) {
 
     test('main.js starts with its library inside the temp folder', () => {
       assert.ok(inside(r.tempRoot, r.main.dir), `LIBRARY_DIR is ${r.main.dir}`);
-      assert.ok(inside(r.tempRoot, r.main.file), `LIBRARY_FILE is ${r.main.file}`);
     });
 
-    // logError makes the library folder, seeds library.json and appends to neo-errors.log, and
-    // an exception before main.js has found the library goes through it.
-    test('an error logged before the library is found cannot write outside the temp folder', () => {
+    // An exception or rejection before main.js has found the library goes through logError. The
+    // library is not open yet, so the line goes to the app's own folder and no library is made.
+    test('an error logged before the library is found cannot write outside the temp folder, and makes no library', async () => {
+      const before = existsSync(r.main.dir) ? readdirSync(r.main.dir) : null; // the setup may have seeded one
       runInContext("logError('early', new Error('before the library is found'))", r.context);
+      await new Promise((resolve) => setImmediate(resolve));
       assert.deepEqual(walk(r.developer), [], 'nothing was made in the developer\'s folders');
-      const log = path.join(r.main.dir, 'neo-errors.log');
-      assert.match(readFileSync(log, 'utf8'), /before the library is found/);
+      assert.deepEqual(existsSync(r.main.dir) ? readdirSync(r.main.dir) : null, before, 'the library took no log line and was not made for one');
+      const userData = r.paths.get('userData') ?? '';
+      assert.ok(inside(r.tempRoot, userData), `userData is ${userData}`);
+      assert.match(readFileSync(path.join(userData, 'neo-errors.log'), 'utf8'), /before the library is found/);
     });
   });
 }

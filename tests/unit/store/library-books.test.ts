@@ -320,13 +320,13 @@ test('a book goes to the system trash through the mover; when it cannot, the boo
   assert.ok(fs.existsSync(h.at(book.id, 'book.json')));
 });
 
-test('opening a library makes the folder and one shelf when it is new, and changes nothing when it is not', () => {
+test('opening a library makes the folder and one shelf when it is new, and changes nothing when it is not', async () => {
   const h = harness({ dir: path.join(fs.mkdtempSync(path.join(tmpdir(), 'neo-open-')), 'NEO Library') });
-  h.store.ensureLibrary();
+  await h.store.open();
   const seeded = h.read('library.json');
   assert.equal(shelves(JSON.parse(seeded)).length, 1);
   h.write(['library.json'], '{"shelves":[]}');
-  h.store.ensureLibrary();
+  await h.store.open();
   assert.equal(h.read('library.json'), '{"shelves":[]}');
   fs.rmSync(path.dirname(h.dir), { recursive: true, force: true });
 });

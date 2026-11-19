@@ -1818,18 +1818,17 @@ ipcMain.handle('import:pick', async (_e, opts) => {
 // ---------------------------------------------------------------------------
 // Robustness: error log, daily backups, single instance
 // ---------------------------------------------------------------------------
-const ERROR_LOG = () => path.join(LIBRARY_DIR, 'neo-errors.log');
-
+// The library's own log, while the library is open. Never a new library for a log line:
+// before the library is chosen, or when it is missing or unwritable (the very case worth
+// logging), NEO's own app folder takes the line instead.
 function logError(source, err) {
   const line = `[${new Date().toISOString()}] [${source}] ${err && err.stack ? err.stack : String(err)}\n`;
-  try {
-    libraryStore().ensureLibrary();
-    fs.appendFileSync(ERROR_LOG(), line);
-  } catch {
-    // the library can't be written (the very case worth logging): NEO's own
-    // app folder takes the line instead
+  const elsewhere = () => {
     try { fs.appendFileSync(path.join(app.getPath('userData'), 'neo-errors.log'), line); } catch { /* never let logging crash the app */ }
-  }
+  };
+  try {
+    libraryStore().appendErrorLog(line).then((written) => { if (!written) elsewhere(); }, elsewhere);
+  } catch { elsewhere(); }
 }
 
 process.on('uncaughtException', (err) => logError('main', err));
@@ -1841,57 +1840,13 @@ ipcMain.handle('log:error', (_e, msg) => logError('renderer', msg));
 plugins.wire({ app, ipcMain, logError, appRoot: __dirname, readSettings: readSettingsFile, writeSettings, libraryDir: () => LIBRARY_DIR });
 
 // One zip of the whole library per day, keeping the last 14. Cheap insurance.
-// The day's backup is made in a process of its own (backup-worker.js). It
-// reads every file in the library, and a file iCloud (or a sync tool) won't
-// hand over used to hold NEO's main process with it: the window never came,
-// that day or any day after, since the backup ran at launch. Now a stuck
-// file holds up only the backup, which leaves it out and says so, and a
-// backup that overruns altogether is ended.
+// The store makes it, in a process of its own (backup-worker.js); only Electron can
+// start that process, so it is handed over here, with the time limits.
 let BACKUP_LIMIT_MS = 15 * 60 * 1000; // the whole job
 let BACKUP_FILE_LIMIT_MS = 20 * 1000; // one file
 function dailyBackup() {
-  if (backupRunning) return Promise.resolve(); // one at a time (the hourly look can meet a slow one)
-  let target;
-  try {
-    libraryStore().ensureLibrary();
-    const backupsDir = path.join(LIBRARY_DIR, 'Backups');
-    if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir, { recursive: true });
-    target = path.join(backupsDir, `neo-backup-${new Date().toISOString().slice(0, 10)}.zip`);
-    if (fs.existsSync(target)) return Promise.resolve();
-  } catch (err) {
-    logError('backup', err);
-    return Promise.resolve();
-  }
-  backupRunning = true;
-  return new Promise((resolve) => {
-    let child = null;
-    let timer = null;
-    const finish = (err) => {
-      if (!backupRunning) return;
-      backupRunning = false;
-      clearTimeout(timer);
-      if (err) {
-        logError('backup', err);
-        try { fs.unlinkSync(target + '.tmp'); } catch { /* none */ }
-      }
-      try { if (child) child.kill(); } catch { /* gone */ }
-      resolve();
-    };
-    try {
-      child = utilityProcess.fork(path.join(__dirname, 'backup-worker.js'), [], { serviceName: 'NEO backup' });
-    } catch (err) { finish(err); return; }
-    timer = setTimeout(() => finish(new Error('the backup took longer than ' + BACKUP_LIMIT_MS / 60000 + ' minutes and was stopped')), BACKUP_LIMIT_MS);
-    child.on('message', (msg) => {
-      if (!msg || !msg.ok) { finish(new Error((msg && msg.error) || 'the backup failed')); return; }
-      if (msg.away && msg.away.length) icloud.requestDownload(new Set(msg.away));
-      if (msg.missed && msg.missed.length) logError('backup', new Error("left out of today's backup: " + msg.missed.join(', ')));
-      finish(null);
-    });
-    child.on('exit', (code) => finish(code ? new Error('the backup stopped (' + code + ')') : null));
-    child.postMessage({ libraryDir: LIBRARY_DIR, target, keep: 14, fileLimitMs: BACKUP_FILE_LIMIT_MS });
-  });
+  return libraryStore().backup((script, options) => utilityProcess.fork(script, [], options), { totalMs: BACKUP_LIMIT_MS, fileMs: BACKUP_FILE_LIMIT_MS });
 }
-let backupRunning = false;
 
 // ---------------------------------------------------------------------------
 // Window
@@ -3085,7 +3040,7 @@ app.whenReady().then(() => {
 
     try { initLanguage(); } catch (err) { logError('language', err); }
     try { checkLibraryWritable(); } catch (err) { logError('library check', err); }
-    try { libraryStore().ensureLibrary(); } catch (err) { logError('library', err); }
+    libraryStore().open().catch((err) => logError('library', err));
     createWindow();
     // after the window; the main halves start a turn after it has its plugin
     // list (or 5 s on), so no plugin's code runs before its first requests are answered

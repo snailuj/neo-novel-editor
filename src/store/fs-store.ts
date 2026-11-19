@@ -6,10 +6,13 @@ import { libName } from './names.ts';
 import {
   StoreError,
   type BookMeta,
+  type BackupOptions,
+  type BackupWorker,
   type BookSummary,
   type CoverImage,
   type LibraryRecord,
   type LibraryStore,
+  type ForkWorker,
   type Log,
   type Translate,
 } from './types.ts';
@@ -31,8 +34,6 @@ export interface FsStoreOptions {
 // cannot answer at once).
 export interface FsStore extends LibraryStore {
   readonly root: string;
-  /** Makes the folder and a one-shelf library.json when the library is new. Synchronous, for start-up and the error log. */
-  ensureLibrary(): void;
 }
 
 export function createFsStore(options: FsStoreOptions): FsStore {
@@ -274,9 +275,26 @@ export function createFsStore(options: FsStoreOptions): FsStore {
 
   const sidecar = (bookId: string, name: string) => path.join(bookDir(bookId), libName(name) + '.json');
 
+  let opened = false;
+  let backupRunning = false;
+
   return {
     root,
-    ensureLibrary,
+
+    async open() {
+      ensureLibrary();
+      opened = true;
+    },
+
+    // The library's own log, in the library so it travels with a bug report. It never makes
+    // a folder: an unplugged drive's log line is not worth a new library in its place.
+    async appendErrorLog(line) {
+      if (!opened) return false;
+      try {
+        fs.appendFileSync(path.join(root, 'neo-errors.log'), line);
+        return true;
+      } catch { return false; }
+    },
 
     async readLibrary() {
       ensureLibrary();
@@ -553,6 +571,57 @@ export function createFsStore(options: FsStoreOptions): FsStore {
 
     // A cover is decoration: whatever stops it being read (not there, a bad name, still in
     // iCloud) is "no cover", never an error for the shelf to survive.
+    // The backup reads every file in the library, and a file iCloud (or a sync tool) won't hand
+    // over used to hold NEO's main process with it: the window never came, that day or any day
+    // after. Now a stuck file holds up only the backup, which leaves it out and says so, and a
+    // backup that overruns altogether is ended.
+    backup(fork: ForkWorker, opts: BackupOptions = {}) {
+      if (backupRunning) return Promise.resolve(); // the hourly look can meet a slow one
+      const totalMs = opts.totalMs ?? 15 * 60 * 1000;
+      const fileMs = opts.fileMs ?? 20 * 1000;
+      const workerPath = opts.workerPath ?? path.join(import.meta.dirname, '..', '..', 'backup-worker.js');
+      let target: string;
+      try {
+        ensureLibrary();
+        const backups = path.join(root, 'Backups');
+        if (!fs.existsSync(backups)) fs.mkdirSync(backups, { recursive: true });
+        target = path.join(backups, `neo-backup-${new Date().toISOString().slice(0, 10)}.zip`);
+        if (fs.existsSync(target)) return Promise.resolve();
+      } catch (err) {
+        log('backup', err);
+        return Promise.resolve();
+      }
+      backupRunning = true;
+      return new Promise<void>((resolve) => {
+        let child: BackupWorker | null = null;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const finish = (err: Error | null) => {
+          if (!backupRunning) return;
+          backupRunning = false;
+          clearTimeout(timer);
+          if (err) {
+            log('backup', err);
+            try { fs.unlinkSync(target + '.tmp'); } catch { /* none */ }
+          }
+          try { child?.kill(); } catch { /* gone */ }
+          resolve();
+        };
+        try {
+          child = fork(workerPath, { serviceName: 'NEO backup' });
+        } catch (err) { finish(err as Error); return; }
+        timer = setTimeout(() => finish(new Error('the backup took longer than ' + totalMs / 60000 + ' minutes and was stopped')), totalMs);
+        child.on('message', (message) => {
+          const msg = message as { ok?: boolean; error?: string; away?: string[]; missed?: string[] } | null;
+          if (!msg || !msg.ok) { finish(new Error(msg?.error || 'the backup failed')); return; }
+          if (msg.away?.length) icloud.requestDownload(new Set(msg.away));
+          if (msg.missed?.length) log('backup', new Error("left out of today's backup: " + msg.missed.join(', ')));
+          finish(null);
+        });
+        child.on('exit', (code) => finish(code ? new Error('the backup stopped (' + code + ')') : null));
+        child.postMessage({ libraryDir: root, target, keep: 14, fileLimitMs: fileMs });
+      });
+    },
+
     async hasBook(bookId) {
       return fs.existsSync(bookDir(bookId));
     },

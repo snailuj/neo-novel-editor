@@ -61,8 +61,35 @@ export interface SnapshotListing {
   files: string[];
 }
 
+/** The backup's process: Electron's utilityProcess in the app, a plain Node child in tests. */
+export interface BackupWorker {
+  on(event: 'message', fn: (message: unknown) => void): void;
+  on(event: 'exit', fn: (code: number) => void): void;
+  postMessage(message: unknown): void;
+  kill(): void;
+}
+
+/** Starts a process on `script`. Only Electron can make the real one, so the caller passes it in. */
+export type ForkWorker = (script: string, options: { serviceName: string }) => BackupWorker;
+
+export interface BackupOptions {
+  /** Where backup-worker.js is; beside the app by default. */
+  workerPath?: string;
+  /** The whole job; 15 minutes by default. */
+  totalMs?: number;
+  /** One file; 20 seconds by default. */
+  fileMs?: number;
+}
+
 /** What the window reads and writes of the library. Read failures are StoreErrors. */
 export interface LibraryStore {
+  /** Makes the folder and a one-shelf library.json when the library is new, and marks the library open. Throws when the folder cannot be made. */
+  open(): Promise<void>;
+  /**
+   * Adds a line to the library's neo-errors.log. False, with nothing made, when the library is not open, its
+   * folder is gone or the log cannot be written: the caller keeps the line somewhere else.
+   */
+  appendErrorLog(line: string): Promise<boolean>;
   /** library.json, made if the library is new, recovered if damaged. */
   readLibrary(): Promise<LibraryRecord>;
   writeLibrary(data: LibraryRecord): Promise<true>;
@@ -104,6 +131,13 @@ export interface LibraryStore {
   /** A cover or painting by name; null when it is not there, not an image name, or still in iCloud. */
   readCover(bookId: string, name: string): Promise<CoverImage | null>;
   hasBook(bookId: string): Promise<boolean>;
+  /**
+   * One zip of the whole library for the day, in Backups/, keeping the last 14. It is made in a
+   * process of its own (backup-worker.js), which leaves out and names any file that is not
+   * handed over in time. One at a time, one a day; resolves when it is done, and never rejects:
+   * a failure is logged.
+   */
+  backup(fork: ForkWorker, options?: BackupOptions): Promise<void>;
   /**
    * The new painting and the art.json naming it are written before the older paintings go,
    * so art.json never names a file that is not there. Throws not_found for a book that is not there.

@@ -181,7 +181,7 @@ describe('files still in iCloud', {
   test("the daily backup leaves out what's in iCloud and says so, instead of waiting on it", async () => {
     const { dir, bookDir } = await libraryWithBook();
     sendToICloud(path.join(bookDir, 'chapters', 'ch-aaa.html'));
-    await main.run('backupRunning = false; dailyBackup()');
+    await main.run("dailyBackup()");
     const zips = fs.readdirSync(path.join(dir, 'Backups')).filter((f) => f.endsWith('.zip'));
     assert.equal(zips.length, 1);
     const JSZip = localRequire('jszip');
@@ -202,7 +202,7 @@ describe('files still in iCloud', {
     let ticks = 0;
     const beat = setInterval(() => { ticks++; }, 20);
     const t0 = Date.now();
-    await main.run('backupRunning = false; dailyBackup()');
+    await main.run("dailyBackup()");
     clearInterval(beat);
     assert.ok(Date.now() - t0 < 10000, 'the backup finished');
     assert.ok(ticks > 5, 'this process kept running while the backup waited');
