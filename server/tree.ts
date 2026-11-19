@@ -15,6 +15,8 @@ export interface TreeOptions {
   repo: string; library: string; state: string; log: Log;
   /** Folder fsync; a test records the calls. */
   syncDir?: SyncDir;
+  /** Reads a library file; a test interleaves a write with it. */
+  readFile?: (file: string) => Promise<Buffer>;
 }
 export interface Preconditions { ifMatch?: string; ifNoneMatch?: string }
 export interface Change { path: string; version: string | null }
@@ -65,6 +67,7 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
   const libraryDir = path.join(repo, ...libraryName.split('/'));
   const git = createRepoGit(repo);
   const sync = options.syncDir ?? makeSyncDir(log);
+  const readBytes = options.readFile ?? ((file: string) => readFile(file));
   const onDisk = (p: string) => path.join(libraryDir, ...p.split('/'));
 
   await assertOutsideRepo(stateDir, repo);
@@ -203,16 +206,26 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
 
     async read(p) {
       checkPath(p);
-      while (busy.has(p)) await tail;
-      const entry = index.get(p);
-      if (entry?.version == null) throw notFound(p);
-      try {
-        return { bytes: await readFile(onDisk(p)), version: entry.version };
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
-        log('warn', 'read.missing_on_disk', { path: p, version: entry.version });
-        throw notFound(p);
+      // Reads do not queue, so a write can land while the bytes are being read. The read
+      // counts only if no write touched the path meanwhile; otherwise it starts again.
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        while (busy.has(p)) await tail;
+        const entry = index.get(p);
+        if (entry?.version == null) throw notFound(p);
+        let bytes: Buffer | null = null;
+        try {
+          bytes = await readBytes(onDisk(p));
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+        }
+        if (busy.has(p) || index.get(p)?.seq !== entry.seq) continue;
+        if (bytes === null) {
+          log('warn', 'read.missing_on_disk', { path: p, version: entry.version });
+          throw notFound(p);
+        }
+        return { bytes, version: entry.version };
       }
+      throw new Error(`reading ${p} kept overlapping writes`);
     },
 
     async put(p, bytes, { ifMatch, ifNoneMatch }) {

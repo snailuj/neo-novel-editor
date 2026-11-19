@@ -4,9 +4,11 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { readFile as fsReadFile } from 'node:fs/promises';
 import path from 'node:path';
 import { test } from 'node:test';
-import { openTestTree, refused, tempHoard } from './hoard.ts';
+import { openTree, type Tree, type TreeOptions } from '../../../server/tree.ts';
+import { captureLog, openTestTree, refused, tempHoard } from './hoard.ts';
 
 const blob = (repo: string, text: string) => execFileSync('git', ['hash-object', '--no-filters', '--stdin'], { cwd: repo, input: text }).toString().trim();
 
@@ -99,5 +101,27 @@ test('concurrent creates of clashing paths accept exactly one', async (t) => {
   const results = await Promise.allSettled(['x/A.html', 'x/a.html', 'x/A.html'].map((p, i) => tree.put(p, Buffer.from(`n${i}`), NEW)));
   assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
   assert.equal((await tree.state()).seq, 1);
+  await tree.close();
+});
+
+test('a read that overlaps a write returns bytes and the version of the same write', async (t) => {
+  const h = tempHoard(t);
+  let tree: Tree | undefined;
+  let interfere = false;
+  const readFile: NonNullable<TreeOptions['readFile']> = async (file) => {
+    if (interfere) {
+      interfere = false;
+      // The write lands after the read chose its version and before the bytes are read.
+      const current = (await tree!.read('a.html')).version;
+      await tree!.put('a.html', Buffer.from('new'), { ifMatch: current });
+    }
+    return fsReadFile(file);
+  };
+  tree = await openTree({ repo: h.repo, library: 'library', state: h.state, log: captureLog().log, readFile });
+  await tree.put('a.html', Buffer.from('old'), NEW);
+  interfere = true;
+  const got = await tree.read('a.html');
+  assert.equal(got.version, blob(h.repo, got.bytes.toString()));
+  assert.equal(got.bytes.toString(), 'new');
   await tree.close();
 });
