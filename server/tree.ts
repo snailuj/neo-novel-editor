@@ -183,6 +183,8 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
   const busy = new Map<string, number>();
   /** Exclusive jobs queued or running; file reads wait while there is one. */
   let exclusives = 0;
+  /** A read of `p` must wait: a write of it is queued, or an exclusive job holds the tree. */
+  const mustWait = (p: string) => busy.has(p) || exclusives > 0;
   function enqueue<T>(paths: string[], job: () => Promise<T>): Promise<T> {
     for (const p of paths) busy.set(p, (busy.get(p) ?? 0) + 1);
     const result = tail.then(job);
@@ -273,7 +275,7 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
       // Reads do not queue, so a write can land while the bytes are being read. The read
       // counts only if no write touched the path meanwhile; otherwise it starts again.
       for (let attempt = 0; attempt < 10; attempt += 1) {
-        while (busy.has(p) || exclusives > 0) await tail;
+        while (mustWait(p)) await tail;
         const entry = index.get(p);
         if (entry?.version == null) throw notFound(p);
         let bytes: Buffer | null = null;
@@ -282,7 +284,7 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
         } catch (e) {
           if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
         }
-        if (busy.has(p) || exclusives > 0 || index.get(p)?.seq !== entry.seq) continue;
+        if (mustWait(p) || index.get(p)?.seq !== entry.seq) continue;
         if (bytes === null) {
           log('warn', 'read.missing_on_disk', { path: p, version: entry.version });
           throw notFound(p);

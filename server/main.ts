@@ -2,20 +2,24 @@
 import { parseConfig } from './config.ts';
 import { createServer } from './http.ts';
 import { createLogger } from './log.ts';
-import { openTree } from './tree.ts';
+import { openLibrary } from './library.ts';
 
 const log = createLogger();
 
 async function main(): Promise<void> {
   const config = await parseConfig(process.argv.slice(2), process.env);
-  const tree = await openTree({ repo: config.repo, library: config.library, state: config.state, log });
+  const library = await openLibrary({
+    repo: config.repo, library: config.library, state: config.state, log,
+    author: config.author, idleSeconds: config.idleSeconds, syncSeconds: config.syncSeconds,
+  });
+  const { tree } = library;
   const server = createServer(tree, { log });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(config.port, config.host, resolve);
   });
   const address = server.address();
-  log('info', 'listening', { address, repo: config.repo, library: config.library, state: config.state, seq: tree.currentSeq() });
+  log('info', 'listening', { address, repo: config.repo, library: config.library, state: config.state, seq: tree.currentSeq(), idleSeconds: config.idleSeconds, syncSeconds: config.syncSeconds });
 
   let closing = false;
   const close = (signal: string) => {
@@ -24,7 +28,7 @@ async function main(): Promise<void> {
     log('info', 'closing', { signal });
     server.close();
     server.closeIdleConnections();
-    tree.close().then(() => process.exit(0), (e: unknown) => {
+    library.close().then(() => process.exit(0), (e: unknown) => {
       log('error', 'close.failed', { stack: e instanceof Error ? e.stack : String(e) });
       process.exit(1);
     });
