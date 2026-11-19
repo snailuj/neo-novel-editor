@@ -23,6 +23,8 @@ export interface HoardToolsOptions {
   /** Finished jobs remembered. */
   keepJobs?: number;
   timeoutMs?: number;
+  /** How long `uv --version` may take before uv counts as unavailable. */
+  probeTimeoutMs?: number;
 }
 
 export interface HoardReply { status: number; json?: unknown; bytes?: Buffer; headers?: Record<string, string> }
@@ -58,7 +60,7 @@ function projectName(encoded: string): string {
 }
 
 export async function openHoardTools(options: HoardToolsOptions): Promise<HoardTools> {
-  const { repo, state, log, outputLimit = 2 * 1024 * 1024, keepJobs = 20, timeoutMs = 10 * 60_000 } = options;
+  const { repo, state, log, outputLimit = 2 * 1024 * 1024, keepJobs = 20, timeoutMs = 10 * 60_000, probeTimeoutMs = 10_000 } = options;
   const uv = { command: options.uv?.command ?? 'uv', args: options.uv?.args ?? [] };
   const git = createRepoGit(repo);
   const projectsDir = path.join(repo, 'projects');
@@ -98,22 +100,43 @@ export async function openHoardTools(options: HoardToolsOptions): Promise<HoardT
   // so installing uv needs no restart.
   let unavailable: string | null = null;
   let probing: Promise<void> | null = null;
-  const probe = (): Promise<void> => probing ??= new Promise<void>((resolve) => {
-    let settled = false;
-    const finish = (reason: string | null, extra: Record<string, unknown> = {}) => {
-      if (settled) return; // a failed spawn emits 'error' and may then emit 'close'
-      settled = true;
+
+  /** Resolves with the reason uv cannot run, or null. Never rejects: spawn may throw as well as emit. */
+  function probeOnce(): Promise<{ reason: string | null; version: string }> {
+    return new Promise((resolve) => {
+      let settled = false;
+      let version = '';
+      let child: ChildProcess | undefined;
+      const finish = (reason: string | null) => {
+        if (settled) return; // a failed spawn emits 'error' and may then emit 'close'
+        settled = true;
+        clearTimeout(timer);
+        resolve({ reason, version: version.trim() });
+      };
+      const timer = setTimeout(() => {
+        child?.kill();
+        finish(`uv --version did not answer within ${probeTimeoutMs} ms`);
+      }, probeTimeoutMs);
+      const failed = (e: NodeJS.ErrnoException) => finish(e.code === 'ENOENT' ? `uv was not found on the host (${e.message})` : `uv could not be started (${e.message})`);
+      try {
+        child = spawn(uv.command, [...uv.args, '--version'], { cwd: repo, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+      } catch (e) {
+        failed(e as NodeJS.ErrnoException);
+        return;
+      }
+      child.stdout?.on('data', (c: Buffer) => { version += c.toString('utf8'); });
+      child.on('error', failed);
+      child.on('close', (code) => { finish(code === 0 ? null : `uv --version exited with code ${code}`); });
+    });
+  }
+
+  function probe(): Promise<void> {
+    probing ??= probeOnce().then(({ reason, version }) => {
       unavailable = reason;
-      log(reason === null ? 'info' : 'warn', 'hoard.uv.probe', { available: reason === null, reason, ...extra });
-      probing = null;
-      resolve();
-    };
-    const child = spawn(uv.command, [...uv.args, '--version'], { cwd: repo, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
-    let version = '';
-    child.stdout.on('data', (c: Buffer) => { version += c.toString('utf8'); });
-    child.on('error', (e: NodeJS.ErrnoException) => finish(e.code === 'ENOENT' ? `uv was not found on the host (${e.message})` : `uv could not be started (${e.message})`));
-    child.on('close', (code) => { finish(code === 0 ? null : `uv --version exited with code ${code}`, { version: version.trim() }); });
-  });
+      log(reason === null ? 'info' : 'warn', 'hoard.uv.probe', { available: reason === null, reason, version });
+    }).finally(() => { probing = null; });
+    return probing;
+  }
   await probe();
 
   const jobs = new Map<string, Job>();
@@ -147,6 +170,7 @@ export async function openHoardTools(options: HoardToolsOptions): Promise<HoardT
 
     let settle!: () => void;
     const exited = new Promise<void>((resolve) => { settle = resolve; });
+    let timer: NodeJS.Timeout | undefined;
     const end = (state: 'done' | 'failed', exitCode: number | null, signal: string | null) => {
       if (job.state !== 'running') return;
       job.state = state;
@@ -164,11 +188,19 @@ export async function openHoardTools(options: HoardToolsOptions): Promise<HoardT
       settle();
     };
 
-    const child = spawn(uv.command, args, { cwd: repo, shell: false, windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let child: ChildProcess;
+    try {
+      child = spawn(uv.command, args, { cwd: repo, shell: false, windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (e) {
+      // spawn throws for some bad paths and arguments instead of emitting 'error'.
+      job.reason = `spawn failed (${(e as Error).message})`;
+      end('failed', null, null);
+      return job;
+    }
     live.set(job.id, { child, exited });
     child.stdout.on('data', keep(0));
     child.stderr.on('data', keep(1));
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       job.reason ??= 'timeout';
       child.kill();
       // A tool that ignores the polite kill must not hold the job open for ever.

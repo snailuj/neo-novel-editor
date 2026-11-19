@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test as plainTest, type TestContext } from 'node:test';
+import { openHoardTools } from '../../../server/hoard.ts';
 import { fakeUv } from './fake-uv.ts';
 import { tempHoard } from './hoard.ts';
 import { startServer, type Client, type Reply } from './support.ts';
@@ -231,4 +232,39 @@ test('a finished job is evicted by when it ended, not when it started', async (t
   assert.equal((await finished(client, lint)).json.state, 'done', 'the job that ended last is kept');
   assert.equal((await job(client, lint)).status, 200);
   assert.equal((await job(client, verify)).status, 404, 'the job that ended first is the one forgotten');
+});
+
+test('a uv path under a regular file is unavailable, not a startup failure', async (t) => {
+  const h = tempHoard(t);
+  const file = path.join(h.root, 'plain-file');
+  writeFileSync(file, 'x');
+  // spawn throws ENOTDIR synchronously for this path instead of emitting an error event.
+  const { client, lines } = await startServer(t, h, { hoardTools: { uv: { command: path.join(file, 'uv') } } });
+  assert.ok(lines.some((l) => l.msg === 'hoard.uv.probe' && l.available === false && /could not be started/.test(String(l.reason))));
+  const r = await post(client, 'lint');
+  assert.deepEqual([r.status, r.json.code], [503, 'tool_unavailable']);
+});
+
+test('a run that cannot be spawned fails its job and does not block the tool', async (t) => {
+  const h = tempHoard(t);
+  const lines: string[] = [];
+  // A NUL in the state path makes spawn throw ERR_INVALID_ARG_VALUE synchronously, after the probe passed.
+  const tools = await openHoardTools({ repo: h.repo, state: path.join(h.root, 'bad\0state'), log: (_l, msg) => { lines.push(msg); }, uv: fakeUv(t).uv });
+  t.after(() => tools.close());
+  const body = async () => Buffer.alloc(0);
+  const first = (await tools.handle('POST', '/librarian/lint', body)).json as { id: string; state: string };
+  const failed = (await tools.handle('GET', `/librarian/jobs/${first.id}`, body)).json as { state: string; reason: string };
+  assert.deepEqual([failed.state, /^spawn failed/.test(failed.reason)], ['failed', true]);
+  const second = (await tools.handle('POST', '/librarian/lint', body)).json as { id: string };
+  assert.notEqual(second.id, first.id, 'the failed job no longer blocks the tool');
+});
+
+test('a uv that never answers --version is unavailable after the probe timeout, at start and on a request', async (t) => {
+  const fake = fakeUv(t);
+  fake.steer({ hangVersion: true });
+  const { client, lines } = await startServer(t, tempHoard(t), { hoardTools: { uv: fake.uv, probeTimeoutMs: 300 } });
+  assert.ok(lines.some((l) => l.msg === 'hoard.uv.probe' && /did not answer/.test(String(l.reason))), 'startup finished with the probe timed out');
+  const r = await post(client, 'lint');
+  assert.deepEqual([r.status, r.json.code], [503, 'tool_unavailable']);
+  assert.match(r.json.message, /did not answer/);
 });
