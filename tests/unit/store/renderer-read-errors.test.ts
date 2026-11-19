@@ -283,7 +283,7 @@ for (const [code, message] of Object.entries(stuckCodes)) {
     assert.equal(w.toasts.filter((m) => m.includes('Chapter odd')).length, 1, 'the writer is told which chapter could not be read');
     assert.equal(w.logged.filter((m) => m.includes(code)).length, 1, 'and it is logged');
     w.run('chapterHTML.odd = "<p>typed somehow</p>"');
-    assert.equal(await w.run('persistChapter("odd")'), false, 'a save of it is refused');
+    await assert.rejects(w.run('persistChapter("odd")'), /\[not_loaded\]/, 'a save of it throws, so a save-then-delete stops');
     assert.equal(writesOf(w, 'odd').length, 0, 'and nothing is written over its file');
     await w.run('refreshFromDisk()');
     assert.equal(w.logged.filter((m) => m.includes(code)).length, 1, 'a look that fails again is not logged again');
@@ -322,7 +322,7 @@ for (const [code, message] of Object.entries(stuckCodes)) {
     assert.equal(saved.title, 'Salt Roads, retitled', 'book.json was saved');
     assert.deepEqual(saved.chapterOrder, ['a', 'stuck'], 'with the other device\'s chapter still in the order');
     w.run('chapterHTML.stuck = "<p>typed somehow</p>"');
-    await w.run('persistChapter("stuck")');
+    await assert.rejects(w.run('persistChapter("stuck")'), /\[not_loaded\]/);
     assert.equal(writesOf(w, 'stuck').length, 0, 'its body is never written');
     await w.run('refreshFromDisk()');
     assert.equal(w.logged.filter((m) => m.includes(code)).length, 1, 'once, not at every look');

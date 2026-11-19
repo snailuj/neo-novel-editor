@@ -47,6 +47,17 @@ function logChapterNotRead(where, bookId, chId, err) {
 function toastChaptersNotRead(chIds) {
   toast(t('“{name}” could not be read on this device yet. It is left as it is on disk, and opens for writing once it can be read.', { name: chIds.map((c) => chapterName(c)).join('”, “') }), 10000);
 }
+// A structural action (a join, a move, a snapshot, an export) that would read,
+// write or delete one of these chapters is refused up front: true when one is
+// not loaded, after telling the writer which
+function refuseNotLoaded(chIds) {
+  if (!book) return false;
+  const stuck = chIds.filter((c) => c && chapterUnloaded(book.id, c));
+  if (!stuck.length) return false;
+  console.error('refused: chapter not loaded', stuck.map((c) => book.id + '/' + c).join(' '));
+  toastChaptersNotRead(stuck);
+  return true;
+}
 // A chapter for the open book: its HTML, '' when it has no file yet, or null
 // when it could not be read (it is then not loaded, as above)
 async function loadChapter(where, bookId, chId) {

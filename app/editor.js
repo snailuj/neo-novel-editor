@@ -349,6 +349,7 @@ async function chapterMenu(chId, x = 0, y = 0, from = null) {
     if (currentTab === 'outline') renderOutline();
     return choice;
   }
+  if (refuseNotLoaded([chId])) return null;
   snapshotStructure('chapter kind');
   setChapterKind(chId, choice);
   // a part or a page leaves the story's count, and a chapter coming back

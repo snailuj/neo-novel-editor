@@ -1188,6 +1188,7 @@ async function deleteSceneToDarlings(cell, quiet = false) {
   const nodes = sceneNodes(sc.s);
   const body = spBodyOf(sc.s.p);
   const chId = body.closest('.chapter').dataset.id;
+  if (refuseNotLoaded([chId])) return;
   if (!quiet) snapshotStructure('scene delete');
   const holder = document.createElement('div');
   for (const n of nodes) holder.appendChild(n.cloneNode(true));

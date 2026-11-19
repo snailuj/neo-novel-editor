@@ -626,6 +626,8 @@ function chapterStartBackspace(e, body, chId) {
   const prevId = book.chapterOrder[idx - 1];
   const prevBody = document.querySelector(`.chapter[data-id="${prevId}"] .chapter-body`);
   if (!prevBody || chapterKind(prevId) === 'contents') return false;
+  // the chapter above not loaded here holds no words to run into, nor may it be swallowed
+  if (refuseNotLoaded([prevId])) { e.preventDefault(); return true; }
   const empty = prevBody.innerText.trim() === '';
   // only story runs into story: a page above stays a page
   if (!empty && !(isStory(chId) && isStory(prevId))) return false;
@@ -905,6 +907,7 @@ let breakRun = 0;
 
 // was: the caret's height in the window before the *** above it went
 function splitChapterAt(body, chId, block, sel, was) {
+  if (refuseNotLoaded([chId])) return;
   // an empty line is no way to start a chapter, or end one: blank lines at
   // the seam stay behind (the new chapter opens on its first words)
   const blank = (p) => p && p.tagName === 'P' && !p.classList.contains('scene-break') && p.textContent.trim() === '' && !p.querySelector('.ph-mark');

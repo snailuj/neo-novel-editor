@@ -263,8 +263,9 @@ const knowDisk = (bookId, chId, html) => { diskKnown[bookId + '/' + chId] = html
 const chapterChain = {};
 function persistChapter(chId, html) {
   if (!book) return Promise.resolve(false);
-  // a chapter not loaded here has no body to save (see loadChapter)
-  if (chapterUnloaded(book.id, chId)) return Promise.resolve(false);
+  // a chapter not loaded here has no body to save (see loadChapter): the save
+  // throws, so a caller that saves and then deletes or moves stops there
+  if (chapterUnloaded(book.id, chId)) return Promise.reject(new Error('[not_loaded] chapter not loaded here: ' + book.id + '/' + chId));
   if (html === undefined) html = chapterHTML[chId] || '';
   const bookId = book.id;
   const key = bookId + '/' + chId;
@@ -365,6 +366,7 @@ function scheduleChapterSave(chId) {
     // a flush (a blur, the 20 s tick) wrote these words while this save
     // waited; a write still on its way may yet fail, so this one queues behind it
     if (!writing[chId] && chapterHTML[chId] === savedHTML[chId]) return;
+    if (chapterUnloaded(bookId, chId)) return; // no body to save (see loadChapter)
     persistChapter(chId);
   }, 800);
 }
@@ -454,7 +456,7 @@ function flushAllSaves(e) {
     if (!writing) book.lastPosition.tabScroll = tabScroll;
   }
   for (const chId of book.chapterOrder) {
-    if (chapterHTML[chId] !== undefined && chapterHTML[chId] !== savedHTML[chId]) {
+    if (chapterHTML[chId] !== undefined && chapterHTML[chId] !== savedHTML[chId] && !chapterUnloaded(book.id, chId)) {
       persistChapter(chId);
     }
   }
@@ -659,6 +661,14 @@ function takeSnapshot(kind, htmlOf = (c) => chapterHTML[c] || '', { ifNoneToday 
 }
 async function takeSnapshotNow(kind, htmlOf, { ifNoneToday }) {
   if (!book || !snapsCan()) return null;
+  // a chapter not loaded here would be kept as empty, and a restore of that
+  // snapshot would empty it or delete its file: no snapshot while one is (the
+  // day's own, taken at the first change of the day, goes without a toast)
+  if (book.chapterOrder.some((c) => chapterUnloaded(book.id, c))) {
+    if (kind !== 'd') refuseNotLoaded(book.chapterOrder);
+    else console.error('snapshot: the day\'s snapshot waits, a chapter is not loaded');
+    return null;
+  }
   const bookId = book.id;
   const order = [...book.chapterOrder];
   const titles = { ...(book.chapterTitles || {}) };
@@ -1042,6 +1052,9 @@ function wordRanges(p, at) {
 async function restoreSnapshot(chId) {
   const shown = snapShown;
   if (!book || !shown) return;
+  // the snapshot of the book as it is now, taken first, could not hold a
+  // chapter not loaded here, so nothing is restored while one is
+  if (refuseNotLoaded(book.chapterOrder)) return;
   try {
     await takeSnapshot('r');
   } catch (err) {
@@ -1077,7 +1090,12 @@ async function restoreSnapshot(chId) {
   for (const c of chId ? [chId] : book.chapterOrder) await persistChapter(c);
   await saveMeta();
   // chapters added since: out of the book, their words in the snapshot just taken
-  for (const c of gone) { delete chapterHTML[c]; await window.neo.deleteChapter(book.id, c); }
+  for (const c of gone) {
+    // (refused above already; and a chapter not loaded here is never deleted)
+    if (chapterUnloaded(book.id, c)) { window.neo.logError('restore: kept a chapter not loaded ' + book.id + '/' + c); continue; }
+    delete chapterHTML[c];
+    await window.neo.deleteChapter(book.id, c);
+  }
   showDarlingsAgain();
   switchTab('manuscript');
   renderChapters();
