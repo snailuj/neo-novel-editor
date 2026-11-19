@@ -10,7 +10,7 @@ import {
 } from '../../src/generated/validators.cjs';
 import { MarkStore, pageSidecarPath } from '../../src/hoard/marks/store.ts';
 import { startReview } from '../../src/hoard/review/main.ts';
-import { tempDir } from './git-support.ts';
+import { tempDir } from './server/history/git-support.ts';
 
 const anchor = { exact: 'boats', prefix: 'counted the ', suffix: ' twice.', pIdx: 1, off: 17 };
 const chapter = { bookId: 'book-fox-1', chId: 'c1' };

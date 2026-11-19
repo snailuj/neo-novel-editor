@@ -27,13 +27,13 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { Gate } from '../../src/hoard/git/gate.ts';
-import { GitLayer, resolveSettings } from '../../src/hoard/git/layer.ts';
+import { Gate } from '../../server/history/gate.ts';
+import { GitLayer, resolveSettings } from '../../server/history/layer.ts';
 import { signalPageChanges } from '../../src/hoard/pages/signals.ts';
 import { PageStore } from '../../src/hoard/pages/store.ts';
 import { startReview } from '../../src/hoard/review/main.ts';
 import { editPage, librarianAmong, librarianInTree } from '../../src/hoard/review/edit.ts';
-import { isolateGitConfig, log, tempDir, tempLibrary } from './git-support.ts';
+import { isolateGitConfig, log, tempDir, tempLibrary } from './server/history/git-support.ts';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const BEFORE = '<p data-block="b1">The quay is old.</p>';

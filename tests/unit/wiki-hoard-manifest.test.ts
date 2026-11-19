@@ -14,7 +14,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { HoardIndex, hoardRoot, vaultRoot } from '../../src/hoard/wiki/hoard-manifest.ts';
 import { readImportList } from '../../src/hoard/wiki/import-list.ts';
-import { tempDir } from './git-support.ts';
+import { tempDir } from './server/history/git-support.ts';
 
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 

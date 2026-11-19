@@ -6,8 +6,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { repoState, syncedFolder } from '../../src/hoard/git/repo.ts';
-import { createGit } from '../../src/hoard/git/runner.ts';
+import { repoState, syncedFolder } from '../../../../server/history/repo.ts';
+import { createGit } from '../../../../server/history/runner.ts';
 
 function tempDir(t: { after(fn: () => void): void }): string {
   const dir = mkdtempSync(path.join(tmpdir(), 'hoard-repo-'));

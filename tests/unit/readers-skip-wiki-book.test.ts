@@ -9,17 +9,18 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const hoard = fileURLToPath(new URL('../../src/hoard/', import.meta.url));
-const READERS = ['search', 'companion', 'review', 'git', 'pages', 'marks/store.ts', 'marks/model.ts'];
+const history = fileURLToPath(new URL('../../server/history/', import.meta.url));
+const READERS = ['search', 'companion', 'review', 'pages', 'marks/store.ts', 'marks/model.ts'];
 const WIKI_BOOK = /wiki\/store|WikiStore|wikiBook|wikiId|wiki\.json|wiki\.edit|wiki\/write|librarianPages|book-wiki/;
 
-function sources(entry: string): string[] {
-  const full = path.join(hoard, entry);
+function sources(entry: string, base = hoard): string[] {
+  const full = path.join(base, entry);
   if (full.endsWith('.ts')) return [full];
-  return readdirSync(full, { withFileTypes: true }).flatMap((d) => (d.isDirectory() ? sources(path.join(entry, d.name)) : d.name.endsWith('.ts') ? [path.join(full, d.name)] : []));
+  return readdirSync(full, { withFileTypes: true }).flatMap((d) => (d.isDirectory() ? sources(path.join(entry, d.name), base) : d.name.endsWith('.ts') ? [path.join(full, d.name)] : []));
 }
 
 test('no reader names the Wiki book', () => {
-  const files = READERS.flatMap(sources);
+  const files = [...READERS.flatMap((entry) => sources(entry)), ...sources('.', history)];
   assert.ok(files.length > 20, `the readers were found: ${files.length} files`);
   const named = files.filter((file) => WIKI_BOOK.test(readFileSync(file, 'utf8'))).map((file) => path.relative(hoard, file));
   assert.deepEqual(named, []);

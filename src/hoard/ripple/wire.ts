@@ -1,7 +1,7 @@
 // Ripple as the plugin builds it: the page store, the mark store, the owner reader and the
 // git layer's blame by page. Kept apart from main.ts, which needs Electron, so a test can
 // build the same Ripple.
-import type { GitLayer } from '../git/layer.ts';
+import type { GitLayer } from '../../../server/history/layer.ts';
 import type { MarkStore } from '../marks/store.ts';
 import type { PageStore } from '../pages/store.ts';
 import { ownerOf } from '../review/owner.ts';

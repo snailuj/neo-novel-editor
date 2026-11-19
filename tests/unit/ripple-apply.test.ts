@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Mark } from '../../src/generated/hoard-marks-v1.js';
-import type { BlameLine } from '../../src/hoard/git/blame.ts';
+import type { BlameLine } from '../../server/history/blame.ts';
 import { escapeText, plan, replaceInner, type PlanInput } from '../../src/hoard/ripple/apply.ts';
 import type { PageLibrary, RipplePage } from '../../src/hoard/ripple/library.ts';
 import type { RippleProposal } from '../../src/hoard/ripple/rulings.ts';

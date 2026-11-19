@@ -3,8 +3,8 @@
 // the last save to land, but not for ever; and commits never overlap.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { Checkpoints, type Clock } from '../../src/hoard/git/checkpoints.ts';
-import type { Reason } from '../../src/hoard/git/commit.ts';
+import { Checkpoints, type Clock } from '../../../../server/history/checkpoints.ts';
+import type { Reason } from '../../../../server/history/commit.ts';
 
 // Virtual time: timers run when advance() passes them, in order, and the promises they
 // start are let settle before the next one runs.

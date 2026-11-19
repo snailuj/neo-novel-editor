@@ -10,12 +10,12 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   validateHoardChangeV1, validateHoardMarksV1, validateHoardPageV1,
-} from '../../generated/validators.cjs';
-import { checkNote } from '../../librarian/lint.ts';
-import { ManifestError, parseManifest } from '../../librarian/manifest.ts';
-import { type Scheme, schemeFrom } from '../../librarian/scheme.ts';
-import { PageRefused, parseId, titleOf, TREES, type Tree } from '../pages/identity.ts';
-import { titleIndex, type Titled } from '../pages/titles.ts';
+} from '../../src/generated/validators.cjs';
+import { checkNote } from '../../src/librarian/lint.ts';
+import { ManifestError, parseManifest } from '../../src/librarian/manifest.ts';
+import { type Scheme, schemeFrom } from '../../src/librarian/scheme.ts';
+import { PageRefused, parseId, titleOf, TREES, type Tree } from '../../src/hoard/pages/identity.ts';
+import { titleIndex, type Titled } from '../../src/hoard/pages/titles.ts';
 import { blockIds, citationsIn } from './citations.ts';
 import { LIBRARY_LAYOUT, PAGE_PATH } from './layout.ts';
 

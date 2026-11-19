@@ -7,7 +7,7 @@
 // a save has landed.
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { parseId } from '../pages/identity.ts';
+import { parseId } from '../../src/hoard/pages/identity.ts';
 import { GateRefused, type Finding } from './gate.ts';
 import type { GitLayer, Paired } from './layer.ts';
 import type { GitLog } from './runner.ts';

@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { ApiError } from '../../../server/errors.ts';
 import { openTree, type Tree } from '../../../server/tree.ts';
-import { isolateGitConfig, tempDir } from '../git-support.ts';
+import { isolateGitConfig, tempDir } from './history/git-support.ts';
 
 interface Cleanup { after(fn: () => void): void }
 

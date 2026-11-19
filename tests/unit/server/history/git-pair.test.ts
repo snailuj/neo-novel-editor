@@ -5,14 +5,14 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import type { Clock } from '../../src/hoard/git/checkpoints.ts';
-import { Gate } from '../../src/hoard/git/gate.ts';
-import { GitLayer, resolveSettings } from '../../src/hoard/git/layer.ts';
-import { LibrarianPairs } from '../../src/hoard/git/pair.ts';
-import type { Git } from '../../src/hoard/git/runner.ts';
+import type { Clock } from '../../../../server/history/checkpoints.ts';
+import { Gate } from '../../../../server/history/gate.ts';
+import { GitLayer, resolveSettings } from '../../../../server/history/layer.ts';
+import { LibrarianPairs } from '../../../../server/history/pair.ts';
+import type { Git } from '../../../../server/history/runner.ts';
 import { isolateGitConfig, log, tempDir, tempLibrary } from './git-support.ts';
 
-const root = fileURLToPath(new URL('../..', import.meta.url));
+const root = fileURLToPath(new URL('../../../..', import.meta.url));
 const C1 = 'wiki/Harbour.html';
 
 // Timers that run only when fire() is called, so a test decides when a checkpoint is due.

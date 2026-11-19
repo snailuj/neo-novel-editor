@@ -3,7 +3,7 @@
 // an id in one of the two trees.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { validateHoardGitBlameV1 } from '../../src/generated/validators.cjs';
+import { validateHoardGitBlameV1 } from '../../../../src/generated/validators.cjs';
 
 const chapter = { bookId: 'book-fox-1', chId: 'c1' };
 const page = 'wiki/People/Harbour.html';

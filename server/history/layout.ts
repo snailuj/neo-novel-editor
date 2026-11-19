@@ -3,7 +3,7 @@
 // `sources/` is a zone of author bodies and marks: a rule about that zone must never reach
 // the library's `sources/` tree. Both trees count as librarian-kept, so every frontmatter
 // rule judges them; no other zone is named, so no body or mark rule runs.
-import type { Layout } from '../../librarian/scheme.ts';
+import type { Layout } from '../../src/librarian/scheme.ts';
 
 /** A sidecar's frontmatter goes back into a note at this path; its folder puts the note in a judged zone. */
 export const PAGE_PATH = 'wiki/page.md';

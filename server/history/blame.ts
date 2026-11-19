@@ -2,7 +2,7 @@
 // the command line, with an attributes file that names it, so blame reads the chapter a
 // paragraph per line on any machine, set up or not; textconv's cache keeps the second
 // blame of a chapter fast.
-import { parseId } from '../pages/identity.ts';
+import { parseId } from '../../src/hoard/pages/identity.ts';
 import type { Git } from './runner.ts';
 
 export interface BlameLine {

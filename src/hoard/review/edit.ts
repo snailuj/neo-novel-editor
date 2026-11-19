@@ -12,8 +12,8 @@
 import { existsSync } from 'node:fs';
 import { opendir } from 'node:fs/promises';
 import path from 'node:path';
-import { GateRefused, type Finding } from '../git/gate.ts';
-import type { GitLayer } from '../git/layer.ts';
+import { GateRefused, type Finding } from '../../../server/history/gate.ts';
+import type { GitLayer } from '../../../server/history/layer.ts';
 import { parseId, type Tree } from '../pages/identity.ts';
 import type { PageStore } from '../pages/store.ts';
 import { ownerOf } from './owner.ts';

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { ATTRIBUTES, IGNORED, keepHistory } from '../../src/hoard/git/start.ts';
+import { ATTRIBUTES, IGNORED, keepHistory } from '../../../../server/history/start.ts';
 import { isolateGitConfig, log, tempLibrary } from './git-support.ts';
 
 const librarian = { name: 'Librarian', email: 'librarian@neo-hoard.invalid' };

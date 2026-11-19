@@ -14,7 +14,7 @@ import { test } from 'node:test';
 import { signalPageChanges } from '../../src/hoard/pages/signals.ts';
 import { PageStore, type PageChange } from '../../src/hoard/pages/store.ts';
 import { PageImport } from '../../src/hoard/wiki/page-import.ts';
-import { tempDir } from './git-support.ts';
+import { tempDir } from './server/history/git-support.ts';
 
 type T = { after(fn: () => void): void };
 

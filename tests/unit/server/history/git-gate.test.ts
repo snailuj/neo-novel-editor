@@ -8,7 +8,7 @@
 //   copies the attribute (wiki/convert.ts).
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { checkFiles, type StagedFile } from '../../src/hoard/git/gate.ts';
+import { checkFiles, type StagedFile } from '../../../../server/history/gate.ts';
 
 const page = (frontmatter: unknown) => JSON.stringify({
   version: 1,

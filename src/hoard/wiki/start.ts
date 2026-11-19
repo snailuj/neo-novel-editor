@@ -10,7 +10,7 @@ import { BrowserWindow, dialog } from 'electron';
 import { readFileSync } from 'node:fs';
 import { validateHoardWikiImportV1 } from '../../generated/validators.cjs';
 import { checked } from '../checked.ts';
-import type { GitLayer } from '../git/layer.ts';
+import type { GitLayer } from '../../../server/history/layer.ts';
 import type { Tree } from '../pages/identity.ts';
 import { ListError, readImportList, type ImportList } from './import-list.ts';
 import { PageImport, type PageImportOptions, type PageMarks } from './page-import.ts';

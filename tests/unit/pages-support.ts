@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { PageStore, type PageStoreOptions } from '../../src/hoard/pages/store.ts';
-import { tempDir } from './git-support.ts';
+import { tempDir } from './server/history/git-support.ts';
 
 export interface LogLine { level: string; message: string; data?: unknown }
 

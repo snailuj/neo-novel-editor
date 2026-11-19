@@ -12,8 +12,8 @@
 // The state machine this follows is in the plan (Marks-Live-In-Sidecars, "Comments
 // section states").
 import type { Mark, MarkState } from '../../generated/hoard-marks-v1.js';
-import { alignBlame } from '../git/align.ts';
-import type { BlameLine } from '../git/blame.ts';
+import { alignBlame } from '../../../server/history/align.ts';
+import type { BlameLine } from '../../../server/history/blame.ts';
 import { claim, submitKey } from '../keys.ts';
 import { linksIn } from '../wiki/links.ts';
 import { anchorAt } from './anchor.ts';

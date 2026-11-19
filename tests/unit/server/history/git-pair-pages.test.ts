@@ -5,12 +5,12 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { Gate } from '../../src/hoard/git/gate.ts';
-import { GitLayer, resolveSettings } from '../../src/hoard/git/layer.ts';
-import { LibrarianPairs } from '../../src/hoard/git/pair.ts';
+import { Gate } from '../../../../server/history/gate.ts';
+import { GitLayer, resolveSettings } from '../../../../server/history/layer.ts';
+import { LibrarianPairs } from '../../../../server/history/pair.ts';
 import { isolateGitConfig, log, tempDir, tempLibrary } from './git-support.ts';
 
-const root = fileURLToPath(new URL('../..', import.meta.url));
+const root = fileURLToPath(new URL('../../../..', import.meta.url));
 
 async function pagePairs(t: { after(fn: () => void): void }, settleMs = 2_000) {
   isolateGitConfig(t, { name: 'Ada', email: 'ada@example.com' });

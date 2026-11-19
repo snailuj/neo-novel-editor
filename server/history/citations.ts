@@ -2,8 +2,8 @@
 // find links (pages/rewrite.ts): in each paragraph's text, inline code masked, by the one
 // grammar in librarian/links.ts. A paragraph of class wiki-code is fenced code, so it is
 // skipped. Pure.
-import { maskCodeSpans, WIKILINK } from '../../librarian/links.ts';
-import { textUnits } from '../pages/rewrite.ts';
+import { maskCodeSpans, WIKILINK } from '../../src/librarian/links.ts';
+import { textUnits } from '../../src/hoard/pages/rewrite.ts';
 
 export interface Citation {
   /** The link as written. */

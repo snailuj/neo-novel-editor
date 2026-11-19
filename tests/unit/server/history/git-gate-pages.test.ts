@@ -8,7 +8,7 @@
 //   hoard-marks-v1.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { checkFiles, type CheckContext, type StagedFile } from '../../src/hoard/git/gate.ts';
+import { checkFiles, type CheckContext, type StagedFile } from '../../../../server/history/gate.ts';
 
 const NONE: CheckContext = { schemeText: () => null };
 const rules = (files: StagedFile[], context: CheckContext = NONE) => checkFiles(files, context).map((f) => `${f.path}|${f.rule}`);

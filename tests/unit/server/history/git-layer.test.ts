@@ -6,11 +6,11 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { GitLayer, resolveSettings } from '../../src/hoard/git/layer.ts';
-import type { Git } from '../../src/hoard/git/runner.ts';
+import { GitLayer, resolveSettings } from '../../../../server/history/layer.ts';
+import type { Git } from '../../../../server/history/runner.ts';
 import { isolateGitConfig, log, tempDir, tempLibrary } from './git-support.ts';
 
-const root = fileURLToPath(new URL('../..', import.meta.url));
+const root = fileURLToPath(new URL('../../../..', import.meta.url));
 
 // What close commits is the rule under test, not its time limit: git on a busy Windows
 // machine can take over a second for the four calls a commit makes.

@@ -5,10 +5,10 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { GitLayer, resolveSettings } from '../../src/hoard/git/layer.ts';
+import { GitLayer, resolveSettings } from '../../../../server/history/layer.ts';
 import { isolateGitConfig, log, tempDir, tempLibrary } from './git-support.ts';
 
-const root = fileURLToPath(new URL('../..', import.meta.url));
+const root = fileURLToPath(new URL('../../../..', import.meta.url));
 
 test('an author pair commits the pending work first, then only the edit\'s paths, both as the author', async (t) => {
   isolateGitConfig(t, { name: 'Ada', email: 'ada@example.com' });

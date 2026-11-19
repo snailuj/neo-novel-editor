@@ -6,13 +6,13 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { blamePage, textconvCommand } from '../../src/hoard/git/blame.ts';
-import { commitAll } from '../../src/hoard/git/commit.ts';
-import { GitLayer, resolveSettings } from '../../src/hoard/git/layer.ts';
-import { ATTRIBUTES } from '../../src/hoard/git/start.ts';
+import { blamePage, textconvCommand } from '../../../../server/history/blame.ts';
+import { commitAll } from '../../../../server/history/commit.ts';
+import { GitLayer, resolveSettings } from '../../../../server/history/layer.ts';
+import { ATTRIBUTES } from '../../../../server/history/start.ts';
 import { isolateGitConfig, tempDir, tempLibrary } from './git-support.ts';
 
-const root = fileURLToPath(new URL('../..', import.meta.url));
+const root = fileURLToPath(new URL('../../../..', import.meta.url));
 const librarian = { name: 'Librarian', email: 'librarian@neo-hoard.invalid' };
 const PAGES = ['wiki/People/Harbour.html', 'sources/Notes/Log.html'];
 

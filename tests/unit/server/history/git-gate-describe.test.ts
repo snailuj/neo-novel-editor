@@ -2,7 +2,7 @@
 // history, however many there are; a long list is cut with a count of what is left.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { describeFindings, type Finding } from '../../src/hoard/git/gate.ts';
+import { describeFindings, type Finding } from '../../../../server/history/gate.ts';
 
 const finding = (n: number): Finding => ({ path: `wiki/Page-${n}.html`, rule: 'Block-Ids-Citable', message: `block id 'b ${n}' cannot be cited` });
 

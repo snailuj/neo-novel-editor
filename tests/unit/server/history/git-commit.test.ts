@@ -5,8 +5,8 @@ import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { commitAll } from '../../src/hoard/git/commit.ts';
-import { GitError } from '../../src/hoard/git/runner.ts';
+import { commitAll } from '../../../../server/history/commit.ts';
+import { GitError } from '../../../../server/history/runner.ts';
 import { isolateGitConfig, log, tempLibrary } from './git-support.ts';
 
 const librarian = { name: 'Librarian', email: 'librarian@neo-hoard.invalid' };

@@ -21,8 +21,9 @@ const sandboxes: string[] = [];
 function sandbox(): string {
   const dir = mkdtempSync(path.join(tmpdir(), 'hoard-build-'));
   sandboxes.push(dir);
-  // tools/git holds the chapter textconv, which the build bundles for blame.
-  for (const name of ['schemas', 'src', path.join('tools', 'git')]) {
+  // tools/git holds the chapter textconv, which the build bundles for blame; server/history
+  // holds the git layer the plugin still imports.
+  for (const name of ['schemas', 'src', path.join('server', 'history'), path.join('tools', 'git')]) {
     cpSync(path.join(root, name), path.join(dir, name), { recursive: true });
   }
   copyFileSync(path.join(root, 'tsconfig.json'), path.join(dir, 'tsconfig.json'));

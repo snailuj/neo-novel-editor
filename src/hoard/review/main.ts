@@ -2,7 +2,7 @@
 // page sidecars), and its verdicts on the writer's suggestions, signed as the librarian.
 // A page in wiki/ or sources/ is edited by its id (pages.edit, edit.ts), since no window
 // holds that page, and its owners asked for by id or tree (review.owners).
-import type { GitLayer } from '../git/layer.ts';
+import type { GitLayer } from '../../../server/history/layer.ts';
 import { targeted, type MarkStore } from '../marks/store.ts';
 import type { PageStore } from '../pages/store.ts';
 import { editPage, librarianAmong, librarianInTree } from './edit.ts';

@@ -3,7 +3,7 @@
 // walks the log, so it costs the same however long the history grows; work left
 // uncommitted when NEO last stopped (a quit, a crash) is committed on opening. A
 // librarian edit runs between two commits of its own (around).
-import { validateHoardSettingsV1 } from '../../generated/validators.cjs';
+import { validateHoardSettingsV1 } from '../../src/generated/validators.cjs';
 import { blameChapter, blamePage, type BlameLine } from './blame.ts';
 import { Checkpoints, type Clock } from './checkpoints.ts';
 import type { Gate } from './gate.ts';

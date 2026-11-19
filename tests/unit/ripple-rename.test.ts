@@ -6,13 +6,13 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'node:test';
-import { GitLayer, resolveSettings } from '../../src/hoard/git/layer.ts';
+import { GitLayer, resolveSettings } from '../../server/history/layer.ts';
 import { MarkStore } from '../../src/hoard/marks/store.ts';
 import { PageStore } from '../../src/hoard/pages/store.ts';
 import { Ripple } from '../../src/hoard/ripple/engine.ts';
 import { wordsOf } from '../../src/hoard/ripple/reconcile.ts';
 import { ownerOf } from '../../src/hoard/review/owner.ts';
-import { isolateGitConfig, tempDir, tempLibrary } from './git-support.ts';
+import { isolateGitConfig, tempDir, tempLibrary } from './server/history/git-support.ts';
 
 async function gitRipple(t: { after(fn: () => void): void }) {
   isolateGitConfig(t, { name: 'Ada', email: 'ada@example.com' });

@@ -9,8 +9,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { commitAll } from '../../src/hoard/git/commit.ts';
-import { Gate, GateRefused } from '../../src/hoard/git/gate.ts';
+import { commitAll } from '../../../../server/history/commit.ts';
+import { Gate, GateRefused } from '../../../../server/history/gate.ts';
 import { isolateGitConfig, log, tempLibrary } from './git-support.ts';
 
 const librarian = { name: 'Librarian', email: 'librarian@neo-hoard.invalid' };

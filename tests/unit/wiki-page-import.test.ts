@@ -24,7 +24,7 @@ import { paragraphTexts } from '../../src/hoard/html.ts';
 import type { Tree } from '../../src/hoard/pages/identity.ts';
 import { PageImport, type PageImportOptions, type PageMarks } from '../../src/hoard/wiki/page-import.ts';
 import { parseManifest } from '../../src/librarian/manifest.ts';
-import { tempDir } from './git-support.ts';
+import { tempDir } from './server/history/git-support.ts';
 
 type T = { after(fn: () => void): void };
 

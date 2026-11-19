@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { createGit, GitError } from '../../src/hoard/git/runner.ts';
+import { createGit, GitError } from '../../../../server/history/runner.ts';
 
 function tempDir(t: { after(fn: () => void): void }): string {
   const dir = mkdtempSync(path.join(tmpdir(), 'hoard-git-'));

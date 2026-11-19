@@ -3,9 +3,9 @@
 // sources tree.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { checkFiles } from '../../src/hoard/git/gate.ts';
-import { LIBRARY_LAYOUT } from '../../src/hoard/git/layout.ts';
-import { HOARD_LAYOUT } from '../../src/librarian/scheme.ts';
+import { checkFiles } from '../../../../server/history/gate.ts';
+import { LIBRARY_LAYOUT } from '../../../../server/history/layout.ts';
+import { HOARD_LAYOUT } from '../../../../src/librarian/scheme.ts';
 
 const page = (frontmatter: unknown) => JSON.stringify({
   version: 1,

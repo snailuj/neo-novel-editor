@@ -1,7 +1,7 @@
 // The librarian's watcher in the main half: the window hands over each chapter the
 // writer leaves, and the writer's Stop Flagging This Page and Flag This Page Again.
 import { validateHoardCompanionQuietV1, validateHoardCompanionReadV1 } from '../../generated/validators.cjs';
-import type { GitLayer } from '../git/layer.ts';
+import type { GitLayer } from '../../../server/history/layer.ts';
 import type { MarkStore } from '../marks/store.ts';
 import { Companion, type PageSource, type ReadRequest } from './store.ts';
 

@@ -3,7 +3,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createGit, type Git } from '../../src/hoard/git/runner.ts';
+import { createGit, type Git } from '../../../../server/history/runner.ts';
 
 interface Cleanup { after(fn: () => void): void }
 
