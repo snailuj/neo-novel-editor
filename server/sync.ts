@@ -38,6 +38,9 @@ export interface Sync {
 
 class Conflict extends Error {}
 
+/** How many blocking files a sync error names; the rest are counted. */
+const LISTED = 10;
+
 export async function openSync(options: SyncOptions): Promise<Sync> {
   const { history, tree, log } = options;
   const clock = options.clock ?? systemClock;
@@ -86,6 +89,16 @@ export async function openSync(options: SyncOptions): Promise<Sync> {
     return libraryNames(repo, stdout.split('\0').filter(Boolean), (level, message, data) => log(level, message, data as Record<string, unknown>));
   }
 
+  /**
+   * Tracked files with changes the history does not commit (outside the library, or
+   * matching IGNORED): `pull --rebase` refuses while any exist. They are the person's to
+   * commit or revert, so they are named and never touched.
+   */
+  async function blockers(): Promise<string[]> {
+    const { stdout } = await run(['status', '--porcelain=v1', '-z', '--untracked-files=no', '--no-renames']);
+    return stdout.split('\0').filter(Boolean).map((entry) => entry.slice(3)).sort();
+  }
+
   async function cycle(): Promise<void> {
     const start = performance.now();
     const branch = (await run(['symbolic-ref', '--short', 'HEAD']).catch(() => ({ stdout: '' }))).stdout.trim();
@@ -95,6 +108,12 @@ export async function openSync(options: SyncOptions): Promise<Sync> {
     const { committed, before, head, changed } = await tree.exclusive(async (held) => {
       const committed = await history.commit('sync');
       const before = history.lastCommit();
+      // After the commit above, whatever is still changed is a file the server leaves alone.
+      const stuck = await blockers();
+      if (stuck.length) {
+        const named = stuck.slice(0, LISTED).join(', ') + (stuck.length > LISTED ? ` and ${stuck.length - LISTED} more` : '');
+        throw new Error(`files the server does not commit have uncommitted changes, so it cannot pull until they are committed or reverted by hand: ${named}`);
+      }
       let pulled = true;
       try {
         await run(['pull', '--rebase', 'origin', branch]);

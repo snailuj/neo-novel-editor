@@ -203,3 +203,36 @@ test('the push runs after the tree is released, so clients read and write while 
   assert.equal((await cycle).state, 'ok');
   assert.ok(remoteFiles(h).includes('library/wiki/mine.html'));
 });
+
+test('a tracked file with changes outside the library stops the pull with an error naming it, leaves it untouched, and the library is still committed', async (t) => {
+  const h = syncHoard(t);
+  const l = await openWithHistory(t, h, SYNC);
+  writeFileSync(path.join(h.repo, 'README.md'), 'edited by hand');
+  await l.tree.put('wiki/mine.html', Buffer.from('mine'), { ...NEW, device: 'tablet' });
+  pushFrom(h.other, { 'library/wiki/theirs.html': 'theirs' });
+
+  const blocked = await l.sync.runOnce();
+  assert.equal(blocked.state, 'error');
+  assert.match(blocked.message, /README\.md/);
+  assert.equal(readFileSync(path.join(h.repo, 'README.md'), 'utf8'), 'edited by hand');
+  assert.deepEqual(git(h.repo, 'status', '--porcelain').trim(), 'M README.md');
+  assert.ok(commits(h.repo).some((c) => c.files.includes('library/wiki/mine.html')), 'the library write is committed');
+  assert.equal(existsSync(lib(h, 'wiki/theirs.html')), false, 'nothing was pulled');
+  await l.sync.runOnce();
+  assert.equal(l.lines.filter((x) => x.level === 'error' && x.msg === 'sync.failed').length, 1, 'logged once while the files stay the same');
+
+  // Many such files: the message names ten, and the count of the rest.
+  for (let i = 0; i < 12; i += 1) writeFileSync(path.join(h.repo, `note-${String(i).padStart(2, '0')}.md`), 'v1');
+  git(h.repo, 'add', 'note-*.md');
+  git(h.repo, 'commit', '-q', '-m', 'notes');
+  for (let i = 0; i < 12; i += 1) writeFileSync(path.join(h.repo, `note-${String(i).padStart(2, '0')}.md`), 'v2');
+  const many = await l.sync.runOnce();
+  assert.equal(many.state, 'error');
+  assert.equal((many.message.match(/note-\d\d\.md|README\.md/g) ?? []).length, 10);
+  assert.match(many.message, /3 more/);
+  assert.equal(l.lines.filter((x) => x.level === 'error' && x.msg === 'sync.failed').length, 2, 'a changed list is logged again');
+
+  git(h.repo, 'checkout', '--', '.');
+  assert.equal((await l.sync.runOnce()).state, 'ok');
+  assert.equal(readFileSync(lib(h, 'wiki/theirs.html'), 'utf8'), 'theirs');
+});
