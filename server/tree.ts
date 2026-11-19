@@ -5,13 +5,17 @@ import { randomUUID } from 'node:crypto';
 import { access, mkdir, readFile, readdir, rmdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { ApiError } from './errors.ts';
-import { renameRetrying, writeFileDurable } from './durable.ts';
+import { makeSyncDir, renameRetrying, writeFileDurable, type SyncDir } from './durable.ts';
 import { createRepoGit } from './git.ts';
 import type { Log } from './log.ts';
 import { checkPath, foldKey, TEMP_PREFIX } from './paths.ts';
 import { assertOutsideRepo, loadState, saveState, type Entry } from './state.ts';
 
-export interface TreeOptions { repo: string; library: string; state: string; log: Log }
+export interface TreeOptions {
+  repo: string; library: string; state: string; log: Log;
+  /** Folder fsync; a test records the calls. */
+  syncDir?: SyncDir;
+}
 export interface Preconditions { ifMatch?: string; ifNoneMatch?: string }
 export interface Change { path: string; version: string | null }
 
@@ -60,6 +64,7 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
   const libraryName = checkPath(options.library.replace(/\/+$/, ''));
   const libraryDir = path.join(repo, ...libraryName.split('/'));
   const git = createRepoGit(repo);
+  const sync = options.syncDir ?? makeSyncDir(log);
   const onDisk = (p: string) => path.join(libraryDir, ...p.split('/'));
 
   await assertOutsideRepo(stateDir, repo);
@@ -85,20 +90,37 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
     index.set(p, { version, seq: at });
     if (version === null) folds.delete(p); else folds.set(p, foldKey(p));
   }
-  /** Removes the folders `p` sat in that are now empty, up to the library root. */
+  /** Creates the folders above `dir`, and fsyncs the parent of each one it made. */
+  async function mkdirDurable(dir: string): Promise<void> {
+    const first = await mkdir(dir, { recursive: true });
+    if (first === undefined) return;
+    let made = first;
+    for (const part of path.relative(first, dir).split(path.sep).filter(Boolean).concat('')) {
+      await sync(path.dirname(made));
+      if (part === '') break;
+      made = path.join(made, part);
+    }
+  }
+
+  /** Removes the folders `p` sat in that are now empty, up to the library root, and fsyncs the one it stopped at. */
   async function pruneEmptyParents(p: string): Promise<void> {
+    let removed = false;
+    let stoppedAt = libraryDir;
     for (let dir = path.posix.dirname(p); dir !== '.'; dir = path.posix.dirname(dir)) {
       try {
         await rmdir(onDisk(dir));
+        removed = true;
       } catch (e) {
         const code = (e as NodeJS.ErrnoException).code;
         if (code === 'ENOENT') continue;
         if (code !== 'ENOTEMPTY' && code !== 'EEXIST') log('warn', 'prune.failed', { dir, code });
-        return;
+        stoppedAt = onDisk(dir);
+        break;
       }
     }
+    if (removed) await sync(stoppedAt);
   }
-  const persist = () => saveState(stateDir, { format: 1, epoch, seq, entries: Object.fromEntries(index) });
+  const persist = () => saveState(stateDir, { format: 1, epoch, seq, entries: Object.fromEntries(index) }, sync);
 
   // Reconcile the index with the disk: whatever differs was changed while the server was
   // down (or the state folder was lost), and gets a seq like any other change.
@@ -210,8 +232,8 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
           if (clash) throw clash;
         }
         const file = onDisk(p);
-        await mkdir(path.dirname(file), { recursive: true });
-        await writeFileDurable(file, bytes);
+        await mkdirDurable(path.dirname(file));
+        await writeFileDurable(file, bytes, sync);
         const before = seq;
         seq += 1;
         setEntry(p, version, seq);
@@ -229,12 +251,15 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
         if (entry.version === null) return { seq };
         if (ifMatch === undefined) throw needsPrecondition();
         if (ifMatch !== entry.version) throw stale(entry.version);
+        let unlinked = true;
         try {
           await unlink(onDisk(p));
         } catch (e) {
           if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+          unlinked = false;
           log('warn', 'remove.missing_on_disk', { path: p, version: entry.version });
         }
+        if (unlinked) await sync(path.dirname(onDisk(p)));
         await pruneEmptyParents(p);
         const before = seq;
         seq += 1;
@@ -266,7 +291,7 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
           log('warn', 'move.untracked_target', { from, to });
           throw new ApiError('exists', 409, `${to} exists on disk`);
         }
-        await mkdir(path.dirname(onDisk(to)), { recursive: true });
+        await mkdirDurable(path.dirname(onDisk(to)));
         try {
           await renameRetrying(onDisk(from), onDisk(to));
         } catch (e) {
@@ -274,6 +299,7 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
           log('warn', 'move.missing_on_disk', { path: from, version });
           throw notFound(from);
         }
+        for (const dir of new Set([path.dirname(onDisk(from)), path.dirname(onDisk(to))])) await sync(dir);
         await pruneEmptyParents(from);
         const before = seq;
         seq += 1;

@@ -5,7 +5,7 @@
 // hundred KB per change; an append-only log is the fix if that ever matters.
 import { mkdir, readFile, realpath, rename } from 'node:fs/promises';
 import path from 'node:path';
-import { writeFileDurable } from './durable.ts';
+import { writeFileDurable, type SyncDir } from './durable.ts';
 import type { Log } from './log.ts';
 
 export interface Entry { version: string | null; seq: number }
@@ -44,9 +44,9 @@ export async function loadState(dir: string, log: Log): Promise<PersistedState |
   return null;
 }
 
-export async function saveState(dir: string, state: PersistedState): Promise<void> {
+export async function saveState(dir: string, state: PersistedState, sync: SyncDir): Promise<void> {
   await mkdir(dir, { recursive: true });
-  await writeFileDurable(path.join(dir, FILE), JSON.stringify(state));
+  await writeFileDurable(path.join(dir, FILE), JSON.stringify(state), sync);
 }
 
 async function resolveExisting(p: string): Promise<string> {
