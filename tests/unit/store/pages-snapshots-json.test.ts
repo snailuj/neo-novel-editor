@@ -91,6 +91,18 @@ test('a page saved for the first time with an expected text has nothing to keep'
   assert.equal(h.read(book.id, 'notes-ch-1.html'), '<p>one</p>');
 });
 
+// The window reads null for a page the book has never had, and saves it with expected ''
+// (no text was seen). That is still a check: a page another device created since is kept.
+test('a page the window saw as missing is saved with expected \'\', and a page another device made meanwhile is kept, not replaced', async () => {
+  const h = harness();
+  const book = await h.store.createBook({ title: 'Hello' });
+  assert.equal(await h.store.readAux(book.id, 'notes-ch-9'), null);
+  h.write([book.id, 'notes-ch-9.html'], '<p>written on the other device</p>');
+  assert.deepEqual(await h.store.writeAux(book.id, 'notes-ch-9', '<p>mine</p>', ''), { kept: 'notes-ch-9.html.bak' });
+  assert.equal(h.read(book.id, 'notes-ch-9.html.bak'), '<p>written on the other device</p>');
+  assert.equal(h.read(book.id, 'notes-ch-9.html'), '<p>mine</p>');
+});
+
 test('a snapshot file is written once; a second write of the same name changes nothing', async () => {
   const h = harness();
   const book = await h.store.createBook({ title: 'Hello' });
