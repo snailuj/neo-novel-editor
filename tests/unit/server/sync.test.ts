@@ -191,9 +191,9 @@ test('the push runs after the tree is released, so clients read and write while 
 
   const cycle = l.sync.runOnce();
   try {
-    for (let i = 0; i < 400 && !existsSync(entered); i += 1) await new Promise((r) => setTimeout(r, 25));
+    for (let i = 0; i < 400 && !existsSync(entered); i += 1) await new Promise((resolve) => setTimeout(resolve, 25));
     assert.ok(existsSync(entered), 'the push reached the remote');
-    const within = <T>(p: Promise<T>) => Promise.race([p, new Promise<never>((_, reject) => setTimeout(() => reject(new Error('held while the push ran')), 3_000))]);
+    const within = <T>(p: Promise<T>) => Promise.race([p, new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('held while the push ran')), 3_000))]);
     assert.equal((await within(l.tree.read('wiki/mine.html'))).bytes.toString(), 'mine');
     await within(l.tree.put('wiki/during.html', Buffer.from('during'), { ...NEW, device: 'tablet' }));
   } finally {
