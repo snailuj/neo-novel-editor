@@ -8,6 +8,7 @@ import { blameChapter, blamePage, type BlameLine } from './blame.ts';
 import { Checkpoints, type Clock } from './checkpoints.ts';
 import type { Gate } from './gate.ts';
 import { commitAll, whoFor, type Identity, type Reason, type Who } from './commit.ts';
+import { blobPath, literalSpec, libraryNames, toRepo, type LibraryRepo, type RepoLike } from './pathspec.ts';
 import { repoState, syncedFolder, type RepoState } from './repo.ts';
 import { GitError, type Git, type GitLog } from './runner.ts';
 import { keepHistory, type Started } from './start.ts';
@@ -40,7 +41,8 @@ export function resolveSettings(raw: unknown, warn: (message: string) => void): 
 
 export interface GitLayerOptions {
   git: Git;
-  library: string;
+  /** A folder that is its own repository, or a LibraryRepo for a folder of a larger one. */
+  library: RepoLike;
   settings: GitSettings;
   /** Holds the chapter attributes line; blame names it as git's attributes file. */
   attributesFile: string;
@@ -58,6 +60,7 @@ export interface Paired<T> {
 
 export class GitLayer {
   readonly #o: GitLayerOptions;
+  readonly #repo: LibraryRepo;
   readonly #checkpoints: Checkpoints;
   #state: RepoState = { state: 'untracked' };
   #lastFailure = '';
@@ -67,6 +70,7 @@ export class GitLayer {
 
   constructor(options: GitLayerOptions) {
     this.#o = options;
+    this.#repo = toRepo(options.library);
     this.#checkpoints = new Checkpoints({
       idleMs: options.settings.idleMs,
       clock: options.clock,
@@ -96,8 +100,9 @@ export class GitLayer {
   }
 
   async open(): Promise<RepoState> {
-    const { git, library, log } = this.#o;
-    this.#state = await repoState(git, library);
+    const { git, log } = this.#o;
+    const library = this.#repo.library;
+    this.#state = await repoState(git, this.#repo);
     log('info', 'git.open', { state: this.#state.state, library });
     if (this.#state.state === 'inside-another-repo') {
       log('warn', `The library is inside another repository, at ${this.#state.top}; its history stays off.`);
@@ -181,9 +186,9 @@ export class GitLayer {
 
   async keepHistory(): Promise<Started> {
     await this.#checkpoints.drained();
-    const { git, library, settings, log } = this.#o;
-    const started = await keepHistory(git, library, { librarian: settings.librarian, author: settings.author });
-    this.#state = await repoState(git, library);
+    const { git, settings, log } = this.#o;
+    const started = await keepHistory(git, this.#repo, { librarian: settings.librarian, author: settings.author });
+    this.#state = await repoState(git, this.#repo);
     log('info', 'git.keep-history', { started: started.started, commit: started.committed?.commit ?? null });
     return started;
   }
@@ -191,7 +196,8 @@ export class GitLayer {
   /** Who wrote each block of a book's chapter, or of a page named by its id. */
   async blame(target: { bookId: unknown; chId: unknown } | { page: unknown }): Promise<BlameLine[]> {
     if (this.#state.state !== 'tracked') return [];
-    const { git, library, settings, attributesFile, textconv, log } = this.#o;
+    const { git, settings, attributesFile, textconv, log } = this.#o;
+    const library = this.#repo.library;
     const start = performance.now();
     const options = { librarian: settings.librarian, attributesFile, textconv };
     const lines = 'page' in target
@@ -204,9 +210,9 @@ export class GitLayer {
   /** The last commit, or null in a library with no history or no commit yet. */
   async head(): Promise<string | null> {
     if (this.#state.state !== 'tracked') return null;
-    const { git, library, log } = this.#o;
+    const { git, log } = this.#o;
     try {
-      const { stdout } = await git.run(library, ['rev-parse', '--verify', '-q', 'HEAD^{commit}']);
+      const { stdout } = await git.run(this.#repo.library, ['rev-parse', '--verify', '-q', 'HEAD^{commit}']);
       return stdout.trim() || null;
     } catch (err) {
       if (!(err instanceof GitError && err.kind === 'exit')) log('warn', 'git.head', { message: String(err) });
@@ -217,9 +223,9 @@ export class GitLayer {
   /** A file as a commit holds it (rel from the library); null when it lacks it or there is no history. */
   async show(commit: string, rel: string): Promise<string | null> {
     if (this.#state.state !== 'tracked') return null;
-    const { git, library } = this.#o;
+    const { git } = this.#o;
     try {
-      const { stdout } = await git.run(library, ['cat-file', 'blob', `${commit}:${rel}`]);
+      const { stdout } = await git.run(this.#repo.library, ['cat-file', 'blob', `${commit}:${blobPath(this.#repo, rel)}`]);
       return stdout;
     } catch (err) {
       if (err instanceof GitError && err.kind === 'exit') return null;
@@ -233,15 +239,22 @@ export class GitLayer {
    */
   async changed(from: string, to: string, under: string): Promise<{ rel: string; byAuthor: boolean }[]> {
     if (this.#state.state !== 'tracked') return [];
-    const { git, library, settings } = this.#o;
-    const { stdout } = await git.run(library, ['-c', 'core.quotepath=off', 'log', '--reverse', '--format=@@%ae', '--name-only', `${from}..${to}`, '--', under]);
+    const { git, settings, log } = this.#o;
+    const { stdout } = await git.run(this.#repo.library, ['-c', 'core.quotepath=off', 'log', '--reverse', '--format=@@%ae', '--name-only', `${from}..${to}`, '--', literalSpec(this.#repo, under)]);
+    // Names are the top's; they are mapped one commit at a time so the author flag stays with its files.
     const files = new Map<string, boolean>();
     let author = false;
+    let names: string[] = [];
+    const flush = () => {
+      for (const rel of libraryNames(this.#repo, names, log)) files.set(rel, (files.get(rel) ?? false) || author);
+      names = [];
+    };
     for (const line of stdout.split('\n')) {
-      if (line.startsWith('@@')) { author = line.slice(2).trim() !== settings.librarian.email; continue; }
+      if (line.startsWith('@@')) { flush(); author = line.slice(2).trim() !== settings.librarian.email; continue; }
       if (!line.trim()) continue;
-      files.set(line, (files.get(line) ?? false) || author);
+      names.push(line);
     }
+    flush();
     return [...files].map(([rel, byAuthor]) => ({ rel, byAuthor }));
   }
 
@@ -275,10 +288,10 @@ export class GitLayer {
   }
 
   async #commitAs(who: Who, reason: Reason, paths?: readonly string[]): Promise<string | null> {
-    const { git, library, settings, log } = this.#o;
+    const { git, settings, log } = this.#o;
     const start = performance.now();
-    const made = await commitAll(git, library, {
-      who, reason, librarian: settings.librarian, author: settings.author, paths, gate: this.#gate,
+    const made = await commitAll(git, this.#repo, {
+      who, reason, librarian: settings.librarian, author: settings.author, paths, gate: this.#gate, log,
     });
     this.#lastFailure = '';
     if (!made) {

@@ -4,25 +4,11 @@
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { commitAll, type Committed, type Identity } from './commit.ts';
+import { IGNORED, toRepo, type RepoLike } from './pathspec.ts';
 import { repoState } from './repo.ts';
 import type { Git } from './runner.ts';
 
-/**
- * Left out of the history: NEO's temp and backup copies, Finder and iCloud litter, the
- * book snapshots (a second history of whole chapters), the daily backups, emailed
- * exports, the error log, and the catalog NEO regenerates.
- */
-export const IGNORED = [
-  '*.tmp',
-  '*.bak',
-  '.DS_Store',
-  '*.icloud',
-  'book-*/snapshots/',
-  'Backups/',
-  'Exports/',
-  'neo-errors.log',
-  '_catalog.txt',
-];
+export { IGNORED };
 
 /**
  * The attribute lines: diff and merge a paragraph per line, never touch line ends, for a
@@ -34,6 +20,9 @@ export const ATTRIBUTE_LINES: readonly string[] = [
   'wiki/**/*.html diff=neochapter merge=neochapter -text',
   'sources/**/*.html diff=neochapter merge=neochapter -text',
 ];
+
+/** The lines for a library below `prefix`: a global attributes file matches names from the top of the work tree. */
+export const attributeLines = (prefix: string): string[] => ATTRIBUTE_LINES.map((line) => `${prefix}${line}`);
 
 /** The lines as a file's text, without the final newline: the attributes file blame names. */
 export const ATTRIBUTES = ATTRIBUTE_LINES.join('\n');
@@ -67,7 +56,10 @@ export interface Started {
   committed: Committed | null;
 }
 
-export async function keepHistory(git: Git, library: string, options: StartOptions): Promise<Started> {
+export async function keepHistory(git: Git, where: RepoLike, options: StartOptions): Promise<Started> {
+  const { library, prefix } = toRepo(where);
+  // The ignore and attribute files would land in the repository's root, which is not the library's to write.
+  if (prefix !== '') throw new Error(`The library is a folder of a larger repository (${prefix}); nothing writes ignore or attribute files at that repository's root.`);
   const repo = await repoState(git, library);
   if (repo.state === 'inside-another-repo') {
     throw new Error(`The library is inside another repository, at ${repo.top}; its history stays off.`);

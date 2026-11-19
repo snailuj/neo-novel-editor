@@ -1,8 +1,10 @@
-// Which repository, if any, holds the library. The layer commits only when the library
-// folder is the top of its own repository: a library inside a bigger repository would
-// sweep the writer's other files into the book's history.
+// Which repository, if any, holds the library. The layer commits only when the library is
+// the top of its own repository, or a folder of the repository it was told to use (the
+// server's clone, where every command is limited to the library's pathspec). Any other
+// library inside a bigger repository would sweep the writer's other files into the book's history.
 import { existsSync, realpathSync } from 'node:fs';
 import path from 'node:path';
+import { toRepo, type RepoLike } from './pathspec.ts';
 import { GitError, type Git } from './runner.ts';
 
 export type RepoState =
@@ -21,11 +23,14 @@ function samePath(a: string, b: string): boolean {
     : x === y;
 }
 
-export async function repoState(git: Git, library: string): Promise<RepoState> {
+export async function repoState(git: Git, where: RepoLike): Promise<RepoState> {
+  const { library, top: wanted } = toRepo(where);
   try {
     const { stdout } = await git.run(library, ['rev-parse', '--show-toplevel']);
     const top = stdout.trim();
-    return samePath(top, library) ? { state: 'tracked', top } : { state: 'inside-another-repo', top };
+    // The library is tracked when its work tree is the one it was given: its own folder for
+    // the plugin, the clone's top for the server, where it is one folder of the repository.
+    return samePath(top, wanted) ? { state: 'tracked', top } : { state: 'inside-another-repo', top };
   } catch (err) {
     if (err instanceof GitError && err.kind === 'exit' && /not a git repository/i.test(err.stderr)) {
       return { state: 'untracked' };

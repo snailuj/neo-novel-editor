@@ -7,7 +7,8 @@
 import { existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import type { Gate } from './gate.ts';
-import type { Git } from './runner.ts';
+import { excludeSpec, IGNORED, ignoreSpecs, libraryNames, literalSpec, toRepo, wholeSpec, type RepoLike } from './pathspec.ts';
+import type { Git, GitLog } from './runner.ts';
 
 export interface Identity {
   name: string;
@@ -23,6 +24,7 @@ export type Reason =
   | 'book-close'
   | 'close'
   | 'recovered'
+  | 'sync'
   | 'librarian-before'
   | 'librarian-after'
   | 'import-author'
@@ -37,6 +39,7 @@ const SUBJECTS: Record<Reason, string> = {
   'book-close': 'Writing, on closing the book',
   close: 'Writing, on quitting NEO',
   recovered: 'Writing found uncommitted at start',
+  sync: 'Writing, before a sync with the remote',
   'librarian-before': 'Writing, before a librarian edit',
   'librarian-after': 'Librarian edit',
   'import-author': 'Pages imported to the wiki: quotations and code, as the author\'s',
@@ -59,6 +62,9 @@ export interface CommitOptions {
   paths?: readonly string[];
   /** Judges the staged files; none, and nothing is judged. */
   gate?: Pick<Gate, 'held' | 'judge'>;
+  /** Trailer lines (`Neo-Device: tablet`) added under Neo-Checkpoint, in the order given. */
+  trailers?: readonly string[];
+  log?: GitLog;
 }
 
 export interface Committed {
@@ -91,29 +97,37 @@ function identityEnv(who: Who, options: CommitOptions): Record<string, string> {
   };
 }
 
-/** Stages and commits every change, or those of options.paths; null when nothing changed. */
-export async function commitAll(git: Git, library: string, options: CommitOptions): Promise<Committed | null> {
+/**
+ * Stages and commits every change, or those of options.paths; null when nothing changed.
+ * Add, diff and commit all carry the same pathspecs, rooted at the top of the work tree
+ * under the library's prefix, so a file staged outside the library by anyone else is never
+ * committed here, and the commit holds what was staged and judged, no more.
+ */
+export async function commitAll(git: Git, where: RepoLike, options: CommitOptions): Promise<Committed | null> {
+  const repo = toRepo(where);
+  const { library } = repo;
   const leftOut = booksWithOwnRepo(library);
   const { gate } = options;
   // Only a librarian edit blocks; every other commit warns. A refused edit's files wait
   // outside every commit but a librarian edit's, so the writer is never credited with them.
   const blocking = options.reason === 'librarian-after';
   const held = gate && !blocking ? gate.held() : [];
-  const only = options.paths ? options.paths.map((p) => `:(literal)${p}`) : null;
-  const pathspec = [
-    '--', ...(only ?? ['.']),
-    ...leftOut.map((b) => `:(exclude)${b}`),
-    ...held.map((p) => `:(exclude,literal)${p}`),
+  const only = options.paths ? options.paths.map((p) => literalSpec(repo, p)) : [wholeSpec(repo)];
+  const scope = [
+    '--', ...only,
+    ...ignoreSpecs(repo, IGNORED),
+    ...leftOut.map((b) => excludeSpec(repo, b)),
+    ...held.map((p) => excludeSpec(repo, p)),
   ];
-  await git.run(library, ['add', '-A', ...pathspec]);
-  const { stdout: staged } = await git.run(library, ['diff', '--cached', '--name-only', '-z', ...(only ? ['--', ...only] : [])]);
-  const names = staged.split('\0').filter(Boolean);
+  await git.run(library, ['add', '-A', ...scope]);
+  const { stdout: staged } = await git.run(library, ['diff', '--cached', '--name-only', '-z', ...scope]);
+  const names = libraryNames(repo, staged.split('\0').filter(Boolean), options.log);
   if (!names.length) return null;
   if (gate) {
     try {
       gate.judge(names, blocking);
     } catch (err) {
-      await git.run(library, ['reset', '-q', '--', ...names.map((p) => `:(literal)${p}`)]);
+      await git.run(library, ['reset', '-q', '--', ...names.map((p) => literalSpec(repo, p))]);
       throw err;
     }
   }
@@ -121,8 +135,8 @@ export async function commitAll(git: Git, library: string, options: CommitOption
     '-c', 'user.useConfigOnly=true',
     'commit', '-q', '--no-verify',
     '-m', SUBJECTS[options.reason],
-    '-m', `Neo-Checkpoint: ${options.reason}`,
-    ...(only ? ['--', ...only] : []),
+    '-m', [`Neo-Checkpoint: ${options.reason}`, ...(options.trailers ?? [])].join('\n'),
+    ...scope,
   ], { env: identityEnv(options.who, options) });
   const { stdout: head } = await git.run(library, ['rev-parse', 'HEAD']);
   return { commit: head.trim(), files: names.length, leftOut };
