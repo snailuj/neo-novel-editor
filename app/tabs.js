@@ -447,6 +447,31 @@ function storyBefore(chId) {
   return null;
 }
 
+// Shift-Tab on a section's line in the List: it and the sections after it
+// become the next chapter
+function outlineSectionToChapter(chId, secId, outlineFocus) {
+  // a chapter not loaded here: its sections' prose is not on the page to tell
+  // which notes travel with it
+  if (refuseNotLoaded([chId])) return;
+  snapshotStructure('outline section to chapter', { outlineFocus });
+  const list = book.sectionNotes[chId];
+  const from = list.findIndex((s) => s.id === secId);
+  // the section and the ones after it leave together, so the book's order
+  // holds (B in A B C: B and C make the next chapter, A stays). Sections
+  // already written over keep their prose here, so those stay here too.
+  const [sec, ...after] = list.splice(from);
+  const carry = after.length > 0 && !after.some((s) => sectionWritten(chId, s.id));
+  if (!carry) list.push(...after);
+  const at = book.chapterOrder.indexOf(chId) + 1;
+  const newId = createChapterAt(at);
+  book.chapterNotes[newId] = sec.text;
+  if (carry) book.sectionNotes[newId] = after;
+  scheduleMetaSave();
+  syncGhosts(chId);
+  if (carry) syncGhosts(newId);
+  renderOutline({ chId: newId });
+}
+
 function outlineLine(kind, chId, secId, index, label, text) {
   const line = document.createElement('div');
   line.className = 'ol-line ol-' + kind;
@@ -618,23 +643,7 @@ function outlineLine(kind, chId, secId, index, label, text) {
       e.preventDefault();
       if (kind !== 'section') return;
       save();
-      snapshotStructure('outline section to chapter', { outlineFocus: here() });
-      const list = book.sectionNotes[chId];
-      const from = list.findIndex((s) => s.id === secId);
-      // the section and the ones after it leave together, so the book's order
-      // holds (B in A B C: B and C make the next chapter, A stays). Sections
-      // already written over keep their prose here, so those stay here too.
-      const [sec, ...after] = list.splice(from);
-      const carry = after.length > 0 && !after.some((s) => sectionWritten(chId, s.id));
-      if (!carry) list.push(...after);
-      const at = book.chapterOrder.indexOf(chId) + 1;
-      const newId = createChapterAt(at);
-      book.chapterNotes[newId] = sec.text;
-      if (carry) book.sectionNotes[newId] = after;
-      scheduleMetaSave();
-      syncGhosts(chId);
-      if (carry) syncGhosts(newId);
-      renderOutline({ chId: newId });
+      outlineSectionToChapter(chId, secId, here());
     }
     if (e.key === 'Backspace' && txt.textContent.trim() === '') {
       e.preventDefault();
