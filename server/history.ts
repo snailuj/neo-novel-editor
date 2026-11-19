@@ -5,7 +5,7 @@
 // write lands between staging and committing and the trailers are exact.
 import { mkdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { Checkpoints, type Clock } from './history/checkpoints.ts';
+import { Checkpoints, systemClock, type Clock } from './history/checkpoints.ts';
 import { commitAll, type Identity, type Reason } from './history/commit.ts';
 import { Gate } from './history/gate.ts';
 import { DEFAULT_LIBRARIAN } from './history/layer.ts';
@@ -51,6 +51,9 @@ export interface History {
   /** Stops the timer and makes one last commit, waiting at most closeTimeoutMs. */
   close(): Promise<void>;
 }
+
+/** The longest wait between retries of a failed commit. */
+export const RETRY_MAX_MS = 10 * 60_000;
 
 /** A device name as a trailer value: letters, digits, dot, dash and underscore, 64 at most; else `unknown`. */
 export function deviceName(raw: unknown): string {
@@ -98,6 +101,18 @@ export async function openHistory(options: HistoryOptions): Promise<History> {
   /** Devices whose writes are not yet in a commit. */
   let pending = new Set<string>();
   let lastFailure = '';
+  const clock = options.clock ?? systemClock;
+  // A failed idle or recovered commit has no later trigger of its own: with the sync off,
+  // nothing would commit the writes until the next one. The wait starts at the idle period
+  // and doubles, up to RETRY_MAX_MS, and a success clears it.
+  let retryMs = 0;
+  let retryTimer: unknown = null;
+  let closed = false;
+  const clearRetry = () => {
+    clock.clearTimeout(retryTimer);
+    retryTimer = null;
+    retryMs = 0;
+  };
 
   async function commit(reason: Reason): Promise<string | null> {
     const start = performance.now();
@@ -110,6 +125,7 @@ export async function openHistory(options: HistoryOptions): Promise<History> {
         trailers: names.map((d) => `Neo-Device: ${d}`),
       });
       lastFailure = '';
+      clearRetry();
       if (!made) {
         log('debug', 'history.commit', { reason, commit: null });
         return null;
@@ -132,11 +148,24 @@ export async function openHistory(options: HistoryOptions): Promise<History> {
     // The same failure on every pause would fill the log; it is logged when it changes.
     onError: (err, reason) => {
       const key = err instanceof GitError ? `${err.kind}:${err.stderr.trim()}` : String(err);
-      if (key === lastFailure) return;
-      lastFailure = key;
-      log('error', 'history.commit.failed', { reason, message: err instanceof Error ? err.message : String(err) });
+      if (key !== lastFailure) {
+        lastFailure = key;
+        log('error', 'history.commit.failed', { reason, message: err instanceof Error ? err.message : String(err) });
+      }
+      armRetry(reason);
     },
   });
+  function armRetry(reason: Reason): void {
+    if (closed || (reason !== 'idle' && reason !== 'recovered')) return;
+    retryMs = retryMs === 0 ? options.idleMs : Math.min(retryMs * 2, RETRY_MAX_MS);
+    clock.clearTimeout(retryTimer);
+    const wait = retryMs;
+    retryTimer = clock.setTimeout(() => {
+      retryTimer = null;
+      log('info', 'history.commit.retry', { reason, waitedMs: wait });
+      checkpoints.now(reason);
+    }, wait);
+  }
   log('info', 'history.open', { top: repo.top, prefix: repo.prefix, author: identity.email, idleMs: options.idleMs, head: last });
 
   return {
@@ -147,13 +176,16 @@ export async function openHistory(options: HistoryOptions): Promise<History> {
     },
     commit,
     async start() {
-      // Unrecoverable here: a library that cannot be committed at start would silently stay so.
-      await options.exclusive(() => commit('recovered'));
+      // A failure here (a lock left by a crash, say) is logged and retried like an idle commit.
+      checkpoints.now('recovered');
+      await checkpoints.drained();
     },
     lastCommit: () => last,
     setLastCommit(sha) { last = sha; },
     drained: () => checkpoints.drained(),
     async close() {
+      closed = true;
+      clearRetry();
       checkpoints.stop();
       checkpoints.now('close');
       const timeoutMs = options.closeTimeoutMs ?? 30_000;

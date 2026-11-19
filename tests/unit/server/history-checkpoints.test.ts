@@ -2,7 +2,7 @@
 // period, the commit names each device whose writes it holds, and no commit touches a path
 // outside the library.
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { deviceName } from '../../../server/history.ts';
@@ -171,4 +171,62 @@ test('the X-Neo-Device header of a request is the device its commit names, and G
   assert.deepEqual(made.devices, ['laptop-1']);
   const state = (await client.call('GET', '/v1/state')).json;
   assert.equal(state.history.lastCommit, made.sha);
+});
+
+test('a commit that fails after a pause is retried, first after the idle period, then at double the wait each time up to ten minutes, and the wait starts again after a success', async (t) => {
+  const h = tempHoard(t);
+  const lib = await openWithHistory(t, h);
+  const lock = path.join(h.repo, '.git', 'index.lock');
+  const settle = async (ms: number) => { await lib.time.advance(ms); await lib.history.drained(); };
+  await lib.tree.put('wiki/a.html', Buffer.from('a'), { ...NEW, device: 'tablet' });
+  writeFileSync(lock, '');
+  await settle(60_000);
+  assert.deepEqual(commits(h.repo), [], 'the planted lock fails the idle commit');
+  assert.ok(lib.lines.some((l) => l.level === 'error' && l.msg === 'history.commit.failed'));
+  // Retries at +60 s, +120 s, +240 s, +480 s, then every 600 s: all fail while the lock stays.
+  for (const wait of [60_000, 120_000, 240_000, 480_000, 600_000]) {
+    await settle(wait - 1_000);
+    const attempts = lib.lines.filter((l) => l.msg === 'history.commit.retry').length;
+    await settle(1_000);
+    assert.equal(lib.lines.filter((l) => l.msg === 'history.commit.retry').length, attempts + 1, `a retry ${wait} ms after the last`);
+  }
+  rmSync(lock);
+  await settle(599_000);
+  assert.deepEqual(commits(h.repo), [], 'the wait is capped at ten minutes, not shortened');
+  await settle(1_000);
+  const [made] = commits(h.repo);
+  assert.deepEqual(made?.files, ['library/wiki/a.html']);
+  assert.deepEqual(made.devices, ['tablet'], 'the retried commit still names the device that wrote');
+  assert.deepEqual(status(h.repo, 'library/'), []);
+
+  // After a success the next failure waits only the idle period again.
+  await lib.tree.put('wiki/b.html', Buffer.from('b'), { ...NEW, device: 'tablet' });
+  writeFileSync(lock, '');
+  await settle(60_000);
+  rmSync(lock);
+  await settle(60_000);
+  assert.deepEqual(commits(h.repo)[0].files, ['library/wiki/b.html']);
+  assert.equal(lib.time.pending(), 0, 'no retry is left armed after a success');
+});
+
+test('a recovered commit that fails at start is retried after the idle period instead of being lost', async (t) => {
+  const h = tempHoard(t);
+  const lock = path.join(h.repo, '.git', 'index.lock');
+  // A first run whose last commit failed: the tree's state already holds the file, so the
+  // next start's reconcile finds no change and only the recovered commit can take it.
+  const first = await openWithHistory(t, h);
+  await first.tree.put('wiki/left.html', Buffer.from('left behind'), { ...NEW, device: 'tablet' });
+  writeFileSync(lock, '');
+  await first.close();
+  assert.deepEqual(commits(h.repo), []);
+
+  const lib = await openWithHistory(t, h);
+  assert.equal(lib.lines.find((l) => l.msg === 'reconcile.done')?.changed, 0);
+  assert.deepEqual(commits(h.repo), []);
+  rmSync(lock);
+  await lib.time.advance(60_000);
+  await lib.history.drained();
+  const [recovered] = commits(h.repo);
+  assert.equal(recovered?.checkpoint, 'recovered');
+  assert.deepEqual(recovered.files, ['library/wiki/left.html']);
 });
