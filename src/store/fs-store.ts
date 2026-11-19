@@ -224,7 +224,39 @@ export function createFsStore(options: FsStoreOptions): LibraryStore & { readonl
     try { return fs.readFileSync(file, 'utf8'); } catch (err) { throw readFailure(err); }
   }
 
-  const unfinished = (what: string) => async (): Promise<never> => { throw new Error('not yet in the store: ' + what); };
+  // null for a page that is not there; anything else that stops a read is raised as it is
+  function readAuxFile(file: string): string | null {
+    try { return fs.readFileSync(file, 'utf8'); } catch (err) {
+      if (err && (err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw err;
+    }
+  }
+  // The displaced disk text is kept as <page>.bak, or .bak2, .bak3 ... when that name holds
+  // other words. A retry that finds its own copy already there adds nothing.
+  function keepAuxBackup(file: string, text: string): string {
+    for (let n = 1; n < 1000; n++) {
+      const bak = file + (n === 1 ? '.bak' : '.bak' + n);
+      const have = readAuxFile(bak);
+      if (have === text) return bak;
+      if (have === null) { writeFileDurable(bak, text); return bak; }
+    }
+    throw new Error('too many kept copies of ' + path.basename(file));
+  }
+
+  // Snapshots of a book: book-.../snapshots/<name>/ holds the chapters that changed since
+  // the snapshot before it and, written last, its snapshot.json. A snapshot's files are
+  // written once and never rewritten, so a sync tool only ever sees new files arrive and two
+  // devices have nothing to clash over. The window decides what to keep; the store lists,
+  // reads, writes a new file and removes a snapshot the window has already carried forward.
+  function snapshotDir(bookId: string, name: string): string {
+    if (!/^[A-Za-z0-9-]+$/.test(libName(name))) throw new StoreError('bad_name', 'Invalid snapshot name');
+    return path.join(bookDir(bookId), 'snapshots', name);
+  }
+  function snapshotFile(bookId: string, name: string, file: string): string {
+    if (!/^[\w-][\w.-]*\.(html|json)$/.test(libName(file))) throw new StoreError('bad_name', 'Invalid snapshot file');
+    return path.join(snapshotDir(bookId, name), file);
+  }
+  const sidecar = (bookId: string, name: string) => path.join(bookDir(bookId), libName(name) + '.json');
 
   return {
     root,
@@ -413,13 +445,73 @@ export function createFsStore(options: FsStoreOptions): LibraryStore & { readonl
       if (fs.existsSync(file)) fs.unlinkSync(file);
       return true;
     },
-    readAux: unfinished('readAux'),
-    writeAux: unfinished('writeAux'),
-    listSnapshots: unfinished('listSnapshots'),
-    readSnapshotFile: unfinished('readSnapshotFile'),
-    writeSnapshotFile: unfinished('writeSnapshotFile'),
-    removeSnapshot: unfinished('removeSnapshot'),
-    readJSON: unfinished('readJSON'),
-    writeJSON: unfinished('writeJSON'),
+    // A page the disk can't read is an error, never an empty page: an empty read that is
+    // then saved would wipe the page. A page the book has never had is null.
+    async readAux(bookId, name) {
+      // name: 'notes' | 'outline' | 'notes-<chapter>'
+      const file = path.join(bookDir(bookId), libName(name) + '.html');
+      const read = () => { try { return readAuxFile(file); } catch (err) { throw readFailure(err); } };
+      return icloud.afterLocal([file], read, () => { throw icloud.cloudError(file); });
+    },
+
+    // `expected` is the text the window last read or wrote for this page (as for chapters).
+    // When the file holds words the new text lacks, another device wrote it since: the
+    // file's text is kept as a .bak beside the page before the new text goes in, so neither
+    // version is lost.
+    async writeAux(bookId, name, html, expected) {
+      const file = path.join(bookDir(bookId), libName(name) + '.html');
+      if (icloud.isCloudOnly(file)) { icloud.requestDownload([file]); throw icloud.cloudError(file); }
+      let kept: string | null = null;
+      if (typeof expected === 'string') {
+        const cur = readAuxFile(file);
+        if (cur !== null && chapterDiverged(cur, expected, html)) {
+          kept = keepAuxBackup(file, cur);
+          log('conflict', `${bookId}/${name}: another device changed this page since it was read; its text is kept as ${path.basename(kept)}`);
+        }
+      }
+      writeFileDurable(file, html);
+      return kept ? { kept: path.basename(kept) } : true;
+    },
+
+    async listSnapshots(bookId) {
+      const dir = path.join(bookDir(bookId), 'snapshots');
+      let names: string[] = [];
+      try { names = fs.readdirSync(dir).filter((n) => /^[A-Za-z0-9-]+$/.test(n)); } catch { return []; }
+      const out = [];
+      for (const name of names) {
+        try { out.push({ name, files: fs.readdirSync(path.join(dir, name)).filter((f) => /\.(html|json)$/.test(f)) }); } catch { /* not a folder */ }
+      }
+      return out;
+    },
+
+    // A file that can't be read throws (missing, no permission, still in iCloud): only a
+    // chapter that is really empty reads as ''. Thinning relies on telling them apart, so it
+    // never carries an empty stand-in forward.
+    async readSnapshotFile(bookId, name, file) {
+      const fp = snapshotFile(bookId, name, file);
+      return icloud.afterLocal([fp], () => readText(fp), () => { throw icloud.cloudError(fp); });
+    },
+
+    async writeSnapshotFile(bookId, name, file, text) {
+      const target = snapshotFile(bookId, name, file);
+      if (fs.existsSync(target)) return false; // written once
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      writeFileDurable(target, text);
+      return true;
+    },
+
+    async removeSnapshot(bookId, name) {
+      try { fs.rmSync(snapshotDir(bookId, name), { recursive: true, force: true }); } catch (err) { log('snapshot remove', err); }
+      return true;
+    },
+
+    async readJSON(bookId, name, fallback) {
+      return readJSON(sidecar(bookId, name), fallback);
+    },
+
+    async writeJSON(bookId, name, data) {
+      writeJSON(sidecar(bookId, name), data);
+      return true;
+    },
   };
 }
