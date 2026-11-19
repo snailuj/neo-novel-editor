@@ -42,7 +42,7 @@ test('a painting that cannot be written leaves the old painting and art.json as 
   const book = await h.withBook();
   const before = await h.store.writePainting(book.id, { buffer: Buffer.from('old'), ext: 'png', art });
   const jsonBefore = h.read(book.id, 'art.json');
-  await new Promise((r) => setTimeout(r, 3));
+  await new Promise((resolve) => setTimeout(resolve, 3));
   const refusing = refuse(/art-\d+\.jpg\.tmp$/);
   try {
     await assert.rejects(h.store.writePainting(book.id, { buffer: Buffer.from('new'), art }), /refused/);
@@ -57,7 +57,7 @@ test('an art.json that cannot be written leaves the old pair, and the new image 
   const book = await h.withBook();
   const before = await h.store.writePainting(book.id, { buffer: Buffer.from('old'), ext: 'png', art });
   const jsonBefore = h.read(book.id, 'art.json');
-  await new Promise((r) => setTimeout(r, 3));
+  await new Promise((resolve) => setTimeout(resolve, 3));
   const refusing = refuse(/art\.json\.tmp$/);
   try {
     await assert.rejects(h.store.writePainting(book.id, { buffer: Buffer.from('new'), ext: 'png', art }), /refused/);

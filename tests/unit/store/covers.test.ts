@@ -22,7 +22,7 @@ test('a picked image becomes the book\'s one cover, and the one before it goes',
   const book = await h.withBook();
   const first = await h.store.setCover(book.id, picked('a.PNG'));
   assert.match(first as string, /^cover-\d+\.png$/);
-  await new Promise((r) => setTimeout(r, 3)); // names carry the time they were made
+  await new Promise((resolve) => setTimeout(resolve, 3)); // names carry the time they were made
   const second = await h.store.setCover(book.id, picked('b.jpeg', Buffer.from('jpg')));
   assert.match(second as string, /^cover-\d+\.jpg$/);
   assert.deepEqual(covers(h.at(book.id)), [second]);
@@ -40,7 +40,7 @@ test('the picked file may be the current cover itself', async () => {
   const h = harness();
   const book = await h.withBook();
   const first = (await h.store.setCover(book.id, picked('a.png'))) as string;
-  await new Promise((r) => setTimeout(r, 3));
+  await new Promise((resolve) => setTimeout(resolve, 3));
   const again = (await h.store.setCover(book.id, h.at(book.id, first))) as string;
   assert.notEqual(again, first);
   assert.deepEqual(covers(h.at(book.id)), [again]);

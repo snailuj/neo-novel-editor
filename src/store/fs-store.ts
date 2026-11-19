@@ -594,11 +594,11 @@ export function createFsStore(options: FsStoreOptions): FsStore {
       backupRunning = true;
       return new Promise<void>((resolve) => {
         let child: BackupWorker | null = null;
-        let timer: ReturnType<typeof setTimeout> | undefined;
+        const watch: { timer?: ReturnType<typeof setTimeout> } = {};
         const finish = (err: Error | null) => {
           if (!backupRunning) return;
           backupRunning = false;
-          clearTimeout(timer);
+          clearTimeout(watch.timer);
           if (err) {
             log('backup', err);
             try { fs.unlinkSync(target + '.tmp'); } catch { /* none */ }
@@ -609,7 +609,7 @@ export function createFsStore(options: FsStoreOptions): FsStore {
         try {
           child = fork(workerPath, { serviceName: 'NEO backup' });
         } catch (err) { finish(err as Error); return; }
-        timer = setTimeout(() => finish(new Error('the backup took longer than ' + totalMs / 60000 + ' minutes and was stopped')), totalMs);
+        watch.timer = setTimeout(() => finish(new Error('the backup took longer than ' + totalMs / 60000 + ' minutes and was stopped')), totalMs);
         child.on('message', (message) => {
           const msg = message as { ok?: boolean; error?: string; away?: string[]; missed?: string[] } | null;
           if (!msg || !msg.ok) { finish(new Error(msg?.error || 'the backup failed')); return; }

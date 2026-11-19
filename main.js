@@ -2823,6 +2823,40 @@ function checkForUpdates() {
   } catch (err) { logError('updater', err); }
 }
 
+// Where the library is: Electron's Documents (which handles OneDrive-redirected Windows
+// setups), unless the writer chose their own folder (File → Library Folder…)
+function resolveLibraryDir() {
+  try {
+    LIBRARY_DIR = path.join(app.getPath('documents'), 'NEO Library');
+    const chosen = readSettings().libraryDir;
+    if (chosen) LIBRARY_DIR = awaitChosenLibrary(chosen);
+  } catch (err) {
+    logError('paths', err);
+  }
+}
+
+// The library found at launch is checked for writing, made if it is new, and from then on
+// is the one the error log goes to
+function openLibrary() {
+  try { checkLibraryWritable(); } catch (err) { logError('library check', err); }
+  libraryStore().open().catch((err) => logError('library', err));
+}
+
+// What the library does for itself once NEO is up: ask about NEO Pocket's folder (it may be
+// here already, or arrive while NEO is open), the day's backup, and a look for files iCloud
+// has taken off this Mac
+function scheduleLibraryChores() {
+  setTimeout(() => { askAboutPocket().catch((err) => logError('pocket ask', err)); }, 2500).unref?.();
+  app.on('browser-window-focus', () => { askAboutPocket().catch((err) => logError('pocket ask', err)); });
+  // the day's backup waits until NEO is up and the writer is writing (it
+  // used to start at launch, beside everything the window was waiting on)
+  setTimeout(() => { dailyBackup().catch((err) => logError('backup', err)); }, 2 * 60 * 1000).unref?.();
+  // NEO left open for days still makes each day's backup (and retries one
+  // that failed); an existing day's zip makes this a no-op
+  setInterval(() => { dailyBackup().catch(() => {}); }, 60 * 60 * 1000).unref?.();
+  setTimeout(() => { fetchLibraryFromICloud().catch((err) => logError('icloud', err)); }, 60000).unref?.();
+}
+
 app.whenReady().then(() => {
   // Packaged builds get name/icon from electron-builder; this covers `npm start`.
   try {
@@ -2840,15 +2874,7 @@ app.whenReady().then(() => {
   // individually guarded so no single failure can leave the app running
   // invisibly with no window.
   try {
-    // the real Documents folder (handles OneDrive-redirected Windows setups)
-    try {
-      LIBRARY_DIR = path.join(app.getPath('documents'), 'NEO Library');
-      // …unless the writer chose their own folder (File → Library Folder…)
-      const chosen = readSettings().libraryDir;
-      if (chosen) LIBRARY_DIR = awaitChosenLibrary(chosen);
-    } catch (err) {
-      logError('paths', err);
-    }
+    resolveLibraryDir();
 
     // macOS press-and-hold: off by default, so held keys simply repeat (the
     // picker once re-emitted keys as phantom letters); View → Press and hold
@@ -2872,26 +2898,16 @@ app.whenReady().then(() => {
     }
 
     try { initLanguage(); } catch (err) { logError('language', err); }
-    try { checkLibraryWritable(); } catch (err) { logError('library check', err); }
-    libraryStore().open().catch((err) => logError('library', err));
+    openLibrary();
     createWindow();
     // after the window; the main halves start a turn after it has its plugin
     // list (or 5 s on), so no plugin's code runs before its first requests are answered
     try { plugins.activateMains(); } catch (err) { logError('plugins', err); }
     try { announceLibraryFallback(); } catch (err) { logError('library notice', err); }
-    // NEO Pocket's folder may be here already, or arrive while NEO is open
-    setTimeout(() => { askAboutPocket().catch((err) => logError('pocket ask', err)); }, 2500).unref?.();
-    app.on('browser-window-focus', () => { askAboutPocket().catch((err) => logError('pocket ask', err)); });
     initSpell().catch((err) => logError('spell', err));
     try { buildMenu(); } catch (err) { logError('menu', err); }
-    // the day's backup waits until NEO is up and the writer is writing (it
-    // used to start at launch, beside everything the window was waiting on)
-    setTimeout(() => { dailyBackup().catch((err) => logError('backup', err)); }, 2 * 60 * 1000).unref?.();
-    // NEO left open for days still makes each day's backup (and retries one
-    // that failed); an existing day's zip makes this a no-op
-    setInterval(() => { dailyBackup().catch(() => {}); }, 60 * 60 * 1000).unref?.();
+    scheduleLibraryChores();
     try { checkForUpdates(); } catch (err) { logError('updater', err); }
-    setTimeout(() => { fetchLibraryFromICloud().catch((err) => logError('icloud', err)); }, 60000).unref?.();
   } catch (err) {
     // catastrophic: tell the human instead of dying in silence
     logError('startup', err);

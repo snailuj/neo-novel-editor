@@ -31,11 +31,10 @@ function fake(reply: (post: (m: unknown) => void, exit: (code: number) => void) 
   const fork: ForkWorker = (script) => {
     const handlers: Record<string, (arg: never) => void> = {};
     forked.push(script);
-    let killed = false;
     return {
       on: (ev: string, fn: (arg: never) => void) => { handlers[ev] = fn; },
       postMessage: () => setImmediate(() => reply((m) => handlers.message?.(m as never), (c) => handlers.exit?.(c as never))),
-      kill: () => { killed = true; void killed; },
+      kill() {},
     } as BackupWorker;
   };
   return { fork, forked };
@@ -68,7 +67,7 @@ test('a backup already running is not started a second time', async () => {
   const first = h.store.backup(slow.fork, { workerPath: worker });
   await h.store.backup(slow.fork, { workerPath: worker });
   assert.equal(slow.forked.length, 1);
-  await new Promise((r) => setImmediate(r));
+  await new Promise((resolve) => setImmediate(resolve));
   finish();
   await first;
   const again = fake((post) => post({ ok: true }));
