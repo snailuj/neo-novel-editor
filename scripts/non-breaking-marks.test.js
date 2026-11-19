@@ -1,18 +1,16 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const vm = require('node:vm');
 const { test } = require('node:test');
 
 // the non-breaking mark rules from app.js, on their own
-const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+const app = require('./app-files').appSource();
 const from = app.indexOf('// ---- non-breaking marks:');
 const to = app.indexOf('// ---- end of non-breaking marks ----');
 const context = vm.createContext({});
 vm.runInContext(app.slice(from, to), context);
-vm.runInContext('this.api = { NB_CHARS, nonBreakingRuns };', context);
+vm.runInContext('this.api = { NB_CHARS, nonBreakingRuns, SOFT_HYPHEN, softHyphenOffsets, softHyphenTick, SHY_MARK_WIDTH };', context);
 const api = context.api;
 
 // the runs come out of another realm, so they are compared as JSON
@@ -48,4 +46,67 @@ test('runs keep their order and do not merge across different characters', () =>
       { start: 6, end: 7, kind: 'narrow' },
     ]),
   );
+});
+
+// soft hyphens: found by offset, kept out of the gray runs, and each given a
+// mark centred on its left edge
+
+const offsets = (text) => JSON.stringify(api.softHyphenOffsets(text));
+
+test('the soft hyphen is U+00AD', () => {
+  assert.equal(api.SOFT_HYPHEN, '\u00ad');
+});
+
+test('plain text has no soft hyphens', () => {
+  assert.equal(offsets('Donaudampfschifffahrt'), '[]');
+  assert.equal(offsets(''), '[]');
+});
+
+test('every soft hyphen is found, in order, including at the edges', () => {
+  assert.equal(offsets('Donau\u00addampf\u00adschiff\u00adfahrt'), '[5,11,18]');
+  assert.equal(offsets('\u00adab\u00ad'), '[0,3]');
+  assert.equal(offsets('a\u00ad\u00adb'), '[1,2]');
+});
+
+test('soft hyphens are not non-breaking runs, and the runs still show beside them', () => {
+  assert.equal(runs('Donau\u00addampf'), '[]');
+  assert.equal(
+    runs('Dr.\u00a0Donau\u00adschiff'),
+    JSON.stringify([{ start: 3, end: 4, kind: 'space' }]),
+  );
+});
+
+const tick = (rect, origin, em) => JSON.stringify(api.softHyphenTick(rect, origin, em));
+
+test('the mark is 0.5em wide, an en space', () => {
+  assert.equal(api.SHY_MARK_WIDTH, 0.5);
+});
+
+test('mid-line: a zero-wide soft hyphen gets a 0.5em mark centred on it, as tall as its box', () => {
+  assert.equal(
+    tick({ left: 300, top: 220, width: 0, height: 34 }, { left: 100, top: 20 }, 30),
+    JSON.stringify({ left: 192.5, top: 200, width: 15, height: 34 }),
+  );
+});
+
+test('the mark keeps its centre on the break point and its box\'s top and height at any type size', () => {
+  for (const em of [12, 17, 20, 34]) {
+    const at = api.softHyphenTick({ left: 300, top: 220, width: 0, height: em * 1.13 }, { left: 100, top: 20 }, em);
+    assert.ok(Math.abs(at.left + at.width / 2 - 200) < 1e-9);
+    assert.ok(Math.abs(at.width - em * 0.5) < 1e-9);
+    assert.equal(at.top, 200);
+    assert.ok(Math.abs(at.height - em * 1.13) < 1e-9);
+  }
+});
+
+test('at a line break: the mark is centred on the box\'s left edge, where the word breaks', () => {
+  assert.equal(
+    tick({ left: 640, top: 420, width: 0, height: 34 }, { left: 100, top: 20 }, 30),
+    JSON.stringify({ left: 532.5, top: 400, width: 15, height: 34 }),
+  );
+});
+
+test('no box, or a box with no height, draws no mark', () => {
+  assert.equal(api.softHyphenTick(null, { left: 0, top: 0 }, 17), null);
+  assert.equal(api.softHyphenTick({ left: 5, top: 5, width: 0, height: 0 }, { left: 0, top: 0 }, 17), null);
 });

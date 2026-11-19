@@ -70,7 +70,11 @@ const where = () => js(`(() => {
   const sc = document.getElementById('paper-scroll');
   const box = sc.getBoundingClientRect();
   const s = getSelection();
-  let r = s.getRangeAt(0).getBoundingClientRect();
+  // an empty line is where its paragraph is: a bare caret there is measured
+  // a line off on a Mac (NEO's caretRect goes by the paragraph too)
+  const a = s.anchorNode;
+  const line = (a.nodeType === 1 ? a : a.parentElement).closest('p');
+  let r = line && line.textContent === '' ? line.getBoundingClientRect() : s.getRangeAt(0).getBoundingClientRect();
   if (!r.height) { const n = s.anchorNode; r = (n.nodeType === 1 ? n : n.parentElement).getBoundingClientRect(); }
   const head = (s.anchorNode.nodeType === 1 ? s.anchorNode : s.anchorNode.parentElement).closest('.chapter').querySelector('.chapter-head').getBoundingClientRect();
   return { top: box.top, bottom: box.bottom, caretTop: r.top, caretBottom: r.bottom, headTop: head.top, headBottom: head.bottom };
@@ -84,7 +88,9 @@ test('a break made at the foot of the window keeps the caret in sight', async ()
   await enter();
   await enter(); // the empty line becomes ***, and the caret goes below it
   const w = await where();
-  assert.ok(w.caretBottom <= w.bottom, `the caret's line ends ${Math.round(w.caretBottom - w.bottom)}px below the window`);
+  // what the window measured, should it fail (a Mac has failed it where Linux doesn't)
+  const why = async () => JSON.stringify({ w, later: await (async () => { await tick(500); return where(); })(), ...(await js(`(() => { const sc = document.getElementById('paper-scroll'); const s = getSelection(); const n = s.anchorNode; const el = n && (n.nodeType === 1 ? n : n.parentElement); return { scrollTop: sc.scrollTop, scrollHeight: sc.scrollHeight, clientHeight: sc.clientHeight, innerHeight, typewriter: typewriterEnabled, caretEl: el && el.outerHTML.slice(0, 80), prevEl: el && el.previousElementSibling && el.previousElementSibling.outerHTML.slice(0, 60), caretRect: caretRect() && [caretRect().top, caretRect().bottom], bareCaret: (() => { const b = getSelection().getRangeAt(0).getBoundingClientRect(); return [b.top, b.bottom]; })() }; })()`)) });
+  if (!(w.caretBottom <= w.bottom)) assert.fail(`the caret's line ends ${Math.round(w.caretBottom - w.bottom)}px below the window ${await why()}`);
   assert.ok(w.caretTop >= w.top);
 });
 
@@ -187,6 +193,59 @@ test('⌘Z puts a break removed from its own line back', async () => {
   await tick(400);
   const back = await js(`(() => { const c = document.querySelector('.chapter-body').children; return [c[10].textContent, c[11].className, c[11].textContent, c[12].textContent]; })()`);
   assert.deepEqual(back, ['Gulls over the slips.', 'scene-break', '***', 'Mara counted the boats.']);
+});
+
+// A justified story stays justified past a break and into the next chapter,
+// as it does past an ordinary Enter (#426). The *** itself stays centered.
+const lastLines = (n) => js(`(() => {
+  const bodies = document.querySelectorAll('.chapter-body');
+  return [...bodies[bodies.length - 1].children].slice(-${n}).map((p) => [p.className, getComputedStyle(p).textAlign, p.textContent]);
+})()`);
+
+test('Enter twice after justified text: the line under the *** is justified too', async () => {
+  await js(`(() => {
+    const bodies = document.querySelectorAll('.chapter-body');
+    const body = bodies[bodies.length - 1];
+    body.focus();
+    const r = document.createRange();
+    r.selectNodeContents(body);
+    getSelection().removeAllRanges();
+    getSelection().addRange(r);
+    applyAlign('justify');
+    r.collapse(false);
+    getSelection().removeAllRanges();
+    getSelection().addRange(r);
+  })()`);
+  await tick(200);
+  await enter();
+  await enter();
+  await press('A', 'A');
+  const [above, brk, below] = await lastLines(3);
+  assert.equal(above[1], 'justify');
+  assert.deepEqual(brk, ['scene-break', 'center', '***']);
+  assert.deepEqual(below, ['', 'justify', 'A']);
+});
+
+test('Enter three times after justified text: the new chapter opens justified', async () => {
+  const chapters = await js(`book.chapterOrder.length`);
+  await enter();
+  await enter();
+  await enter();
+  assert.equal(await js(`book.chapterOrder.length`), chapters + 1);
+  await press('B', 'B');
+  assert.deepEqual(await lastLines(1), [['', 'justify', 'B']]);
+});
+
+test('a chapter made from the menu or the + opens set as the chapter before it', async () => {
+  for (const make of ['newChapter()', `document.getElementById('nav-add').click()`]) {
+    const before = await js(`book.chapterOrder.slice()`);
+    await js(make);
+    await tick(300);
+    const made = (await js(`book.chapterOrder.slice()`)).filter((c) => !before.includes(c));
+    assert.equal(made.length, 1, make);
+    const first = await js(`(() => { const p = document.querySelector('.chapter[data-id="${made[0]}"] .chapter-body p'); return [getComputedStyle(p).textAlign, p.textContent]; })()`);
+    assert.deepEqual(first, ['justify', ''], make);
+  }
 });
 
 /* ---------- runner ---------- */

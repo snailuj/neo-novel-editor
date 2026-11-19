@@ -4,13 +4,15 @@ import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 // Rule: a saved chapter file holds exactly the HTML upstream Neo would write
 // for the same page. The reference is upstream's own captureBody and
 // persistChapter, read from the upstream/main ref and run against the same
 // body the fork's page holds.
 const appRoot = fileURLToPath(new URL('../..', import.meta.url));
-const upstreamApp = execFileSync('git', ['show', 'upstream/main:app.js'], { cwd: appRoot, encoding: 'utf8', maxBuffer: 1 << 28 });
+const { APP_FILES } = createRequire(import.meta.url)('../../scripts/app-files.js');
+const upstreamApp = APP_FILES.map((f) => execFileSync('git', ['show', `upstream/main:${f}`], { cwd: appRoot, encoding: 'utf8', maxBuffer: 1 << 28 })).join('\n');
 const between = (from, to) => {
   const at = upstreamApp.indexOf(from);
   if (at < 0) throw new Error('upstream/main app.js has no ' + from);

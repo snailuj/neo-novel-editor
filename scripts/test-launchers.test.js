@@ -22,9 +22,11 @@ test('there are launchers to check', () => {
 for (const launcher of launchers) {
   test(`${launcher} hides its windows before it loads main.js`, () => {
     const source = fs.readFileSync(path.join(root, launcher), 'utf8');
-    const main = source.search(/require\(['"]\.\.\/(\.\.\/)?main\.js['"]\)/);
-    assert.ok(main >= 0, 'loads main.js');
     const hides = source.search(/\bisolate\(|\bhideWindows\(/);
+    let main = source.search(/require\(['"]\.\.\/(\.\.\/)?main\.js['"]\)/);
+    // a launcher that opens its own windows without main.js (pocket.e2e.js) still hides them
+    if (main < 0) main = source.search(/new BrowserWindow\(/);
+    assert.ok(main >= 0, 'loads main.js or opens a window');
     assert.ok(hides >= 0 && hides < main, 'calls isolate() or hideWindows() before main.js');
   });
 }
