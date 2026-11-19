@@ -83,13 +83,13 @@ function windowFor(store: FsStore, bookId: string) {
   const none = () => {};
   const context = vm.createContext({
     window: { neo, addEventListener: none },
-    document: { addEventListener: none, createElement: () => ({ children: [], innerHTML: '', textContent: '' }), visibilityState: 'visible' },
+    document: { addEventListener: none, execCommand: none, createElement: () => ({ children: [], innerHTML: '', textContent: '' }), visibilityState: 'visible' },
     console,
     setTimeout,
     setInterval: () => 0,
     clearTimeout,
     $: () => ({ scrollTop: 0, dataset: {}, hidden: false }),
-    $$: () => [],
+    $$: () => [{}],
     t: (s: string, v?: Record<string, string>) => s.replace(/\{(\w+)\}/g, (_m, k) => v?.[k] ?? ''),
     toast: (m: string) => toasts.push(m),
     NeoI18n: { getLocale: () => 'en' },
@@ -99,10 +99,12 @@ function windowFor(store: FsStore, bookId: string) {
     resumePosition: () => false, applyDeviceLook: (l: unknown) => l, renderShelves: none, writeSidecar: async () => {}, saveMeta: async () => {},
     writeBookMeta: async (id: string, meta: unknown) => store.writeBookMeta(id, meta as Anything),
     bookWordCount: () => 0, sprint: null, wordMode: 'book', refreshOpenAux: async () => {}, flushAux: none, flushStickiesSave: none, flushSidecars: none,
-    bookMetaCache: { clear: none, set: none }, shelfExport: false, library: { shelves: [] }, libraryGeneration: 0, libraryWritesPending: 0, lastHereActivity: 0,
+    bookMetaCache: { clear: none, set: none }, shelfExport: false, library: { shelves: [], hintShown: true }, libraryGeneration: 0, libraryWritesPending: 0, lastHereActivity: 0,
     onlyDrops: () => false, wordsBeyond: (a: string, b: string) => a !== b, mergeSidecar: (_b: unknown, _l: unknown, r: unknown) => r,
     undoStack: [], redoStack: [], tabPlaces: {}, currentTab: 'manuscript', currentChapterId: null,
     chapterTitles: {}, chapterKind: () => 'chapter',
+    showWindowTitle: none, forgetSnapshots: none, forgetSpelling: none, applyBright: none, spEditorMode: none, migrateDarlingAnchors: none, reconcileMarks: none,
+    switchTab: none, isScript: () => false, vimRest: none, requestAnimationFrame: none, KHELP: 'Ctrl', spReportState: none, writeLibrary: async () => {},
   });
   // the window's state, and the code under test
   vm.runInContext(`
@@ -234,14 +236,22 @@ test('readNewChapter: a chapter with no file reads as empty; any other failure i
   await assert.rejects(w.run(`readNewChapter(${JSON.stringify(book.id)}, '../x')`), /\[store:bad_name\]/);
 });
 
-test('opening a book whose chapter cannot be read does not open it: no chapter is taken to be empty, so none can be saved over', async () => {
+test('opening a book whose chapter has not synced opens it empty against a base of \'\'; one that cannot be read does not open it', async () => {
   const h = library();
   const book = await bookWith(h, { a: '<p>one</p>' }, ['a', 'gone']);
   const w = windowFor(h.store, book.id);
-  await assert.rejects(w.run(`openBook(${JSON.stringify(book.id)})`), /\[store:not_found\]/);
-  assert.equal(w.run('book'), null, 'nothing was opened');
-  assert.deepEqual(w.plain('chapterHTML'), {});
+  await w.run(`openBook(${JSON.stringify(book.id)})`);
+  assert.equal(w.run('chapterHTML["gone"]'), '', 'the missing file is an empty chapter');
+  assert.equal(w.run(`diskKnown[${JSON.stringify(book.id + '/gone')}]`), '', 'whose base is \'\'');
   assert.equal(w.writes.length, 0);
+  fs.mkdirSync(path.join(h.dir, book.id, 'chapters', 'odd.html'));
+  const meta = (await h.store.readBookMeta(book.id))!;
+  meta.chapterOrder = ['a', 'odd'];
+  await h.store.writeBookMeta(book.id, meta);
+  const w2 = windowFor(h.store, book.id);
+  await assert.rejects(w2.run(`openBook(${JSON.stringify(book.id)})`), /\[store:unreadable\]/);
+  assert.equal(w2.run('book'), null, 'nothing was opened');
+  assert.equal(w2.writes.length, 0);
 });
 
 test('a notes page the book has never had reads as no text, and is saved against \'\', so a page made on the other device meanwhile is kept', async () => {

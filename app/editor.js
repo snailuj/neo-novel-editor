@@ -17,7 +17,11 @@ async function openBook(bookId) {
   if (!meta || gen !== openGeneration) return;
   const html = {};
   for (const chId of meta.chapterOrder) {
-    html[chId] = await window.neo.readChapter(bookId, chId);
+    // a chapter whose file has not synced here yet opens empty, with a base of
+    // '' (so a file that arrives later is kept, not replaced); a read that
+    // failed any other way stops the open, so no chapter is taken as empty and
+    // saved over
+    html[chId] = await readNewChapter(bookId, chId);
     if (gen !== openGeneration) return;
   }
   const sideStickies = await window.neo.readJSON(bookId, 'stickies', []);
