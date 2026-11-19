@@ -63,6 +63,12 @@ function intParam(params: URLSearchParams, name: string, fallback: number, min: 
   return n;
 }
 
+/** The device a request names, or undefined; the history cleans it before it reaches a commit. */
+function deviceOf(req: IncomingMessage): string | undefined {
+  const device = req.headers['x-neo-device'];
+  return typeof device === 'string' && device !== '' ? device : undefined;
+}
+
 async function route(tree: Tree, req: IncomingMessage, limit: number): Promise<Reply> {
   const url = req.url ?? '/';
   // Not `new URL(...)`: that would resolve `..` segments before the path check sees them.
@@ -93,7 +99,7 @@ async function route(tree: Tree, req: IncomingMessage, limit: number): Promise<R
     if (typeof from !== 'string' || typeof to !== 'string' || (ifMatch !== undefined && typeof ifMatch !== 'string')) {
       throw new ApiError('bad_json', 400, 'the body must be { "from": string, "to": string, "ifMatch": string }');
     }
-    return { status: 200, json: await tree.move(from, to, etag(ifMatch)) };
+    return { status: 200, json: await tree.move(from, to, etag(ifMatch), deviceOf(req)) };
   }
   if (pathname.startsWith('/v1/files/')) {
     const p = decodePath(pathname.slice('/v1/files/'.length));
@@ -103,10 +109,10 @@ async function route(tree: Tree, req: IncomingMessage, limit: number): Promise<R
     }
     if (method === 'PUT') {
       const pre = preconditions(req);
-      const result = await tree.put(p, await readBody(req, limit), pre);
+      const result = await tree.put(p, await readBody(req, limit), { ...pre, device: deviceOf(req) });
       return { status: 200, json: result, headers: { ETag: `"${result.version}"` } };
     }
-    if (method === 'DELETE') return { status: 200, json: await tree.remove(p, etag(req.headers['if-match'])) };
+    if (method === 'DELETE') return { status: 200, json: await tree.remove(p, etag(req.headers['if-match']), deviceOf(req)) };
     throw methodNotAllowed();
   }
   throw new ApiError('not_found', 404, `no route ${method} ${pathname}`);
@@ -134,9 +140,8 @@ export function createServer(tree: Tree, { log, bodyLimit = 50 * 1024 * 1024 }: 
     }).then((reply) => {
       send(res, reply);
       const url = req.url ?? '';
-      const device = req.headers['x-neo-device'];
       log('info', 'request', {
-        method: req.method, path: url.split('?')[0], device: typeof device === 'string' && device !== '' ? device : null,
+        method: req.method, path: url.split('?')[0], device: deviceOf(req) ?? null,
         seqBefore, seqAfter: tree.currentSeq(), status: reply.status, ms: Math.round(performance.now() - start),
       });
     }).catch((e: unknown) => {

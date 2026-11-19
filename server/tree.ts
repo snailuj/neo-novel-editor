@@ -2,7 +2,7 @@
 // index and the seq, and one queue serialises every write, so the HTTP handlers and any
 // later server code that go through it cannot disagree about either.
 import { randomUUID } from 'node:crypto';
-import { access, mkdir, readFile, readdir, rmdir, unlink } from 'node:fs/promises';
+import { access, mkdir, readFile, readdir, rmdir, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { ApiError } from './errors.ts';
 import { makeSyncDir, renameRetrying, writeFileDurable, type SyncDir } from './durable.ts';
@@ -17,18 +17,36 @@ export interface TreeOptions {
   syncDir?: SyncDir;
   /** Reads a library file; a test interleaves a write with it. */
   readFile?: (file: string) => Promise<Buffer>;
+  /** Called after every accepted put, delete and move, and once for the changes reconcile found, with the writing device. */
+  onChange?: (device: string | undefined) => void;
+  /** Fields added to the state reply; the history's last commit and sync result go here. */
+  stateExtra?: () => Record<string, unknown>;
 }
-export interface Preconditions { ifMatch?: string; ifNoneMatch?: string }
+export interface Preconditions { ifMatch?: string; ifNoneMatch?: string; device?: string }
+
+/** What a job run by `exclusive` may do while it holds the tree. */
+export interface Held {
+  /** Hashes `paths` (library-relative) again and raises the seq for each one whose bytes or presence changed. Returns how many did. */
+  rescan(paths: readonly string[]): Promise<number>;
+}
 export interface Change { path: string; version: string | null }
 
 export interface Tree {
-  state(): Promise<{ epoch: string; seq: number; head: string | null; library: string; serverTime: string }>;
+  state(): Promise<{ epoch: string; seq: number; head: string | null; library: string; serverTime: string } & Record<string, unknown>>;
   currentSeq(): number;
   changes(since: number, limit: number): { epoch: string; seq: number; changes: Change[]; more: boolean };
   read(p: string): Promise<{ bytes: Buffer; version: string }>;
   put(p: string, bytes: Buffer, pre: Preconditions): Promise<{ version: string; seq: number }>;
-  remove(p: string, ifMatch: string | undefined): Promise<{ seq: number }>;
-  move(from: string, to: string, ifMatch: string | undefined): Promise<{ version: string; seq: number }>;
+  remove(p: string, ifMatch: string | undefined, device?: string): Promise<{ seq: number }>;
+  move(from: string, to: string, ifMatch: string | undefined, device?: string): Promise<{ version: string; seq: number }>;
+  /**
+   * Runs `job` once the queued writes are done, and holds every later write and file read
+   * until it ends. For work that changes the library from outside the tree (a pull) or
+   * must see it still (a commit).
+   */
+  exclusive<T>(job: (held: Held) => Promise<T>): Promise<T>;
+  /** `Held.rescan` for a caller that holds nothing: it waits its turn like a write. */
+  rescan(paths: readonly string[]): Promise<number>;
   /** Waits for queued writes to finish. */
   close(): Promise<void>;
 }
@@ -157,11 +175,14 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
     });
     if (changed > 0 || loaded === null) await persist();
     log('info', 'reconcile.done', { files: files.length, changed, seq });
+    if (changed > 0) options.onChange?.('server');
   }
 
   // One write at a time. `busy` lets a read of a path being written wait for the write.
   let tail: Promise<unknown> = Promise.resolve();
   const busy = new Map<string, number>();
+  /** Exclusive jobs queued or running; file reads wait while there is one. */
+  let exclusives = 0;
   function enqueue<T>(paths: string[], job: () => Promise<T>): Promise<T> {
     for (const p of paths) busy.set(p, (busy.get(p) ?? 0) + 1);
     const result = tail.then(job);
@@ -189,9 +210,42 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
     return null;
   }
 
+  /** Re-hashes library files changed from outside the tree. Runs only inside the queue. */
+  async function rescanNow(paths: readonly string[]): Promise<number> {
+    const start = performance.now();
+    const wanted: string[] = [];
+    for (const p of [...new Set(paths)].sort()) {
+      try { wanted.push(checkPath(p)); } catch { log('warn', 'rescan.skip_bad_path', { path: p }); }
+    }
+    const present: string[] = [];
+    for (const p of wanted) {
+      if (await stat(onDisk(p)).then((s) => s.isFile(), () => false)) present.push(p);
+    }
+    const versions = new Map(present.map((p, i) => [p, i]));
+    const hashed = await git.hashPaths(present.map(onDisk));
+    let changed = 0;
+    // Vanished files first, as in reconcile, so a rename replays as delete then create.
+    for (const p of wanted) {
+      if (versions.has(p) || (index.get(p)?.version ?? null) === null) continue;
+      seq += 1; changed += 1;
+      setEntry(p, null, seq);
+      log('info', 'rescan.vanished', { path: p, seq });
+    }
+    for (const p of present) {
+      const version = hashed[versions.get(p)!];
+      if (index.get(p)?.version === version) continue;
+      seq += 1; changed += 1;
+      setEntry(p, version, seq);
+      log('info', 'rescan.changed', { path: p, version, seq });
+    }
+    if (changed > 0) await persist();
+    log('info', 'rescan.done', { paths: wanted.length, changed, seq, ms: Math.round(performance.now() - start) });
+    return changed;
+  }
+
   return {
     async state() {
-      return { epoch, seq, head: await git.head(), library: `${libraryName}/`, serverTime: new Date().toISOString() };
+      return { epoch, seq, head: await git.head(), library: `${libraryName}/`, serverTime: new Date().toISOString(), ...options.stateExtra?.() };
     },
 
     currentSeq: () => seq,
@@ -219,7 +273,7 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
       // Reads do not queue, so a write can land while the bytes are being read. The read
       // counts only if no write touched the path meanwhile; otherwise it starts again.
       for (let attempt = 0; attempt < 10; attempt += 1) {
-        while (busy.has(p)) await tail;
+        while (busy.has(p) || exclusives > 0) await tail;
         const entry = index.get(p);
         if (entry?.version == null) throw notFound(p);
         let bytes: Buffer | null = null;
@@ -228,7 +282,7 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
         } catch (e) {
           if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
         }
-        if (busy.has(p) || index.get(p)?.seq !== entry.seq) continue;
+        if (busy.has(p) || exclusives > 0 || index.get(p)?.seq !== entry.seq) continue;
         if (bytes === null) {
           log('warn', 'read.missing_on_disk', { path: p, version: entry.version });
           throw notFound(p);
@@ -238,7 +292,7 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
       throw new Error(`reading ${p} kept overlapping writes`);
     },
 
-    async put(p, bytes, { ifMatch, ifNoneMatch }) {
+    async put(p, bytes, { ifMatch, ifNoneMatch, device }) {
       checkPath(p);
       const version = await git.hashBytes(bytes);
       return enqueue([p], async () => {
@@ -262,11 +316,12 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
         setEntry(p, version, seq);
         await persist();
         log('info', 'put', { path: p, version, seqBefore: before, seqAfter: seq });
+        options.onChange?.(device);
         return { version, seq };
       });
     },
 
-    async remove(p, ifMatch) {
+    async remove(p, ifMatch, device) {
       checkPath(p);
       return enqueue([p], async () => {
         const entry = index.get(p);
@@ -289,11 +344,12 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
         setEntry(p, null, seq);
         await persist();
         log('info', 'remove', { path: p, version: entry.version, seqBefore: before, seqAfter: seq });
+        options.onChange?.(device);
         return { seq };
       });
     },
 
-    async move(from, to, ifMatch) {
+    async move(from, to, ifMatch, device) {
       checkPath(from);
       checkPath(to);
       if (from === to) throw new ApiError('bad_move', 400, 'from and to are the same path');
@@ -330,9 +386,26 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
         setEntry(to, version, seq);
         await persist();
         log('info', 'move', { from, to, version, seqBefore: before, seqAfter: seq });
+        options.onChange?.(device);
         return { version, seq };
       });
     },
+
+    exclusive(job) {
+      // Counted from the call, so reads arriving while the job still waits for earlier writes wait too.
+      exclusives += 1;
+      const start = performance.now();
+      return enqueue([], async () => {
+        try {
+          log('debug', 'exclusive.begin', { waitedMs: Math.round(performance.now() - start) });
+          return await job({ rescan: rescanNow });
+        } finally {
+          exclusives -= 1;
+        }
+      });
+    },
+
+    rescan: (paths) => enqueue([], () => rescanNow(paths)),
 
     async close() { await tail; },
   };
