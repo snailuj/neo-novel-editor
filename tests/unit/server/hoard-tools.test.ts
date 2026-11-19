@@ -268,3 +268,35 @@ test('a uv that never answers --version is unavailable after the probe timeout, 
   assert.deepEqual([r.status, r.json.code], [503, 'tool_unavailable']);
   assert.match(r.json.message, /did not answer/);
 });
+
+test('a timeout gets past a tool that ignores SIGTERM', async (t) => {
+  const fake = fakeUv(t);
+  fake.steer({ ignoreTerm: true });
+  const { client } = await startServer(t, tempHoard(t), { hoardTools: { uv: fake.uv, graceMs: 200, timeoutMs: 500 } });
+  fake.hold();
+  const id = (await post(client, 'lint')).json.id;
+  await fake.waitHeld(1);
+  const late = (await finished(client, id)).json;
+  assert.deepEqual([late.state, late.reason], ['failed', 'timeout']);
+});
+
+test('close gets past a tool that ignores SIGTERM', async (t) => {
+  const fake = fakeUv(t);
+  fake.steer({ ignoreTerm: true });
+  const { client, tools } = await startServer(t, tempHoard(t), { hoardTools: { uv: fake.uv, graceMs: 200 } });
+  fake.hold();
+  const ids = [(await post(client, 'lint')).json.id, (await post(client, 'verify')).json.id];
+  await fake.waitHeld(2);
+  await tools?.close();
+  for (const id of ids) assert.equal((await job(client, id)).json.state, 'failed');
+});
+
+test('a grandchild holding stdout does not keep a finished job running', async (t) => {
+  const fake = fakeUv(t);
+  fake.steer({ grandchildMs: 3000 });
+  const { client } = await startServer(t, tempHoard(t), { hoardTools: { uv: fake.uv, graceMs: 200 } });
+  const ended = (await finished(client, (await post(client, 'lint')).json.id)).json;
+  assert.deepEqual([ended.state, ended.exitCode], ['done', 0]);
+  assert.ok(ended.ms < 2000, `the job ended ${ended.ms} ms after it started, well before the grandchild exited`);
+  assert.match(ended.stdout, /"argv"/, 'what was read before the grace ran out is kept');
+});

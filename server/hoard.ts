@@ -25,6 +25,8 @@ export interface HoardToolsOptions {
   timeoutMs?: number;
   /** How long `uv --version` may take before uv counts as unavailable. */
   probeTimeoutMs?: number;
+  /** How long a killed or exited tool gets to let go before SIGKILL, or before its output pipes are abandoned. */
+  graceMs?: number;
 }
 
 export interface HoardReply { status: number; json?: unknown; bytes?: Buffer; headers?: Record<string, string> }
@@ -60,7 +62,7 @@ function projectName(encoded: string): string {
 }
 
 export async function openHoardTools(options: HoardToolsOptions): Promise<HoardTools> {
-  const { repo, state, log, outputLimit = 2 * 1024 * 1024, keepJobs = 20, timeoutMs = 10 * 60_000, probeTimeoutMs = 10_000 } = options;
+  const { repo, state, log, outputLimit = 2 * 1024 * 1024, keepJobs = 20, timeoutMs = 10 * 60_000, probeTimeoutMs = 10_000, graceMs = 2000 } = options;
   const uv = { command: options.uv?.command ?? 'uv', args: options.uv?.args ?? [] };
   const git = createRepoGit(repo);
   const projectsDir = path.join(repo, 'projects');
@@ -144,6 +146,14 @@ export async function openHoardTools(options: HoardToolsOptions): Promise<HoardT
   const running = new Map<Tool, Job>();
   const live = new Map<string, { child: ChildProcess; exited: Promise<void> }>();
 
+  /** SIGTERM now, SIGKILL after the grace period unless the process has gone by then. */
+  function terminate(child: ChildProcess): void {
+    child.kill();
+    const hard = setTimeout(() => child.kill('SIGKILL'), graceMs);
+    hard.unref();
+    child.once('exit', () => clearTimeout(hard));
+  }
+
   function evict(id: string): void {
     ended.push(id);
     for (const old of ended.splice(0, Math.max(0, ended.length - keepJobs))) jobs.delete(old);
@@ -202,14 +212,25 @@ export async function openHoardTools(options: HoardToolsOptions): Promise<HoardT
     child.stderr.on('data', keep(1));
     timer = setTimeout(() => {
       job.reason ??= 'timeout';
-      child.kill();
-      // A tool that ignores the polite kill must not hold the job open for ever.
-      setTimeout(() => child.kill('SIGKILL'), 2000).unref();
+      terminate(child);
     }, timeoutMs);
     child.on('error', (e) => { job.reason ??= `spawn failed (${e.message})`; end('failed', null, null); });
-    child.on('close', (code, signal) => {
+    const finish = (code: number | null, signal: NodeJS.Signals | null) => {
+      if (job.state !== 'running') return;
       if (job.reason === undefined && code === null) job.reason = `killed by ${signal}`;
       end(job.reason === undefined ? 'done' : 'failed', code, signal);
+    };
+    child.on('close', finish);
+    // 'close' waits for every holder of the output pipes. A grandchild that outlives the tool
+    // must not keep the job running, so after the exit the pipes get a grace period, then go.
+    child.on('exit', (code, signal) => {
+      const abandon = setTimeout(() => {
+        log('warn', 'hoard.job.pipes_abandoned', { id: job.id, tool });
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        finish(code, signal);
+      }, graceMs);
+      child.once('close', () => clearTimeout(abandon));
     });
     return job;
   }
@@ -242,7 +263,7 @@ export async function openHoardTools(options: HoardToolsOptions): Promise<HoardT
     },
     async close() {
       const pending = [...live.values()];
-      for (const { child } of pending) child.kill();
+      for (const { child } of pending) terminate(child);
       await Promise.all(pending.map((p) => p.exited));
     },
   };
