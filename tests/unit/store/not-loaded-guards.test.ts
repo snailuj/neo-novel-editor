@@ -50,7 +50,7 @@ function windowWith(code: string) {
 test('duplicating the open book while a chapter is not loaded is refused, before any save', async () => {
   const w = windowWith(slice(read('app/shelf.js'), 'async function duplicateBook(', '\n}\n') + '\n}');
   await w.run('duplicateBook(book)');
-  assert.deepEqual(w.calls, [], 'nothing was saved or copied');
+  assert.equal(w.calls.length, 0, 'nothing was saved or copied');
   assert.equal(w.toasts.filter((m) => m.includes('Chapter stuck') && m.includes('could not be read')).length, 1);
   w.run("unloadedChapters.delete('b/stuck')");
   await w.run('duplicateBook(book)').catch(() => {});
@@ -62,7 +62,7 @@ test('Shift-Tab on a section of a chapter not loaded is refused, and its section
   const before = JSON.stringify(w.run('book'));
   w.run("outlineSectionToChapter('stuck', 's1', null)");
   assert.equal(JSON.stringify(w.run('book')), before, 'nothing in the book changed');
-  assert.deepEqual(w.calls, [], 'no chapter was made');
+  assert.equal(w.calls.length, 0, 'no chapter was made');
   assert.equal(w.toasts.filter((m) => m.includes('could not be read')).length, 1);
   w.run("unloadedChapters.delete('b/stuck')");
   w.run("outlineSectionToChapter('stuck', 's2', null)");
