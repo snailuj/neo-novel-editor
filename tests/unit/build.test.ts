@@ -63,7 +63,7 @@ function repositoryOutputs(): string[] {
 
 test('start builds first', () => {
   assert.equal(pkg.scripts.start, 'node tools/build.mjs && electron .');
-  assert.equal(pkg.scripts['test:e2e'], 'npm run build && playwright test');
+  assert.equal(pkg.scripts['test:playwright'], 'npm run build && playwright test');
 });
 
 test('packaging builds first', () => {

@@ -49,7 +49,7 @@ export async function launchProfile(existingProfile, options = {}) {
       env,
     });
     const page = await app.firstWindow();
-    await page.waitForFunction(() => !!window.neo && typeof openBook === 'function');
+    await page.waitForFunction(() => !!window.neo && document.readyState === 'complete' && typeof openBook === 'function');
     console.log(JSON.stringify({ testProfile: profile, startupMs: performance.now() - startedAt }));
     return { app, page, profile, async close({ remove = true } = {}) {
       await app.close();

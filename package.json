@@ -1,7 +1,7 @@
 {
   "name": "neo",
   "productName": "NEO",
-  "version": "1.5.7",
+  "version": "2.0.0",
   "description": "A word processor for authors. Distraction-free by default.",
   "homepage": "https://github.com/hughhowey/neo",
   "main": "main.js",
@@ -22,9 +22,19 @@
     "test:caret": "electron scripts/caret.e2e.js",
     "test:plugins": "electron scripts/plugins.e2e.js",
     "test:plugin-edits": "electron scripts/plugin-edits.e2e.js",
+    "test:dropcap": "electron scripts/dropcap.e2e.js",
+    "test:twodevices": "electron scripts/twodevices.e2e.js",
+    "test:emphasis": "electron scripts/emphasis.e2e.js",
     "test:manuscript": "electron scripts/manuscript.e2e.js",
     "test:pages": "electron scripts/pages.e2e.js",
-    "test:simple": "electron scripts/simple.e2e.js",
+    "test:options": "electron scripts/options.e2e.js",
+    "test:find": "electron scripts/find.e2e.js",
+    "test:script-keys": "electron scripts/script-keys.e2e.js",
+    "test:new-script": "electron scripts/new-script.e2e.js",
+    "test:danish": "electron scripts/danish.e2e.js",
+    "test:litrpg": "electron scripts/litrpg.e2e.js",
+    "test:pocket": "electron scripts/pocket.e2e.js",
+    "test:e2e": "node scripts/e2e-all.js",
     "test": "node --test \"scripts/*.test.js\"",
     "test:unit": "node --test \"tests/unit/**/*.test.ts\"",
     "librarian": "node src/librarian/cli.ts",
@@ -32,7 +42,7 @@
     "ripple:shortlist": "node src/hoard/ripple/shortlist-cli.ts",
     "ripple:embed": "node src/hoard/ripple/embed-cli.ts",
     "blocks": "node src/librarian/blocks/cli.ts",
-    "test:e2e": "npm run build && playwright test",
+    "test:playwright": "npm run build && playwright test",
     "check": "npm run gen && npm run typecheck && npm run lint:fork && npm test && npm run test:unit",
     "test:coverage": "node --test --experimental-test-coverage \"scripts/*.test.js\"",
     "lint": "oxlint",
@@ -130,7 +140,9 @@
       "node_modules/dictionary-ro/**",
       "node_modules/dictionary-pt/**",
       "node_modules/dictionary-hu/**",
-      "node_modules/dictionary-sv/**"
+      "node_modules/dictionary-da/**",
+      "node_modules/dictionary-sv/**",
+      "node_modules/dictionary-uk/**"
     ],
     "extraResources": [
       {
@@ -198,6 +210,7 @@
   },
   "dependencies": {
     "@farscrl/hunspell-wasm": "1.0.1",
+    "dictionary-da": "file:dictionaries/da",
     "dictionary-de": "^3.0.0",
     "dictionary-el": "^4.0.0",
     "dictionary-en-au": "^3.0.0",
@@ -213,6 +226,7 @@
     "dictionary-ro": "3.0.0",
     "dictionary-ru": "^3.0.0",
     "dictionary-sv": "4.0.0",
+    "dictionary-uk": "file:dictionaries/uk",
     "electron-updater": "^6.3.9",
     "jszip": "^3.10.1",
     "koffi": "2.16.3"

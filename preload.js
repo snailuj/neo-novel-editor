@@ -12,7 +12,7 @@ contextBridge.exposeInMainWorld('neo', {
   duplicateBook: (bookId, title) => ipcRenderer.invoke('book:duplicate', bookId, title),
   listBooks: () => ipcRenderer.invoke('library:listBooks'),
   readBookMeta: (bookId) => ipcRenderer.invoke('book:readMeta', bookId),
-  writeBookMeta: (bookId, meta) => ipcRenderer.invoke('book:writeMeta', bookId, meta),
+  writeBookMeta: (bookId, meta, known) => ipcRenderer.invoke('book:writeMeta', bookId, meta, known),
   deleteBook: (bookId, title) => ipcRenderer.invoke('book:delete', bookId, title),
 
   readChapter: (bookId, chId) => ipcRenderer.invoke('chapter:read', bookId, chId),
@@ -21,7 +21,7 @@ contextBridge.exposeInMainWorld('neo', {
   deleteChapter: (bookId, chId) => ipcRenderer.invoke('chapter:delete', bookId, chId),
 
   readAux: (bookId, name) => ipcRenderer.invoke('aux:read', bookId, name),
-  writeAux: (bookId, name, html) => ipcRenderer.invoke('aux:write', bookId, name, html),
+  writeAux: (bookId, name, html, expected) => ipcRenderer.invoke('aux:write', bookId, name, html, expected),
   snapshotList: (bookId) => ipcRenderer.invoke('snapshot:list', bookId),
   snapshotRead: (bookId, name, file) => ipcRenderer.invoke('snapshot:read', bookId, name, file),
   snapshotWrite: (bookId, name, file, text) => ipcRenderer.invoke('snapshot:write', bookId, name, file, text),
@@ -47,12 +47,15 @@ contextBridge.exposeInMainWorld('neo', {
   fullscreenEscape: () => ipcRenderer.invoke('fullscreen:escape'),
   fullscreenToggle: () => ipcRenderer.invoke('fullscreen:toggle'),
   checkForUpdate: () => ipcRenderer.invoke('update:check'),
+  pocketLibrary: () => ipcRenderer.invoke('library:pocket'),
+  usePocketLibrary: () => ipcRenderer.invoke('library:usePocket'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
   spellCheckWords: (words) => ipcRenderer.invoke('spell:check', words),
   spellSuggest: (word) => ipcRenderer.invoke('spell:suggest', word),
   spellLearn: (word) => ipcRenderer.invoke('spell:learn', word),
   setSpellLanguage: (code) => ipcRenderer.invoke('spell:setLanguage', code),
   appVersion: () => ipcRenderer.invoke('app:version'),
+  isPackaged: () => ipcRenderer.sendSync('app:packaged'),
   openRelease: () => ipcRenderer.invoke('update:openRelease'),
 
   poetryState: (on) => ipcRenderer.send('poetry:state', on),
@@ -67,6 +70,7 @@ contextBridge.exposeInMainWorld('neo', {
   nbspMarksState: (on) => ipcRenderer.send('nbspmarks:state', on),
   pagesState: (st) => ipcRenderer.send('pages:state', st),
   pageWidthState: (v) => ipcRenderer.send('pagewidth:state', v),
+  pressHold: () => ipcRenderer.sendSync('pressHold:get'),
   vimState: (on) => ipcRenderer.send('vim:state', on),
   uiZoomState: (z) => ipcRenderer.send('uizoom:state', z),
   // interface language, fetched once before the page's scripts run
@@ -85,7 +89,10 @@ contextBridge.exposeInMainWorld('neo', {
   reloadForLanguage: () => ipcRenderer.invoke('i18n:reload'),
 
   writingStyleState: (st) => ipcRenderer.send('style:state', st),
-  moreState: (on) => ipcRenderer.send('more:state', on),
+  featuresState: (on) => ipcRenderer.send('features:state', on),
+  uiLanguages: () => ipcRenderer.invoke('i18n:languages'),
+  setUiLanguage: (code) => ipcRenderer.send('i18n:set', code),
+  setPressHold: (on) => ipcRenderer.send('pressHold:set', on),
   viewState: (st) => ipcRenderer.send('view:state', st),
   onMenu: (cb) => ipcRenderer.on('menu', (_e, msg) => cb(msg))
 });

@@ -1237,7 +1237,7 @@ describe('the window half', () => {
     .map(() => `app.js:${i + 1}: ${line.trim()}`));
 
   test('hooks are guarded: every NeoPlugins call in app.js sits behind window.NeoPlugins', () => {
-    const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
+    const app = require('./app-files.js').appSource();
     assert.ok((app.match(/\bNeoPlugins\./g) || []).length >= 7, 'app.js calls the plugin host from its hooks');
     assert.deepEqual(unguarded(app), []);
   });
@@ -1466,7 +1466,7 @@ describe('the window half', () => {
   });
 
   test('the attach hook hands over app.js\'s own book, and its comment points to the rule in plugins.js', () => {
-    const lines = fs.readFileSync(path.join(root, 'app.js'), 'utf8').split(/\r?\n/);
+    const lines = require('./app-files.js').appSource().split(/\r?\n/);
     const at = lines.findIndex((line) => /\bNeoPlugins\.attach\(/.test(line));
     assert.match(lines[at], /\bbook: \(\) => book\b/);
     const comment = [];
