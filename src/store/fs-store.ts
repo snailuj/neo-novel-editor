@@ -632,6 +632,28 @@ export function createFsStore(options: FsStoreOptions): FsStore {
       return file;
     },
 
+    async fetchFromICloud() {
+      if (platform !== 'darwin') return 0;
+      const fsp = fs.promises;
+      const found: string[] = [];
+      const walk = async (dir: string): Promise<void> => {
+        let ents: fs.Dirent[] = [];
+        try { ents = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+        for (const e of ents) {
+          const full = path.join(dir, e.name);
+          if (e.isDirectory()) { if (e.name !== 'Backups' && e.name !== 'Exports') await walk(full); continue; }
+          try { const st = await fsp.stat(full); if (st.size > 0 && st.blocks === 0) found.push(full); } catch { /* gone */ }
+        }
+      };
+      await walk(root);
+      if (!found.length) return 0;
+      const away = icloud.cloudOnlyAmong(found);
+      if (!away.size) return 0;
+      log('icloud', new Error(`${away.size} library files were in iCloud only; asked iCloud to bring them back to this Mac`));
+      icloud.requestDownload(away);
+      return away.size;
+    },
+
     async hasBook(bookId) {
       return fs.existsSync(bookDir(bookId));
     },

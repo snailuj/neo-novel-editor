@@ -131,6 +131,12 @@ export interface LibraryStore {
   /** A cover or painting by name; null when it is not there, not an image name, or still in iCloud. */
   readCover(bookId: string, name: string): Promise<CoverImage | null>;
   hasBook(bookId: string): Promise<boolean>;
+  /**
+   * A look over the whole library, without reading a word, for files iCloud has taken off this
+   * Mac, which it is then asked to bring back so the books are here before they are opened. How
+   * many it asked for; 0 off a Mac.
+   */
+  fetchFromICloud(): Promise<number>;
   /** A PDF into the library's Exports/ folder as `<name>-<time>.pdf`; the file it made. Throws bad_name for a name that is a path. */
   writeExport(name: string, data: Uint8Array): Promise<string>;
   /**
