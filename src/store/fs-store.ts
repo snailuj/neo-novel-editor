@@ -681,10 +681,11 @@ export function createFsStore(options: FsStoreOptions): FsStore {
         if (!COVER_NAME.test(name)) return null;
         file = path.join(bookDir(bookId), name);
       } catch { return null; }
-      const read = (): CoverImage | null => {
+      // read without blocking: the shelf asks for one cover per tile
+      const read = async (): Promise<CoverImage | null> => {
         try {
           const ext = path.extname(name).slice(1);
-          return { base64: fs.readFileSync(file).toString('base64'), mime: MIME[ext] ?? MIME.jpg, ext };
+          return { base64: (await fs.promises.readFile(file)).toString('base64'), mime: MIME[ext] ?? MIME.jpg, ext };
         } catch { return null; }
       };
       return icloud.afterLocal([file], read, () => null);

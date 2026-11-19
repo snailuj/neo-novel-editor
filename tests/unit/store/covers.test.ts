@@ -89,3 +89,23 @@ test('a cover still in iCloud is asked for and reads as no cover until it is her
   assert.equal(await h.store.readCover(book.id, name), null);
   assert.ok(h.asked.includes(h.at(book.id, name)));
 });
+
+// Rule: reading a cover never blocks the main process -- the shelf asks for one per tile, so
+// a whole shelf of covers read synchronously stalls every window until the last is read.
+test('a cover is read without a synchronous read of its file', async () => {
+  const h = harness();
+  const book = await h.withBook();
+  const name = (await h.store.setCover(book.id, picked('a.png'))) as string;
+  const file = h.at(book.id, name);
+  const sync = fs.readFileSync;
+  const blocked: string[] = [];
+  fs.readFileSync = ((p: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+    if (path.resolve(String(p)) === file) blocked.push(String(p));
+    return (sync as (...a: unknown[]) => unknown)(p, ...rest);
+  }) as typeof fs.readFileSync;
+  try {
+    assert.deepEqual(await h.store.readCover(book.id, name), { base64: PNG.toString('base64'), mime: 'image/png', ext: 'png' });
+    assert.equal(await h.store.readCover(book.id, 'cover-99.png'), null, 'one not there is still null');
+  } finally { fs.readFileSync = sync; }
+  assert.deepEqual(blocked, [], 'the cover was read synchronously');
+});
