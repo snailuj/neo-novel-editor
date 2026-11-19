@@ -22,6 +22,7 @@ const core = read('app/core.js');
 const saving = read('app/saving.js');
 const editor = read('app/editor.js');
 const cards = read('app/cards.js');
+const vim = read('app/vim.js');
 
 const slice = (source: string, from: string, to: string) => {
   const a = source.indexOf(from);
@@ -50,6 +51,7 @@ function bridge(store: FsStore, logged: string[]) {
   const neo: Record<string, (...args: Anything[]) => Anything> = {
     readChapter: (b, c) => store.readChapter(b, c).catch(overIpc('chapter:read')),
     writeChapter: (b, c, html, expected) => { writes.push({ chId: c, html, expected }); return store.writeChapter(b, c, html, expected); },
+    deleteChapter: (b, c) => { writes.push({ chId: c, html: '(deleted)' }); return store.deleteChapter(b, c); },
     chapterStamps: (b) => store.chapterStamps(b),
     readBookMeta: (b) => store.readBookMeta(b),
     writeBookMeta: (b, meta, known) => store.writeBookMeta(b, meta, known),
@@ -346,6 +348,44 @@ test('a chapter another device added while this one restructured too, that canno
   await w.run('refreshFromDisk()');
   assert.deepEqual(w.plain('[...book.chapterOrder]').sort(), ['a', 'b', 'stuck'], 'their chapter stays in the book');
   assert.equal(w.run(`chapterUnloaded(${JSON.stringify(book.id)}, 'stuck')`), true);
+});
+
+// Rule: a not-loaded chapter's file is never deleted: its words are on disk and nowhere else.
+test('deleting a chapter that is not loaded is refused: it stays in the book and on disk, the refusal is logged and the writer told', async () => {
+  const h = library();
+  const book = await bookWith(h, { a: '<p>one</p>', odd: '<p>words only the disk holds</p>' }, ['a', 'odd']);
+  const w = windowFor(h.store, book.id);
+  w.run(slice(vim, 'async function deleteChapterQuiet(', 'function focusChapter('));
+  const heal = failRead(w, h, 'odd', stuckCodes.cloud_only);
+  await w.run(`openBook(${JSON.stringify(book.id)})`);
+  w.toasts.length = 0;
+  const before = w.logged.length;
+  await w.run('deleteChapterQuiet("odd")');
+  assert.deepEqual(w.plain('[...book.chapterOrder]'), ['a', 'odd'], 'it stays in the book');
+  assert.equal(writesOf(w, 'odd').length, 0, 'its file is not deleted');
+  assert.equal(fs.readFileSync(path.join(h.dir, book.id, 'chapters', 'odd.html'), 'utf8'), '<p>words only the disk holds</p>');
+  assert.equal(w.logged.length, before + 1, 'the refusal is logged');
+  assert.match(w.logged.at(-1)!, /odd/);
+  assert.equal(w.toasts.filter((m) => m.includes('Chapter odd') && m.includes('could not be read')).length, 1, 'and the writer is told');
+  // the delete that keeps a chapter's words in Darlings refuses it the same way, before
+  // anything moves to Darlings or says the chapter was removed
+  Object.assign(w.context, {
+    snapshotStructure: () => {}, chapterText: () => '', isStory: () => true, chapterNumber: () => 2, KZ: 'Ctrl+Z',
+    // the chapter's notes page has words: without the refusal they would go to Darlings
+    notesPageToDarlings: async () => { w.run('darlings.push({ text: "a note" })'); return true; },
+  });
+  w.run(slice(editor, 'async function deleteChapterToDarlings(', '// Right-click a chapter'));
+  w.toasts.length = 0;
+  await w.run('deleteChapterToDarlings("odd")');
+  assert.deepEqual(w.plain('[...book.chapterOrder]'), ['a', 'odd']);
+  assert.deepEqual(w.plain('darlings'), [], 'nothing went to Darlings');
+  assert.deepEqual(w.toasts.filter((m) => /removed/.test(m)), [], 'and nothing says it was removed');
+  assert.equal(w.toasts.filter((m) => m.includes('could not be read')).length, 1);
+  // a loaded chapter still deletes
+  heal();
+  await w.run('deleteChapterQuiet("a")');
+  assert.deepEqual(w.plain('[...book.chapterOrder]'), ['odd']);
+  assert.equal(fs.existsSync(path.join(h.dir, book.id, 'chapters', 'a.html')), false, 'a loaded chapter is deleted as before');
 });
 
 test('a notes page the book has never had reads as no text, and is saved against \'\', so a page made on the other device meanwhile is kept', async () => {

@@ -394,6 +394,14 @@ function newChapter() {
 }
 
 async function deleteChapterQuiet(chId) {
+  // a chapter not loaded here (see loadChapter) has its words only on disk:
+  // its file is never deleted, so it stays in the book
+  if (book && chapterUnloaded(book.id, chId)) {
+    console.error('delete refused: chapter not loaded', book.id + '/' + chId);
+    try { window.neo.logError('delete refused: chapter not loaded ' + book.id + '/' + chId); } catch { /* the log is a courtesy */ }
+    toastChaptersNotRead([chId]);
+    return false;
+  }
   // a save still queued for this chapter must not resurrect it (nejcc, #70)
   clearTimeout(saveTimers[chId]);
   delete saveTimers[chId];

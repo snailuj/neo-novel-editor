@@ -43,6 +43,10 @@ function logChapterNotRead(where, bookId, chId, err) {
   console.error(where + ': chapter not read', tag, err);
   try { window.neo.logError(where + ': chapter not read ' + tag + ' ' + (err && err.message || err)); } catch { /* the log is a courtesy */ }
 }
+// Tells the writer which chapters could not be read here
+function toastChaptersNotRead(chIds) {
+  toast(t('“{name}” could not be read on this device yet. It is left as it is on disk, and opens for writing once it can be read.', { name: chIds.map((c) => chapterName(c)).join('”, “') }), 10000);
+}
 // A chapter for the open book: its HTML, '' when it has no file yet, or null
 // when it could not be read (it is then not loaded, as above)
 async function loadChapter(where, bookId, chId) {

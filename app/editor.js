@@ -72,9 +72,7 @@ async function openBook(bookId) {
   migrateDarlingAnchors(); // sweep legacy invisible markers out of the prose
   reconcileMarks();        // re-adopt any note marks orphaned by cut/paste
   updateCounters();
-  if (unread.length) {
-    toast(t('“{name}” could not be read on this device yet. It is left as it is on disk, and opens for writing once it can be read.', { name: unread.map((c) => chapterName(c)).join('”, “') }), 10000);
-  }
+  if (unread.length) toastChaptersNotRead(unread);
 
   // Plotters land in the outline for a brand-new book
   const isNew = book.chapterOrder.length === 0;
@@ -270,6 +268,8 @@ function renderChapters() {
 }
 
 async function deleteChapterToDarlings(chId, quiet = false) {
+  // one not loaded here is refused before anything goes to Darlings (deleteChapterQuiet says so)
+  if (chapterUnloaded(book.id, chId)) return deleteChapterQuiet(chId);
   if (!quiet) snapshotStructure('chapter delete');
   const kind = chapterKind(chId);
   const name = chapterName(chId);
