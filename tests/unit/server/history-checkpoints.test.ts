@@ -153,7 +153,8 @@ test('findings of the gate are logged and the writer\'s commit goes ahead', asyn
   await lib.time.advance(60_000);
   await lib.history.drained();
   assert.equal(commits(h.repo).length, 1);
-  assert.ok(lib.lines.some((l) => l.msg === 'git.gate' && Number(l.files) >= 1), 'the gate ran on the staged files and logged');
+  const warned = lib.lines.filter((l) => l.level === 'warn' && l.msg.startsWith('git.gate:'));
+  assert.ok(warned.some((l) => l.msg.includes('.neo/scheme.json')), `a warning names the file with the finding: ${JSON.stringify(warned)}`);
 });
 
 test('the X-Neo-Device header of a request is the device its commit names, and GET /v1/state reports the last commit', async (t) => {
