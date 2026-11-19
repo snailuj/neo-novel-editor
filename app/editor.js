@@ -16,13 +16,16 @@ async function openBook(bookId) {
   const meta = await window.neo.readBookMeta(bookId);
   if (!meta || gen !== openGeneration) return;
   const html = {};
+  const unread = [];
   for (const chId of meta.chapterOrder) {
     // a chapter whose file has not synced here yet opens empty, with a base of
-    // '' (so a file that arrives later is kept, not replaced); a read that
-    // failed any other way stops the open, so no chapter is taken as empty and
-    // saved over
-    html[chId] = await readNewChapter(bookId, chId);
+    // '' (so a file that arrives later is kept, not replaced); one whose read
+    // failed any other way opens not loaded (see loadChapter), so the rest of
+    // the book opens and that chapter is never taken as empty and saved over
+    const got = await loadChapter('open', bookId, chId);
     if (gen !== openGeneration) return;
+    html[chId] = got === null ? '' : got;
+    if (got === null) unread.push(chId);
   }
   const sideStickies = await window.neo.readJSON(bookId, 'stickies', []);
   const sideDarlings = await window.neo.readJSON(bookId, 'darlings', []);
@@ -39,7 +42,7 @@ async function openBook(bookId) {
   undoStack = []; redoStack = [];
   chapterHTML = html;
   savedHTML = { ...html };
-  for (const chId of Object.keys(html)) knowDisk(bookId, chId, html[chId]);
+  for (const chId of Object.keys(html)) if (!unread.includes(chId)) knowDisk(bookId, chId, html[chId]);
   diskStamps = {};
   savedMetaSig = metaSig(book); // what disk holds; NEO's own defaults don't count as edits
   knownChapters = new Set(book.chapterOrder);
@@ -69,6 +72,9 @@ async function openBook(bookId) {
   migrateDarlingAnchors(); // sweep legacy invisible markers out of the prose
   reconcileMarks();        // re-adopt any note marks orphaned by cut/paste
   updateCounters();
+  if (unread.length) {
+    toast(t('“{name}” could not be read on this device yet. It is left as it is on disk, and opens for writing once it can be read.', { name: unread.map((c) => chapterName(c)).join('”, “') }), 10000);
+  }
 
   // Plotters land in the outline for a brand-new book
   const isNew = book.chapterOrder.length === 0;
@@ -181,6 +187,14 @@ function renderChapters() {
       const list = document.createElement('ol');
       list.className = 'toc-list';
       sec.appendChild(list);
+      return;
+    }
+    if (chapterUnloaded(book.id, chId)) {
+      // its file could not be read here (see loadChapter): nothing to type
+      // into, so nothing is saved over it, until a look at the disk loads it
+      sec.classList.add('unloaded');
+      body.contentEditable = 'false';
+      body.dataset.ph = t('Not read on this device yet');
       return;
     }
     body.contentEditable = 'true';

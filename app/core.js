@@ -27,6 +27,35 @@ async function readNewChapter(bookId, chId) {
     throw err;
   }
 }
+// A chapter of the open book whose file is there but could not be read here
+// (iCloud has not downloaded it, an antivirus holds it) stays in the book,
+// listed and known, with no body loaded: it is not open for writing and no
+// save sends its body, so nothing goes over the file. The next read that
+// works loads it (refreshFromDisk). Keyed bookId/chId.
+const unloadedChapters = new Set();
+const chapterUnloaded = (bookId, chId) => unloadedChapters.has(bookId + '/' + chId);
+// A failed read is logged once for each chapter and reason, not at every look
+const chapterReadLogged = new Set();
+function logChapterNotRead(where, bookId, chId, err) {
+  const tag = bookId + '/' + chId + ':' + storeErrorCode(err);
+  if (chapterReadLogged.has(tag)) return;
+  chapterReadLogged.add(tag);
+  console.error(where + ': chapter not read', tag, err);
+  try { window.neo.logError(where + ': chapter not read ' + tag + ' ' + (err && err.message || err)); } catch { /* the log is a courtesy */ }
+}
+// A chapter for the open book: its HTML, '' when it has no file yet, or null
+// when it could not be read (it is then not loaded, as above)
+async function loadChapter(where, bookId, chId) {
+  try {
+    const html = await readNewChapter(bookId, chId);
+    unloadedChapters.delete(bookId + '/' + chId);
+    return html;
+  } catch (err) {
+    unloadedChapters.add(bookId + '/' + chId);
+    logChapterNotRead(where, bookId, chId, err);
+    return null;
+  }
+}
 
 // index.html marks its words with data-i18n (text), data-i18n-title,
 // data-i18n-placeholder and data-i18n-ph (the empty-field hints)

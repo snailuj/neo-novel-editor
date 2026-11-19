@@ -58,6 +58,7 @@ function bookInMemory(chapters) {
     twinChapterTitle: (title) => (title || '') + ' from other device',
     captureCaret: () => null,
     saveMeta: async () => {},
+    chapterUnloaded: () => false, // core.js: every chapter here was read
     writeSidecar: async () => {},
     maybeDailySnapshot: none, // snapshotStructure's day snapshot (SNAPSHOTS) is not saving's
     restoreCaret: none, renderChapters: none, renderStickies: none, updateCounters: none, rejoinAtCaret: none, resetNativeUndo: none,

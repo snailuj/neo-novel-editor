@@ -97,7 +97,8 @@ function windowFor(store: FsStore, bookId: string) {
     renderChapters: none, renderStickies: none, renderDarlings: none, renderNav: none, updateCounters: none, scheduleNavRefresh: none,
     scheduleMetaSave: none, captureCaret: () => null, restoreCaret: none, showTitleStyle: none, isUntitled: () => false, tabName: () => '',
     resumePosition: () => false, applyDeviceLook: (l: unknown) => l, renderShelves: none, writeSidecar: async () => {}, saveMeta: async () => {},
-    writeBookMeta: async (id: string, meta: unknown) => store.writeBookMeta(id, meta as Anything),
+    writeBookMeta: async (id: string, meta: unknown, known?: string[]) => store.writeBookMeta(id, meta as Anything, known),
+    chapterName: (id: string) => `Chapter ${id}`,
     bookWordCount: () => 0, sprint: null, wordMode: 'book', refreshOpenAux: async () => {}, flushAux: none, flushStickiesSave: none, flushSidecars: none,
     bookMetaCache: { clear: none, set: none }, shelfExport: false, library: { shelves: [], hintShown: true }, libraryGeneration: 0, libraryWritesPending: 0, lastHereActivity: 0,
     onlyDrops: () => false, wordsBeyond: (a: string, b: string) => a !== b, mergeSidecar: (_b: unknown, _l: unknown, r: unknown) => r,
@@ -113,7 +114,7 @@ function windowFor(store: FsStore, bookId: string) {
     const metaSig = (b) => JSON.stringify(b.chapterOrder);
     const todayStr = () => '2026-11-19';
   `, context);
-  vm.runInContext(slice(core, 'function storeErrorCode(', '\n}\n') + '\n}\n' + slice(core, 'async function readNewChapter(', '\n}\n') + '\n}\n', context);
+  vm.runInContext(slice(core, 'function storeErrorCode(', '// index.html marks its words'), context);
   vm.runInContext(slice(saving, 'const diskKnown = {};', '// Another device\'s version of a chapter'), context);
   vm.runInContext(slice(saving, 'function worthKeeping(', 'async function keepOtherDeviceVersion('), context);
   vm.runInContext(slice(saving, 'async function keepOtherDeviceVersion(', '// book.json minus the parts'), context);
@@ -236,22 +237,115 @@ test('readNewChapter: a chapter with no file reads as empty; any other failure i
   await assert.rejects(w.run(`readNewChapter(${JSON.stringify(book.id)}, '../x')`), /\[store:bad_name\]/);
 });
 
-test('opening a book whose chapter has not synced opens it empty against a base of \'\'; one that cannot be read does not open it', async () => {
+test('opening a book whose chapter has not synced opens it empty against a base of \'\'', async () => {
   const h = library();
   const book = await bookWith(h, { a: '<p>one</p>' }, ['a', 'gone']);
   const w = windowFor(h.store, book.id);
   await w.run(`openBook(${JSON.stringify(book.id)})`);
   assert.equal(w.run('chapterHTML["gone"]'), '', 'the missing file is an empty chapter');
   assert.equal(w.run(`diskKnown[${JSON.stringify(book.id + '/gone')}]`), '', 'whose base is \'\'');
+  assert.equal(w.run(`chapterUnloaded(${JSON.stringify(book.id)}, 'gone')`), false, 'and it is open for writing');
   assert.equal(w.writes.length, 0);
-  fs.mkdirSync(path.join(h.dir, book.id, 'chapters', 'odd.html'));
-  const meta = (await h.store.readBookMeta(book.id))!;
-  meta.chapterOrder = ['a', 'odd'];
-  await h.store.writeBookMeta(book.id, meta);
-  const w2 = windowFor(h.store, book.id);
-  await assert.rejects(w2.run(`openBook(${JSON.stringify(book.id)})`), /\[store:unreadable\]/);
-  assert.equal(w2.run('book'), null, 'nothing was opened');
-  assert.equal(w2.writes.length, 0);
+});
+
+// Rule: a chapter whose file is there but cannot be read here stays in the book, listed and
+// known, with no body loaded and nothing ever saved over its file, until a read of it works;
+// the rest of the book carries on as if nothing were wrong. Every way in (opening the book,
+// another device's book.json naming it) and every way it fails is held to that.
+const stuckCodes = {
+  cloud_only: "Error invoking remote method 'chapter:read': StoreError: [store:cloud_only] still in iCloud",
+  unreadable: "Error invoking remote method 'chapter:read': StoreError: [store:unreadable] locked by another program",
+};
+function failRead(w: ReturnType<typeof windowFor>, h: ReturnType<typeof library>, stuck: string, message: string) {
+  w.neo.readChapter = async (b: string, c: string) => {
+    if (c === stuck) throw new Error(message);
+    return h.store.readChapter(b, c);
+  };
+  return () => { w.neo.readChapter = (b: string, c: string) => h.store.readChapter(b, c).catch(overIpc('chapter:read')); };
+}
+const writesOf = (w: ReturnType<typeof windowFor>, chId: string) => w.writes.filter((x) => x.chId === chId);
+
+for (const [code, message] of Object.entries(stuckCodes)) {
+  test(`opening a book with a chapter that cannot be read (${code}) opens the book, the chapter not loaded, never saved, named in a toast, and loaded on a later look`, async () => {
+    const h = library();
+    const book = await bookWith(h, { a: '<p>one</p>', odd: '<p>words only the disk holds</p>' }, ['a', 'odd']);
+    const w = windowFor(h.store, book.id);
+    const heal = failRead(w, h, 'odd', message);
+    await w.run(`openBook(${JSON.stringify(book.id)})`);
+    assert.equal(w.run('book && book.id'), book.id, 'the book opened');
+    assert.equal(w.run('chapterHTML.a'), '<p>one</p>', 'the chapter that read is loaded');
+    assert.deepEqual(w.plain('[...book.chapterOrder]'), ['a', 'odd'], 'the stuck chapter is still listed');
+    assert.equal(w.run(`chapterUnloaded(${JSON.stringify(book.id)}, 'odd')`), true, 'and marked not loaded');
+    assert.equal(w.run(`chapterUnloaded(${JSON.stringify(book.id)}, 'a')`), false);
+    assert.equal(w.run(`diskKnown[${JSON.stringify(book.id + '/odd')}]`), undefined, 'nothing is assumed about its file');
+    assert.equal(w.toasts.filter((m) => m.includes('Chapter odd')).length, 1, 'the writer is told which chapter could not be read');
+    assert.equal(w.logged.filter((m) => m.includes(code)).length, 1, 'and it is logged');
+    w.run('chapterHTML.odd = "<p>typed somehow</p>"');
+    assert.equal(await w.run('persistChapter("odd")'), false, 'a save of it is refused');
+    assert.equal(writesOf(w, 'odd').length, 0, 'and nothing is written over its file');
+    await w.run('refreshFromDisk()');
+    assert.equal(w.logged.filter((m) => m.includes(code)).length, 1, 'a look that fails again is not logged again');
+    assert.equal(w.run(`chapterUnloaded(${JSON.stringify(book.id)}, 'odd')`), true);
+    heal();
+    await w.run('refreshFromDisk()');
+    assert.equal(w.run(`chapterUnloaded(${JSON.stringify(book.id)}, 'odd')`), false, 'a read that works loads it');
+    assert.equal(w.run('chapterHTML.odd'), '<p>words only the disk holds</p>', 'with what the disk holds');
+    assert.equal(writesOf(w, 'odd').length, 0);
+    w.run('chapterHTML.odd = "<p>now typed here</p>"');
+    await w.run('persistChapter("odd")');
+    assert.equal(writesOf(w, 'odd').length, 1, 'and from then on it saves');
+    assert.equal(writesOf(w, 'odd')[0].expected, '<p>words only the disk holds</p>', 'against what was read');
+  });
+
+  test(`a chapter another device's book.json lists that cannot be read (${code}) stays listed and known, so book.json still saves, and loads on a later look`, async () => {
+    const h = library();
+    const book = await bookWith(h, { a: '<p>one</p>' });
+    const w = windowFor(h.store, book.id);
+    w.run(slice(saving, 'function noteRemovedChapters(', 'function flushAllSaves('));
+    await w.open({ a: '<p>one</p>' });
+    const theirs = (await h.store.readBookMeta(book.id))!;
+    theirs.chapterOrder = ['a', 'stuck'];
+    await h.store.writeBookMeta(book.id, theirs);
+    fs.writeFileSync(path.join(h.dir, book.id, 'chapters', 'stuck.html'), '<p>written over there</p>');
+    const heal = failRead(w, h, 'stuck', message);
+    await w.run('refreshFromDisk()');
+    assert.deepEqual(w.plain('[...book.chapterOrder]'), ['a', 'stuck'], 'the chapter is in the book');
+    assert.equal(w.run('knownChapters.has("stuck")'), true, 'and known');
+    assert.equal(w.run(`chapterUnloaded(${JSON.stringify(book.id)}, 'stuck')`), true, 'but not loaded');
+    assert.equal(w.logged.filter((m) => m.includes(code)).length, 1, 'logged');
+    // a change here to book.json is saved, and keeps their chapter in the order
+    w.run('book.title = "Salt Roads, retitled"');
+    await w.run('saveMeta()');
+    const saved = (await h.store.readBookMeta(book.id))!;
+    assert.equal(saved.title, 'Salt Roads, retitled', 'book.json was saved');
+    assert.deepEqual(saved.chapterOrder, ['a', 'stuck'], 'with the other device\'s chapter still in the order');
+    w.run('chapterHTML.stuck = "<p>typed somehow</p>"');
+    await w.run('persistChapter("stuck")');
+    assert.equal(writesOf(w, 'stuck').length, 0, 'its body is never written');
+    await w.run('refreshFromDisk()');
+    assert.equal(w.logged.filter((m) => m.includes(code)).length, 1, 'once, not at every look');
+    heal();
+    await w.run('refreshFromDisk()');
+    assert.equal(w.run('chapterHTML.stuck'), '<p>written over there</p>', 'a later look loads it');
+    assert.equal(w.run(`chapterUnloaded(${JSON.stringify(book.id)}, 'stuck')`), false);
+    assert.equal(writesOf(w, 'stuck').length, 0);
+    assert.equal(fs.readFileSync(path.join(h.dir, book.id, 'chapters', 'stuck.html'), 'utf8'), '<p>written over there</p>', 'its file is as the other device wrote it');
+  });
+}
+
+test('a chapter another device added while this one restructured too, that cannot be read, is not dropped from the order', async () => {
+  const h = library();
+  const book = await bookWith(h, { a: '<p>one</p>', b: '<p>two</p>' });
+  const w = windowFor(h.store, book.id);
+  await w.open({ a: '<p>one</p>', b: '<p>two</p>' });
+  const theirs = (await h.store.readBookMeta(book.id))!;
+  theirs.chapterOrder = ['a', 'b', 'stuck'];
+  await h.store.writeBookMeta(book.id, theirs);
+  failRead(w, h, 'stuck', stuckCodes.cloud_only);
+  w.run('book.chapterOrder = ["b", "a"]'); // moved here, not saved yet
+  await w.run('refreshFromDisk()');
+  assert.deepEqual(w.plain('[...book.chapterOrder]').sort(), ['a', 'b', 'stuck'], 'their chapter stays in the book');
+  assert.equal(w.run(`chapterUnloaded(${JSON.stringify(book.id)}, 'stuck')`), true);
 });
 
 test('a notes page the book has never had reads as no text, and is saved against \'\', so a page made on the other device meanwhile is kept', async () => {

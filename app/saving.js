@@ -263,6 +263,8 @@ const knowDisk = (bookId, chId, html) => { diskKnown[bookId + '/' + chId] = html
 const chapterChain = {};
 function persistChapter(chId, html) {
   if (!book) return Promise.resolve(false);
+  // a chapter not loaded here has no body to save (see loadChapter)
+  if (chapterUnloaded(book.id, chId)) return Promise.resolve(false);
   if (html === undefined) html = chapterHTML[chId] || '';
   const bookId = book.id;
   const key = bookId + '/' + chId;
@@ -1137,7 +1139,6 @@ function wordsBeyond(a, b) {
 }
 
 let refreshing = false;
-const refreshReadLogged = new Set(); // chapters whose failed read has been logged (see refreshFromDisk)
 async function refreshFromDisk() {
   if (refreshing || shelfExport) return;
   refreshing = true;
@@ -1178,8 +1179,11 @@ async function refreshFromDisk() {
     if (theirs) {
       for (const chId of meta.chapterOrder) {
         if (chapterHTML[chId] !== undefined) continue;
-        incoming[chId] = await readNewChapter(bookId, chId);
+        // one that cannot be read comes in not loaded (see loadChapter): the
+        // rest of the look goes on, and the chapter stays in the book
+        const got = await loadChapter('refresh', bookId, chId);
         if (!book || book.id !== bookId) return;
+        incoming[chId] = got === null ? '' : got;
       }
     }
     // file times first, so only chapters that changed on disk are re-read
@@ -1192,7 +1196,7 @@ async function refreshFromDisk() {
     for (const chId of [...book.chapterOrder]) {
       if (writing[chId]) continue; // a save of ours is on its way: the file is ours, not news
       const st = stamps ? stamps[chId] : undefined;
-      if (st !== undefined && st === diskStamps[chId]) continue;
+      if (st !== undefined && st === diskStamps[chId] && !chapterUnloaded(bookId, chId)) continue;
       const before = savedHTML[chId];
       let disk;
       try { disk = await window.neo.readChapter(bookId, chId); } catch (err) {
@@ -1201,15 +1205,7 @@ async function refreshFromDisk() {
         // take in. Any other failure leaves the chapter as it is, never read
         // as empty, and is logged once for each chapter and reason, not at
         // every look.
-        const code = storeErrorCode(err);
-        if (code !== 'not_found') {
-          const tag = bookId + '/' + chId + ':' + code;
-          if (!refreshReadLogged.has(tag)) {
-            refreshReadLogged.add(tag);
-            console.error('refresh: chapter not read', tag, err);
-            try { window.neo.logError('refresh: chapter not read ' + tag + ' ' + (err && err.message || err)); } catch { /* the log is a courtesy */ }
-          }
-        }
+        if (storeErrorCode(err) !== 'not_found') logChapterNotRead('refresh', bookId, chId, err);
         continue;
       }
       if (!book || book.id !== bookId) return;
@@ -1249,7 +1245,7 @@ async function refreshFromDisk() {
       other.forEach((chId, i) => {
         if (order.includes(chId)) return;
         if (mine) {
-          if (!hasWords(incoming[chId])) return;
+          if (!hasWords(incoming[chId]) && !chapterUnloaded(bookId, chId)) return;
         } else if (chapterHTML[chId] === savedHTML[chId]) {
           // Saved here, and not in their list. They took it out (they say
           // so, or its file is gone from the disk): it goes. Otherwise their
@@ -1267,7 +1263,7 @@ async function refreshFromDisk() {
           if (!(chId in incoming)) continue;
           chapterHTML[chId] = incoming[chId];
           savedHTML[chId] = incoming[chId];
-          knowDisk(bookId, chId, incoming[chId]);
+          if (!chapterUnloaded(bookId, chId)) knowDisk(bookId, chId, incoming[chId]);
         }
         if (mine) {
           book.chapterOrder = order;
@@ -1331,6 +1327,17 @@ async function refreshFromDisk() {
       // next save made that stick. Look again next time.
       if (writing[chId] || savedHTML[chId] !== before) continue;
       if (typeof disk !== 'string') continue;
+      if (chapterUnloaded(bookId, chId)) {
+        // read at last: it loads, whatever the file holds (the page had nothing of its own)
+        unloadedChapters.delete(bookId + '/' + chId);
+        if (stamps) diskStamps[chId] = st;
+        chapterHTML[chId] = disk;
+        savedHTML[chId] = disk;
+        knowDisk(bookId, chId, disk);
+        wordCache[chId] = null;
+        adopted++;
+        continue;
+      }
       if (disk === '' && savedHTML[chId]) continue; // unreadable or still downloading: not a change
       if (stamps) diskStamps[chId] = st; // seen; a file not read stays on the list
       if (disk === savedHTML[chId]) continue;
