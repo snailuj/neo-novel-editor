@@ -87,7 +87,8 @@ test('a move onto a path that folds to another live path is a case clash; a case
   await refused(tree.move('wiki/a.html', 'wiki/b.html', va), 'case_clash', 409);
   assert.deepEqual(await tree.move('wiki/a.html', 'wiki/A.html', va), { version: va, seq: 3 });
   assert.deepEqual(readdirSync(path.join(h.repo, 'library/wiki')).sort(), ['A.html', 'B.html']);
-  assert.deepEqual(tree.changes(2, 10).changes.map((c) => c.path), ['wiki/A.html', 'wiki/a.html']);
+  // The tombstone comes first, so a case-folding client that applies the page in order keeps the file.
+  assert.deepEqual(tree.changes(2, 10).changes, [{ path: 'wiki/a.html', version: null }, { path: 'wiki/A.html', version: va }]);
   await tree.close();
 });
 
@@ -102,5 +103,14 @@ test('a move is checked against its own source for folder-case and file-versus-f
   assert.deepEqual(await tree.move('wiki/a.html', 'wiki/A.html', va), { version: va, seq: 2 });
   assert.deepEqual(await tree.move('wiki/A.html', 'wiki/sub/b.html', va), { version: va, seq: 3 });
   assert.equal((await tree.read('wiki/sub/b.html')).bytes.toString(), 'a');
+  await tree.close();
+});
+
+test('within one seq a tombstone is listed before the live entry, whatever the path order', async (t) => {
+  const h = tempHoard(t);
+  const { tree } = await openTestTree(h);
+  const v = (await tree.put('b.html', Buffer.from('b'), NEW)).version;
+  await tree.move('b.html', 'a.html', v);
+  assert.deepEqual(tree.changes(1, 10).changes, [{ path: 'b.html', version: null }, { path: 'a.html', version: v }]);
   await tree.close();
 });

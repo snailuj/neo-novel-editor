@@ -104,18 +104,19 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
     const versions = await git.hashPaths(files.map(onDisk));
     const present = new Set(files);
     let changed = 0;
-    files.forEach((p, i) => {
-      if (index.get(p)?.version === versions[i]) return;
-      seq += 1; changed += 1;
-      setEntry(p, versions[i], seq);
-      log('info', 'reconcile.changed', { path: p, version: versions[i], seq });
-    });
+    // Vanished files first: a rename the server did not finish recording then replays as delete, then create.
     for (const [p, e] of [...index].sort(([a], [b]) => (a < b ? -1 : 1))) {
       if (e.version === null || present.has(p)) continue;
       seq += 1; changed += 1;
       setEntry(p, null, seq);
       log('info', 'reconcile.vanished', { path: p, seq });
     }
+    files.forEach((p, i) => {
+      if (index.get(p)?.version === versions[i]) return;
+      seq += 1; changed += 1;
+      setEntry(p, versions[i], seq);
+      log('info', 'reconcile.changed', { path: p, version: versions[i], seq });
+    });
     if (changed > 0 || loaded === null) await persist();
     log('info', 'reconcile.done', { files: files.length, changed, seq });
   }
@@ -159,7 +160,9 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
 
     changes(since, limit) {
       const later = [...index].filter(([, e]) => e.seq > since)
-        .sort(([pa, a], [pb, b]) => (a.seq - b.seq) || (pa < pb ? -1 : 1));
+        // Within one seq the tombstone comes first, so a client whose disk folds case applies a
+        // case-only move as delete then create, never create then delete of the same file.
+        .sort(([pa, a], [pb, b]) => (a.seq - b.seq) || (Number(a.version !== null) - Number(b.version !== null)) || (pa < pb ? -1 : 1));
       let end = Math.min(limit, later.length);
       // A group sharing one seq (a move) is never split across pages.
       while (end > 0 && end < later.length && later[end][1].seq === later[end - 1][1].seq) end += 1;

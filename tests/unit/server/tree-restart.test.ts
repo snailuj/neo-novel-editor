@@ -3,7 +3,7 @@
 // server was down, a lost state folder) is raised once as an ordinary change.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { openTree } from '../../../server/tree.ts';
@@ -104,4 +104,21 @@ test('the library folder is created when missing, and temp files and unacceptabl
 test('a state folder inside the repo is refused', async (t) => {
   const h = tempHoard(t);
   await assert.rejects(openTree({ repo: h.repo, library: 'library', state: path.join(h.repo, '.state'), log: captureLog().log }), /inside the repo/);
+});
+
+test('a move that crashed between the rename and the state save replays correctly on a case-folding client', async (t) => {
+  const h = tempHoard(t);
+  const first = await openTestTree(h);
+  await first.tree.put('wiki/a.html', Buffer.from('a'), NEW);
+  await first.tree.close();
+  // The crash window: the disk holds the renamed file, state.json still describes the old name.
+  renameSync(lib(h, 'wiki/a.html'), lib(h, 'wiki/A.html'));
+  const { tree } = await openTestTree(h);
+  const client = new Map<string, string | null>([['wiki/a.html', blob(h.repo, 'a')]]);
+  for (const c of tree.changes(1, 10).changes) {
+    if (c.version === null) client.delete(c.path.toLowerCase()); else client.set(c.path.toLowerCase(), c.version);
+  }
+  assert.deepEqual([...client], [['wiki/a.html', blob(h.repo, 'a')]]);
+  assert.deepEqual(tree.changes(1, 10).changes.map((c) => c.version === null), [true, false]);
+  await tree.close();
 });
