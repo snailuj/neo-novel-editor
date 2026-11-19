@@ -17,7 +17,7 @@ const slice = (from: string, to: string) => {
   assert.ok(a >= 0 && b > a, `the shelf's code moved: ${from}`);
   return shelf.slice(a, b);
 };
-const settle = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
+const settle = async () => { for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve)); };
 
 function shelfWindow(answer: (bookId: string, name: string) => Promise<unknown>) {
   const asked: string[] = [];
