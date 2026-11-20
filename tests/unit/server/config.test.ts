@@ -13,11 +13,19 @@ const refuses = (p: Promise<unknown>, pattern: RegExp) => assert.rejects(p, (e: 
 test('flags, environment and defaults combine, with flags winning over the environment', async (t) => {
   const h = tempHoard(t);
   const env = { NEO_SERVER_REPO: h.repo, NEO_SERVER_STATE: h.state, NEO_SERVER_PORT: '9000', NEO_SERVER_HOST: '100.64.0.5' };
-  assert.deepEqual(await parseConfig([], env), { repo: h.repo, library: 'library', host: '100.64.0.5', port: 9000, state: h.state, author: null, idleSeconds: 60, syncSeconds: 300 });
+  assert.deepEqual(await parseConfig([], env), { repo: h.repo, library: 'library', host: '100.64.0.5', port: 9000, state: h.state, uv: 'uv', author: null, idleSeconds: 60, syncSeconds: 300 });
   const flags = await parseConfig(['--port', '9100', '--library', 'shelf/', '--host', '127.0.0.2', '--repo', h.repo, '--state', h.state], { NEO_SERVER_PORT: '1' });
   assert.deepEqual([flags.port, flags.library, flags.host], [9100, 'shelf', '127.0.0.2']);
   const defaults = await parseConfig([], { NEO_SERVER_REPO: h.repo, NEO_SERVER_STATE: h.state });
   assert.deepEqual([defaults.host, defaults.port, defaults.library], ['127.0.0.1', 8417, 'library']);
+});
+
+test('uv is a command name or path from --uv, then NEO_SERVER_UV, then plain uv', async (t) => {
+  const h = tempHoard(t);
+  const base = { NEO_SERVER_REPO: h.repo, NEO_SERVER_STATE: h.state };
+  assert.equal((await parseConfig([], base)).uv, 'uv');
+  assert.equal((await parseConfig([], { ...base, NEO_SERVER_UV: '/opt/uv/bin/uv' })).uv, '/opt/uv/bin/uv');
+  assert.equal((await parseConfig(['--uv', 'uv-custom'], { ...base, NEO_SERVER_UV: '/opt/uv/bin/uv' })).uv, 'uv-custom');
 });
 
 test('a wildcard host is refused with a pointer to the tailnet address', async (t) => {

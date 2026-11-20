@@ -1,5 +1,6 @@
 // Entry point: `node server/main.ts --repo <hoard clone> --state <folder> --host <tailnet address>`.
 import { parseConfig } from './config.ts';
+import { openHoardTools } from './hoard.ts';
 import { createServer } from './http.ts';
 import { createLogger } from './log.ts';
 import { openLibrary } from './library.ts';
@@ -13,7 +14,8 @@ async function main(): Promise<void> {
     author: config.author, idleSeconds: config.idleSeconds, syncSeconds: config.syncSeconds,
   });
   const { tree } = library;
-  const server = createServer(tree, { log });
+  const hoard = await openHoardTools({ repo: config.repo, state: config.state, log, uv: { command: config.uv } });
+  const server = createServer(tree, { log, hoard });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(config.port, config.host, resolve);
@@ -28,7 +30,7 @@ async function main(): Promise<void> {
     log('info', 'closing', { signal });
     server.close();
     server.closeIdleConnections();
-    library.close().then(() => process.exit(0), (e: unknown) => {
+    hoard.close().then(() => library.close()).then(() => process.exit(0), (e: unknown) => {
       log('error', 'close.failed', { stack: e instanceof Error ? e.stack : String(e) });
       process.exit(1);
     });

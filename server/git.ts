@@ -46,6 +46,8 @@ async function ok(cwd: string, args: readonly string[], input?: Buffer | string)
 export interface RepoGit {
   /** Blob id of `bytes`, written to the object store. */
   hashBytes(bytes: Buffer): Promise<string>;
+  /** Blob id of `bytes` without storing them: read-only routes must not grow the object store. */
+  blobId(bytes: Buffer): Promise<string>;
   /** Blob ids of the files at `absolutePaths`, in order, from one git process. */
   hashPaths(absolutePaths: readonly string[]): Promise<string[]>;
   /** The commit HEAD names, or null while the repo has no commit. */
@@ -56,6 +58,9 @@ export function createRepoGit(repo: string): RepoGit {
   return {
     async hashBytes(bytes) {
       return (await ok(repo, ['hash-object', '-w', '--no-filters', '--stdin'], bytes)).trim();
+    },
+    async blobId(bytes) {
+      return (await ok(repo, ['hash-object', '--no-filters', '--stdin'], bytes)).trim();
     },
     async hashPaths(absolutePaths) {
       if (absolutePaths.length === 0) return [];

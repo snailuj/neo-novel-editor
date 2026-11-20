@@ -1,6 +1,7 @@
 // Shared by the server's tests: a started server and a tiny HTTP client.
 import { request as httpRequest, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { openHoardTools, type HoardTools, type HoardToolsOptions } from '../../../server/hoard.ts';
 import { createServer } from '../../../server/http.ts';
 import type { Tree } from '../../../server/tree.ts';
 import { openTestTree, type Hoard, type LogLine } from './hoard.ts';
@@ -55,11 +56,15 @@ export function clientFor(server: Server, device = 'test-device'): Client {
   };
 }
 
-export async function startServer(t: Cleanup, hoard: Hoard, options: { bodyLimit?: number } = {}): Promise<{ tree: Tree; client: Client; server: Server; lines: LogLine[] }> {
+export interface StartOptions { bodyLimit?: number; hoardTools?: Omit<HoardToolsOptions, 'repo' | 'state' | 'log'> }
+
+/** `hoardTools`, when given, opens the hoard tools on the same repo and state folder, and closes them after the server. */
+export async function startServer(t: Cleanup, hoard: Hoard, options: StartOptions = {}): Promise<{ tree: Tree; client: Client; server: Server; lines: LogLine[]; tools?: HoardTools }> {
   const { tree, lines } = await openTestTree(hoard);
   const log = (level: string, msg: string, data?: Record<string, unknown>) => { lines.push({ level, msg, ...data }); };
-  const server = createServer(tree, { log, ...options });
+  const tools = options.hoardTools ? await openHoardTools({ repo: hoard.repo, state: hoard.state, log, ...options.hoardTools }) : undefined;
+  const server = createServer(tree, { log, bodyLimit: options.bodyLimit, hoard: tools });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  t.after(async () => { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); await tree.close(); });
-  return { tree, client: clientFor(server), server, lines };
+  t.after(async () => { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); await tools?.close(); await tree.close(); });
+  return { tree, client: clientFor(server), server, lines, tools };
 }

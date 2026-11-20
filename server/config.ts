@@ -10,7 +10,7 @@ import { checkPath } from './paths.ts';
 import { assertOutsideRepo } from './state.ts';
 
 export interface Config {
-  repo: string; library: string; host: string; port: number; state: string;
+  repo: string; library: string; host: string; port: number; state: string; uv: string;
   /** The commit author; null takes the clone's git config. */
   author: Identity | null;
   /** Seconds without a write before the library is committed. */
@@ -42,7 +42,7 @@ export async function parseConfig(argv: readonly string[], env: Record<string, s
     flags = parseArgs({
       args: [...argv],
       options: {
-        repo: { type: 'string' }, library: { type: 'string' }, host: { type: 'string' }, port: { type: 'string' }, state: { type: 'string' },
+        repo: { type: 'string' }, library: { type: 'string' }, host: { type: 'string' }, port: { type: 'string' }, state: { type: 'string' }, uv: { type: 'string' },
         author: { type: 'string' }, 'idle-seconds': { type: 'string' }, 'sync-seconds': { type: 'string' },
       },
       strict: true,
@@ -85,5 +85,5 @@ export async function parseConfig(argv: readonly string[], env: Record<string, s
   } catch (e) {
     throw new ConfigError((e as Error).message);
   }
-  return { repo, library, host, port, state, author, idleSeconds, syncSeconds };
+  return { repo, library, host, port, state, uv: flags.uv ?? env.NEO_SERVER_UV ?? 'uv', author, idleSeconds, syncSeconds };
 }

@@ -2,11 +2,12 @@
 // parses the request, reports errors as `{ code, message, ...extra }`, and logs the request.
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { ApiError } from './errors.ts';
+import type { HoardTools } from './hoard.ts';
 import type { Log } from './log.ts';
 import { checkPath } from './paths.ts';
 import type { Tree } from './tree.ts';
 
-export interface HttpOptions { log: Log; bodyLimit?: number }
+export interface HttpOptions { log: Log; bodyLimit?: number; hoard?: HoardTools }
 
 interface Reply { status: number; json?: unknown; bytes?: Buffer; headers?: Record<string, string> }
 
@@ -69,7 +70,7 @@ function deviceOf(req: IncomingMessage): string | undefined {
   return typeof device === 'string' && device !== '' ? device : undefined;
 }
 
-async function route(tree: Tree, req: IncomingMessage, limit: number): Promise<Reply> {
+async function route(tree: Tree, hoard: HoardTools | undefined, req: IncomingMessage, limit: number): Promise<Reply> {
   const url = req.url ?? '/';
   // Not `new URL(...)`: that would resolve `..` segments before the path check sees them.
   const q = url.indexOf('?');
@@ -101,6 +102,10 @@ async function route(tree: Tree, req: IncomingMessage, limit: number): Promise<R
     }
     return { status: 200, json: await tree.move(from, to, etag(ifMatch), deviceOf(req)) };
   }
+  if (pathname.startsWith('/v1/hoard/')) {
+    if (!hoard) throw new ApiError('tool_unavailable', 503, 'hoard tools are not configured');
+    return hoard.handle(method, pathname.slice('/v1/hoard'.length), () => readBody(req, limit));
+  }
   if (pathname.startsWith('/v1/files/')) {
     const p = decodePath(pathname.slice('/v1/files/'.length));
     if (method === 'GET') {
@@ -129,11 +134,11 @@ function send(res: ServerResponse, reply: Reply): void {
   res.end(body);
 }
 
-export function createServer(tree: Tree, { log, bodyLimit = 50 * 1024 * 1024 }: HttpOptions): Server {
+export function createServer(tree: Tree, { log, bodyLimit = 50 * 1024 * 1024, hoard }: HttpOptions): Server {
   return createHttpServer((req, res) => {
     const start = performance.now();
     const seqBefore = tree.currentSeq();
-    route(tree, req, bodyLimit).then((reply) => reply, (e: unknown) => {
+    route(tree, hoard, req, bodyLimit).then((reply) => reply, (e: unknown) => {
       if (e instanceof ApiError) return { status: e.status, json: { code: e.code, message: e.message, ...e.extra } };
       log('error', 'request.failed', { method: req.method, url: req.url, stack: e instanceof Error ? e.stack : String(e) });
       return { status: 500, json: { code: 'internal', message: 'internal error' } };
