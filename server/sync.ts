@@ -38,6 +38,8 @@ export interface Sync {
 }
 
 class Conflict extends Error {}
+/** A conflicted rebase that could not be aborted: the library may hold markers until it is gone. */
+class Stuck extends Error {}
 
 /** How many blocking files a sync error names; the rest are counted. */
 const LISTED = 10;
@@ -126,7 +128,14 @@ export async function openSync(options: SyncOptions): Promise<Sync> {
         if (await rebaseInProgress()) {
           // Aborting puts the library back as it was before the pull, so no client reads conflict markers.
           const files = (await run(['diff', '--name-only', '--diff-filter=U']).catch(() => ({ stdout: '' }))).stdout.split('\n').filter(Boolean);
-          await run(['rebase', '--abort']);
+          try {
+            await run(['rebase', '--abort']);
+          } catch (abortErr) {
+            // Set before the hold ends, so no read waiting on it reaches the markers. The
+            // marker stays: a restart aborts the rebase as the server's own.
+            set('rebase_in_progress', `the pull's rebase stopped on a conflict and \`git rebase --abort\` failed (${abortErr instanceof Error ? abortErr.message : String(abortErr)}); library reads are refused until it is aborted`);
+            throw new Stuck(current.message);
+          }
           await rm(history.pullMarker, { force: true });
           throw new Conflict(`the remote and the server both changed ${files.length ? files.join(', ') : 'the same lines'}; the server's version stays until the remote's is merged by hand`);
         }
@@ -165,6 +174,10 @@ export async function openSync(options: SyncOptions): Promise<Sync> {
       return set('ok', 'in sync with the remote');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      if (err instanceof Stuck) {
+        once(`stuck:${message}`, () => log('error', 'sync.rebase_stuck: a conflicted rebase could not be aborted', { message }));
+        return current;
+      }
       if (err instanceof Conflict) {
         once(`conflict:${message}`, () => log('error', 'sync.conflict', { message }));
         return set('conflict', message);

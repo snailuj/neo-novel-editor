@@ -21,6 +21,8 @@ export interface TreeOptions {
   disk?: Disk;
   /** Called after every accepted put, delete and move, and once for the changes reconcile found, with the writing device. */
   onChange?: (device: string | undefined) => void;
+  /** An error every library read fails with while it returns one: the files may hold conflict markers. */
+  readsHeld?: () => ApiError | null;
   /** Fields added to the state reply; the history's last commit and sync result go here. */
   stateExtra?: () => Record<string, unknown>;
 }
@@ -303,6 +305,8 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
       // counts only if no write touched the path meanwhile; otherwise it starts again.
       for (let attempt = 0; attempt < 10; attempt += 1) {
         while (mustWait(p)) await tail;
+        const held = options.readsHeld?.();
+        if (held) throw held;
         const entry = index.get(p);
         if (entry?.version == null) throw notFound(p);
         let bytes: Buffer | null = null;

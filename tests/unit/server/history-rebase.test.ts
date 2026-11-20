@@ -1,7 +1,9 @@
-// Rule: no commit is made, and no client reads the library, while a rebase in the clone
-// holds conflict markers. One left by a crash is aborted before the tree opens; one that
-// cannot be aborted stops the start; one begun while the server runs holds every commit
-// until it ends.
+// Rule: no commit is made while a rebase is in progress in the clone, and the server aborts
+// only a rebase its own pull started. One a crash left with the pull marker in the state
+// folder is aborted before the tree opens; one that cannot be aborted stops the start; one
+// without the marker is hand work and stops the start untouched; one begun while the
+// server runs holds every commit until it ends. Library reads are held while the sync
+// reports the rebase (sync.test.ts), not by the history.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

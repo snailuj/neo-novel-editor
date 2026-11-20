@@ -8,6 +8,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { createServer } from '../../../server/http.ts';
 import { commits, git, NEW, openWithHistory, pushFrom, syncHoard } from './history-support.ts';
+import { refused } from './hoard.ts';
 import { clientFor } from './support.ts';
 
 const lib = (h: { repo: string }, rel: string) => path.join(h.repo, 'library', rel);
@@ -268,4 +269,30 @@ test('the pull marker is in the state folder exactly while the server\'s own pul
   assert.equal((await l.sync.runOnce()).state, 'conflict');
   assert.equal(existsSync(marker), false, 'removed after an aborted rebase');
   assert.deepEqual(seen, [true, true], 'present while each pull ran');
+});
+
+test('a rebase whose abort fails holds every library read with 503 rebase_in_progress, keeps the marker, and lets go once a cycle finds it gone', async (t) => {
+  const h = syncHoard(t);
+  const l = await openWithHistory(t, h, SYNC);
+  const shared = await l.tree.read('wiki/shared.html');
+  await l.tree.put('wiki/shared.html', Buffer.from('shared, server edit'), { ifMatch: shared.version, device: 'tablet' });
+  pushFrom(h.other, { 'library/wiki/shared.html': 'shared, other edit' });
+  const run = l.history.git.run.bind(l.history.git);
+  l.history.git.run = (cwd, args, options) => (args[0] === 'rebase' && args[1] === '--abort' ? Promise.reject(new Error('index.lock exists')) : run(cwd, args, options));
+
+  const stuck = await l.sync.runOnce();
+  assert.equal(stuck.state, 'rebase_in_progress');
+  assert.match(readFileSync(lib(h, 'wiki/shared.html'), 'utf8'), /^<<<<<<< /m, 'the baseline: markers are on disk');
+  assert.ok(l.lines.some((x) => x.level === 'error' && /rebase/.test(x.msg) && /abort/.test(x.msg)), 'an error names the stuck rebase');
+  assert.ok(existsSync(l.history.pullMarker), 'the marker stays, so a restart aborts the rebase');
+  await refused(l.tree.read('wiki/shared.html'), 'rebase_in_progress', 503);
+  await refused(l.tree.read('wiki/other.html'), 'rebase_in_progress', 503);
+  assert.equal((await l.sync.runOnce()).state, 'rebase_in_progress', 'a cycle that still finds it keeps the hold');
+  await refused(l.tree.read('wiki/shared.html'), 'rebase_in_progress', 503);
+
+  l.history.git.run = run;
+  git(h.repo, 'rebase', '--abort');
+  assert.equal((await l.sync.runOnce()).state, 'conflict', 'the next cycle pulls again and this time aborts');
+  assert.equal(existsSync(l.history.pullMarker), false);
+  assert.equal((await l.tree.read('wiki/shared.html')).bytes.toString(), 'shared, server edit');
 });

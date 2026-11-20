@@ -1,6 +1,7 @@
 // Opens the library the way the server runs it: the tree, the history that commits it, and
 // the sync that shares it. The three need each other (the tree reports writes to the
 // history, the history commits inside the tree's exclusive hold), so they are tied here.
+import { ApiError } from './errors.ts';
 import type { Identity } from './history/commit.ts';
 import type { Clock } from './history/checkpoints.ts';
 import { openHistory, type History } from './history.ts';
@@ -37,6 +38,11 @@ export async function openLibrary(options: LibraryOptions): Promise<OpenLibrary>
   const tree = await openTree({
     repo: options.repo, library: options.library, state: options.state, log,
     onChange: (device) => history.wrote(device),
+    // A rebase in the clone may have put conflict markers in the library.
+    readsHeld: () => {
+      const sync = late.sync?.status();
+      return sync?.state === 'rebase_in_progress' ? new ApiError('rebase_in_progress', 503, sync.message) : null;
+    },
     stateExtra: () => ({ history: { lastCommit: history.lastCommit(), sync: late.sync?.status() } }),
   });
   late.tree = tree;
