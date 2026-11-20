@@ -8,7 +8,7 @@ import { isWorkTree, topLevel } from './git.ts';
 import { checkPath } from './paths.ts';
 import { assertOutsideRepo } from './state.ts';
 
-export interface Config { repo: string; library: string; host: string; port: number; state: string }
+export interface Config { repo: string; library: string; host: string; port: number; state: string; uv: string }
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -25,7 +25,7 @@ export async function parseConfig(argv: readonly string[], env: Record<string, s
     flags = parseArgs({
       args: [...argv],
       options: {
-        repo: { type: 'string' }, library: { type: 'string' }, host: { type: 'string' }, port: { type: 'string' }, state: { type: 'string' },
+        repo: { type: 'string' }, library: { type: 'string' }, host: { type: 'string' }, port: { type: 'string' }, state: { type: 'string' }, uv: { type: 'string' },
       },
       strict: true,
     }).values;
@@ -60,5 +60,5 @@ export async function parseConfig(argv: readonly string[], env: Record<string, s
   } catch (e) {
     throw new ConfigError((e as Error).message);
   }
-  return { repo, library, host, port, state };
+  return { repo, library, host, port, state, uv: flags.uv ?? env.NEO_SERVER_UV ?? 'uv' };
 }
