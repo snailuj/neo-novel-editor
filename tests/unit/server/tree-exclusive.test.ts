@@ -167,8 +167,9 @@ test('on a disk that folds case, rescan of a case-only rename made outside the t
   });
   await assert.rejects(tree.read('wiki/Place.html'), /no such file/);
   assert.equal((await tree.read('wiki/place.html')).bytes.toString(), 'place');
-  // With the old name gone, a new file under it is a create, not a case clash.
-  await tree.put('wiki/PLACE2.html', Buffer.from('2'), NEW);
+  // Only the new name is live, so a third spelling clashes with it and not with the old one.
+  const clash = await refused(tree.put('wiki/PLACE.html', Buffer.from('3'), NEW), 'case_clash', 409);
+  assert.deepEqual(clash.extra, { path: 'wiki/place.html' });
   await tree.close();
 });
 
