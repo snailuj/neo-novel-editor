@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { deviceName } from '../../../server/history.ts';
+import { deviceName, RETRY_MAX_MS } from '../../../server/history.ts';
 import { createServer } from '../../../server/http.ts';
 import { tempHoard } from './hoard.ts';
 import { commits, git, NEW, openWithHistory } from './history-support.ts';
@@ -207,6 +207,22 @@ test('a commit that fails after a pause is retried, first after the idle period,
   await settle(60_000);
   assert.deepEqual(commits(h.repo)[0].files, ['library/wiki/b.html']);
   assert.equal(lib.time.pending(), 0, 'no retry is left armed after a success');
+});
+
+test('no retry fires after close, though a failed commit had one armed', async (t) => {
+  const h = tempHoard(t);
+  const lib = await openWithHistory(t, h);
+  const lock = path.join(h.repo, '.git', 'index.lock');
+  await lib.tree.put('wiki/a.html', Buffer.from('a'), { ...NEW, device: 'tablet' });
+  writeFileSync(lock, '');
+  await lib.time.advance(60_000);
+  await lib.history.drained();
+  assert.ok(lib.time.pending() > 0, 'the baseline: the failed idle commit armed a retry');
+  await lib.close();
+  rmSync(lock);
+  await lib.time.advance(RETRY_MAX_MS * 4);
+  assert.equal(lib.lines.filter((l) => l.msg === 'history.commit.retry').length, 0);
+  assert.deepEqual(commits(h.repo), [], 'nothing commits once the history is closed');
 });
 
 test('a recovered commit that fails at start is retried after the idle period instead of being lost', async (t) => {
