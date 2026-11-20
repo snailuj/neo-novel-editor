@@ -183,3 +183,21 @@ test('rescan of an ordinary rename made outside the tree raises the old path as 
   assert.deepEqual(tree.changes(seq, 500).changes, [{ path: 'wiki/old.html', version: null }, { path: 'moved/new.html', version: put.version }]);
   await tree.close();
 });
+
+test('rescan fails when a folder cannot be listed, and leaves a file that is there live', async (t) => {
+  const h = tempHoard(t);
+  const denied: Disk = {
+    stat: (file) => stat(file),
+    readdir: async (dir) => {
+      if (path.basename(dir) === 'wiki') throw Object.assign(new Error(`EACCES: permission denied, scandir '${dir}'`), { code: 'EACCES' });
+      return readdir(dir);
+    },
+  };
+  const tree = await openTree({ repo: h.repo, library: 'library', state: h.state, log: captureLog().log, disk: denied });
+  const put = await tree.put('wiki/kept.html', Buffer.from('kept'), NEW);
+  const seq = (await tree.state()).seq;
+  await assert.rejects(tree.rescan(['wiki/kept.html']), /EACCES/);
+  assert.deepEqual(tree.changes(seq, 500).changes, [], 'no tombstone was raised');
+  assert.equal((await tree.read('wiki/kept.html')).version, put.version);
+  await tree.close();
+});

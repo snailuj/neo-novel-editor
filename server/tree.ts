@@ -236,7 +236,11 @@ export async function openTree(options: TreeOptions): Promise<Tree> {
     const listed = (dir: string) => {
       let names = listings.get(dir);
       if (!names) {
-        names = disk.readdir(dir === '' ? libraryDir : onDisk(dir)).then((n) => new Set(n), () => new Set<string>());
+        // A folder that is gone lists nothing; any other failure must not tombstone files that are there.
+        names = disk.readdir(dir === '' ? libraryDir : onDisk(dir)).then((n) => new Set(n), (e: unknown) => {
+          if ((e as NodeJS.ErrnoException).code === 'ENOENT') return new Set<string>();
+          throw e;
+        });
         listings.set(dir, names);
       }
       return names;
