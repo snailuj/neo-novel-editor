@@ -2,7 +2,7 @@
 // read HEAD. The version of a file is the blob id of its RAW bytes, so every hash uses
 // `--no-filters`: `.gitattributes` and `core.autocrlf` must never change a version.
 import { spawn } from 'node:child_process';
-import { GitError } from '../src/hoard/git/runner.ts';
+import { GitError } from './history/runner.ts';
 
 export { GitError };
 

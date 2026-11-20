@@ -4,7 +4,7 @@
 // a run wait until a `release` file appears.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { tempDir } from '../git-support.ts';
+import { tempDir } from './history/git-support.ts';
 
 interface Cleanup { after(fn: () => void): void }
 

@@ -14,7 +14,7 @@ import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { test } from 'node:test';
 import { LibraryIndex } from '../../src/hoard/search/library.ts';
-import { tempDir } from './git-support.ts';
+import { tempDir } from './server/history/git-support.ts';
 
 type T = Parameters<typeof tempDir>[0];
 

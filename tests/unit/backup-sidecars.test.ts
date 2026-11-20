@@ -8,7 +8,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { test } from 'node:test';
-import { tempDir } from './git-support.ts';
+import { tempDir } from './server/history/git-support.ts';
 
 const cjs = createRequire(import.meta.url);
 const { loadMain } = cjs('../support/main-loader.cjs');

@@ -14,7 +14,7 @@ import { validateHoardMarksV1 } from '../../src/generated/validators.cjs';
 import { newMark } from '../../src/hoard/marks/model.ts';
 import { MarkFileError, MarkStore, pageSidecarPath, sidecarPath } from '../../src/hoard/marks/store.ts';
 import { PageRefused } from '../../src/hoard/pages/identity.ts';
-import { tempDir } from './git-support.ts';
+import { tempDir } from './server/history/git-support.ts';
 
 const anchor = { exact: 'boats', prefix: 'counted the ', suffix: ' twice.', pIdx: 1, off: 17 };
 const ids = { bookId: 'book-fox-1', chId: 'c1' };

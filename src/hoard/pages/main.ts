@@ -5,7 +5,7 @@ import {
   validateHoardPagesCreateV1, validateHoardPagesReadV1, validateHoardPagesRenameV1, validateHoardPagesWriteV1,
 } from '../../generated/validators.cjs';
 import { checked } from '../checked.ts';
-import type { GitLayer } from '../git/layer.ts';
+import type { GitLayer } from '../../../server/history/layer.ts';
 import { PageStore } from './store.ts';
 
 /**

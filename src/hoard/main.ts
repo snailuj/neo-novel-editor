@@ -18,12 +18,12 @@ import {
 } from '../generated/validators.cjs';
 import { checked } from './checked.ts';
 import { startCompanion } from './companion/main.ts';
-import { textconvCommand } from './git/blame.ts';
-import { startGate } from './git/gate-main.ts';
-import { GitLayer, resolveSettings } from './git/layer.ts';
-import { LibrarianPairs } from './git/pair.ts';
-import { createGit } from './git/runner.ts';
-import { ATTRIBUTES } from './git/start.ts';
+import { textconvCommand } from '../../server/history/blame.ts';
+import { startGate } from '../../server/history/gate-main.ts';
+import { GitLayer, resolveSettings } from '../../server/history/layer.ts';
+import { LibrarianPairs } from '../../server/history/pair.ts';
+import { createGit } from '../../server/history/runner.ts';
+import { ATTRIBUTES } from '../../server/history/start.ts';
 import { MarkStore, targeted } from './marks/store.ts';
 import { startPages } from './pages/main.ts';
 import { signalPageChanges } from './pages/signals.ts';

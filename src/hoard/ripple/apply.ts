@@ -15,7 +15,7 @@
 //   replay duplicates nothing.
 import { randomBytes } from 'node:crypto';
 import type { Mark, MarkAnchor } from '../../generated/hoard-marks-v1.js';
-import type { BlameLine } from '../git/blame.ts';
+import type { BlameLine } from '../../../server/history/blame.ts';
 import { paragraphHtml, paragraphTexts, textOf } from '../html.ts';
 import { anchorAt } from '../marks/anchor.ts';
 import { inline } from '../wiki/inline.ts';

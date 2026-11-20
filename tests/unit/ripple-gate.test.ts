@@ -7,17 +7,17 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { Gate, GateRefused } from '../../src/hoard/git/gate.ts';
-import { textconvCommand } from '../../src/hoard/git/blame.ts';
-import { GitLayer, resolveSettings } from '../../src/hoard/git/layer.ts';
-import { ATTRIBUTES } from '../../src/hoard/git/start.ts';
+import { Gate, GateRefused } from '../../server/history/gate.ts';
+import { textconvCommand } from '../../server/history/blame.ts';
+import { GitLayer, resolveSettings } from '../../server/history/layer.ts';
+import { ATTRIBUTES } from '../../server/history/start.ts';
 import { MarkStore } from '../../src/hoard/marks/store.ts';
 import { PageStore } from '../../src/hoard/pages/store.ts';
 import { DEFAULT_BRIEF, Ripple } from '../../src/hoard/ripple/engine.ts';
 import { ownerOf } from '../../src/hoard/review/owner.ts';
 import { sha256 } from '../../src/hoard/ripple/rulings.ts';
 import { makeRipple } from '../../src/hoard/ripple/wire.ts';
-import { isolateGitConfig, tempDir, tempLibrary } from './git-support.ts';
+import { isolateGitConfig, tempDir, tempLibrary } from './server/history/git-support.ts';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const ECHO = 'When you are unsure, say nothing about the page: the writer would rather miss a ripple than undo a wrong one.';

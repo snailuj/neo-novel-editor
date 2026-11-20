@@ -11,7 +11,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { cardKey, complete, fold, jobId, proposalId, repeatOf, Rulings, RulingsError, sha256, type RippleJob, type RippleProposal } from '../../src/hoard/ripple/rulings.ts';
-import { tempDir } from './git-support.ts';
+import { tempDir } from './server/history/git-support.ts';
 
 const AT = '2026-10-16T12:00:00.000Z';
 const source = { page: 'wiki/Harbour.html', title: 'Harbour' };

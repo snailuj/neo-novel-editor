@@ -12,7 +12,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { AttachmentFinder, attachmentsIn, copyAttachment } from '../../src/hoard/wiki/attachments.ts';
-import { tempDir } from './git-support.ts';
+import { tempDir } from './server/history/git-support.ts';
 
 const sha = (data: string | Buffer) => createHash('sha256').update(data).digest('hex');
 

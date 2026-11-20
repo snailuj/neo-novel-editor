@@ -7,7 +7,7 @@ import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { PageRefused } from '../../src/hoard/pages/identity.ts';
 import { PageStore, type PageEntry } from '../../src/hoard/pages/store.ts';
-import { tempDir } from './git-support.ts';
+import { tempDir } from './server/history/git-support.ts';
 import { pagesLibrary } from './pages-support.ts';
 
 test('list returns both trees\' .html files with their facts, and no body', async (t) => {

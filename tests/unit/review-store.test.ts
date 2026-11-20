@@ -12,7 +12,7 @@ import {
   validateHoardMarksAddV1, validateHoardMarksStateV1, validateHoardMarksV1, validateHoardReviewOwnersV1, validateHoardReviewVerdictV1,
 } from '../../src/generated/validators.cjs';
 import { MarkStore, sidecarPath } from '../../src/hoard/marks/store.ts';
-import { tempDir } from './git-support.ts';
+import { tempDir } from './server/history/git-support.ts';
 
 const ids = { bookId: 'book-wiki-1', chId: 'ch-vell' };
 const anchor = { exact: 'west', prefix: 'The harbour of Vell faces ', suffix: '.', pIdx: 0, off: 26 };

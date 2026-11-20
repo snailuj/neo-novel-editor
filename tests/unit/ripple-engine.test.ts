@@ -18,13 +18,13 @@ import assert from 'node:assert/strict';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { GitLayer, resolveSettings } from '../../src/hoard/git/layer.ts';
+import { GitLayer, resolveSettings } from '../../server/history/layer.ts';
 import { MarkStore } from '../../src/hoard/marks/store.ts';
 import { ownerOf } from '../../src/hoard/review/owner.ts';
 import { topUp } from '../../src/hoard/ripple/embed-cli.ts';
 import { DEFAULT_BRIEF, Ripple, type RippleOptions } from '../../src/hoard/ripple/engine.ts';
 import { sha256 } from '../../src/hoard/ripple/rulings.ts';
-import { isolateGitConfig, log as gitLog, tempDir, tempLibrary } from './git-support.ts';
+import { isolateGitConfig, log as gitLog, tempDir, tempLibrary } from './server/history/git-support.ts';
 import { pagesLibrary } from './pages-support.ts';
 
 type T = { after(fn: () => void): void };

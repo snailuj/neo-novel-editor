@@ -4,7 +4,7 @@
 import { BrowserWindow, dialog, shell } from 'electron';
 import { mkdirSync } from 'node:fs';
 import { validateHoardRippleAskV1, validateHoardRippleDecideV1, validateHoardRippleRunV1 } from '../../generated/validators.cjs';
-import type { GitLayer } from '../git/layer.ts';
+import type { GitLayer } from '../../../server/history/layer.ts';
 import type { MarkStore } from '../marks/store.ts';
 import type { PageStore } from '../pages/store.ts';
 import type { Ripple } from './engine.ts';

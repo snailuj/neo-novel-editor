@@ -13,7 +13,7 @@ const refuses = (p: Promise<unknown>, pattern: RegExp) => assert.rejects(p, (e: 
 test('flags, environment and defaults combine, with flags winning over the environment', async (t) => {
   const h = tempHoard(t);
   const env = { NEO_SERVER_REPO: h.repo, NEO_SERVER_STATE: h.state, NEO_SERVER_PORT: '9000', NEO_SERVER_HOST: '100.64.0.5' };
-  assert.deepEqual(await parseConfig([], env), { repo: h.repo, library: 'library', host: '100.64.0.5', port: 9000, state: h.state, uv: 'uv' });
+  assert.deepEqual(await parseConfig([], env), { repo: h.repo, library: 'library', host: '100.64.0.5', port: 9000, state: h.state, uv: 'uv', author: null, idleSeconds: 60, syncSeconds: 300 });
   const flags = await parseConfig(['--port', '9100', '--library', 'shelf/', '--host', '127.0.0.2', '--repo', h.repo, '--state', h.state], { NEO_SERVER_PORT: '1' });
   assert.deepEqual([flags.port, flags.library, flags.host], [9100, 'shelf', '127.0.0.2']);
   const defaults = await parseConfig([], { NEO_SERVER_REPO: h.repo, NEO_SERVER_STATE: h.state });
@@ -60,4 +60,21 @@ test('the state folder is compared with the top of the work tree, not with the -
   mkdirSync(sub);
   await refuses(parseConfig(['--repo', sub], { NEO_SERVER_STATE: path.join(h.repo, 'state') }), /inside the repo/);
   assert.equal((await parseConfig(['--repo', sub], { NEO_SERVER_STATE: h.state })).repo, sub);
+});
+
+test('the author, the idle period and the sync period come from flags or the environment, with flags winning', async (t) => {
+  const h = tempHoard(t);
+  const base = { NEO_SERVER_REPO: h.repo, NEO_SERVER_STATE: h.state };
+  const fromEnv = await parseConfig([], { ...base, NEO_SERVER_AUTHOR: 'Server Pen <pen@example.invalid>', NEO_SERVER_IDLE_SECONDS: '90', NEO_SERVER_SYNC_SECONDS: '0' });
+  assert.deepEqual([fromEnv.author, fromEnv.idleSeconds, fromEnv.syncSeconds], [{ name: 'Server Pen', email: 'pen@example.invalid' }, 90, 0]);
+  const fromFlags = await parseConfig(['--author', 'Other <o@example.invalid>', '--idle-seconds', '5', '--sync-seconds', '60'], { ...base, NEO_SERVER_AUTHOR: 'Server Pen <pen@example.invalid>', NEO_SERVER_IDLE_SECONDS: '90' });
+  assert.deepEqual([fromFlags.author, fromFlags.idleSeconds, fromFlags.syncSeconds], [{ name: 'Other', email: 'o@example.invalid' }, 5, 60]);
+});
+
+test('an author that is not "Name <email>", an idle period under a second and a sync period that is not a whole number are refused', async (t) => {
+  const h = tempHoard(t);
+  const env = { NEO_SERVER_REPO: h.repo, NEO_SERVER_STATE: h.state };
+  for (const bad of ['Just A Name', '<only@example.invalid>', 'Name <>', 'Name <a b@c>']) await refuses(parseConfig(['--author', bad], env), /author/);
+  for (const bad of ['0', '-1', '1.5', 'soon']) await refuses(parseConfig(['--idle-seconds', bad], env), /idle/);
+  for (const bad of ['-1', '2.5', 'often']) await refuses(parseConfig(['--sync-seconds', bad], env), /sync/);
 });

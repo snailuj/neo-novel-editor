@@ -4,7 +4,7 @@
 // on a page lands once the author's save of that page is written.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { LibrarianPairs } from '../../src/hoard/git/pair.ts';
+import { LibrarianPairs } from '../../server/history/pair.ts';
 import { startPages } from '../../src/hoard/pages/main.ts';
 import { signalPageChanges } from '../../src/hoard/pages/signals.ts';
 import { PageStore } from '../../src/hoard/pages/store.ts';

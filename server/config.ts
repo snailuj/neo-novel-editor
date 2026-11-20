@@ -4,17 +4,34 @@ import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { ApiError } from './errors.ts';
+import type { Identity } from './history/commit.ts';
 import { isWorkTree, topLevel } from './git.ts';
 import { checkPath } from './paths.ts';
 import { assertOutsideRepo } from './state.ts';
 
-export interface Config { repo: string; library: string; host: string; port: number; state: string; uv: string }
+export interface Config {
+  repo: string; library: string; host: string; port: number; state: string; uv: string;
+  /** The commit author; null takes the clone's git config. */
+  author: Identity | null;
+  /** Seconds without a write before the library is committed. */
+  idleSeconds: number;
+  /** Seconds between pulls and pushes; 0 turns the sync off. */
+  syncSeconds: number;
+}
 
 export class ConfigError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'ConfigError';
   }
+}
+
+const AUTHOR = /^(.*\S)\s*<([^<>\s]+@[^<>\s]+)>$/;
+
+function wholeSeconds(name: string, text: string, min: number): number {
+  const n = Number(text);
+  if (!/^\d+$/.test(text) || n < min || !Number.isSafeInteger(n)) throw new ConfigError(`${name} must be a whole number of seconds, ${min} or more, not ${JSON.stringify(text)}`);
+  return n;
 }
 
 const WILDCARD = /^\[?(::|::0|0(:0){7}|0(\.0){0,3})\]?$|^$/;
@@ -26,6 +43,7 @@ export async function parseConfig(argv: readonly string[], env: Record<string, s
       args: [...argv],
       options: {
         repo: { type: 'string' }, library: { type: 'string' }, host: { type: 'string' }, port: { type: 'string' }, state: { type: 'string' }, uv: { type: 'string' },
+        author: { type: 'string' }, 'idle-seconds': { type: 'string' }, 'sync-seconds': { type: 'string' },
       },
       strict: true,
     }).values;
@@ -44,6 +62,13 @@ export async function parseConfig(argv: readonly string[], env: Record<string, s
   const port = Number(portText);
   if (!/^\d+$/.test(portText) || port > 65535) throw new ConfigError(`port must be an integer from 0 to 65535, not ${JSON.stringify(portText)}`);
 
+  const authorText = flags.author ?? env.NEO_SERVER_AUTHOR;
+  const match = authorText === undefined ? null : AUTHOR.exec(authorText.trim());
+  if (authorText !== undefined && !match) throw new ConfigError(`author must read "Name <email>", not ${JSON.stringify(authorText)}`);
+  const author = match ? { name: match[1].trim(), email: match[2] } : null;
+  const idleSeconds = wholeSeconds('idle seconds (--idle-seconds)', flags['idle-seconds'] ?? env.NEO_SERVER_IDLE_SECONDS ?? '60', 1);
+  const syncSeconds = wholeSeconds('sync seconds (--sync-seconds)', flags['sync-seconds'] ?? env.NEO_SERVER_SYNC_SECONDS ?? '300', 0);
+
   let library: string;
   try {
     library = checkPath((flags.library ?? env.NEO_SERVER_LIBRARY ?? 'library').replace(/\/+$/, ''));
@@ -60,5 +85,5 @@ export async function parseConfig(argv: readonly string[], env: Record<string, s
   } catch (e) {
     throw new ConfigError((e as Error).message);
   }
-  return { repo, library, host, port, state, uv: flags.uv ?? env.NEO_SERVER_UV ?? 'uv' };
+  return { repo, library, host, port, state, uv: flags.uv ?? env.NEO_SERVER_UV ?? 'uv', author, idleSeconds, syncSeconds };
 }

@@ -13,7 +13,7 @@ import {
 import { buildSheet, pastTargets, pickSources, readSheet, renderScore, scoreSheet, withFusion, withUnions, rrf, mcnemar, mergeKeys, type Key } from '../../src/hoard/ripple/sheet.ts';
 import { readSnapshot } from '../../src/hoard/ripple/snapshot.ts';
 import { FUSED_EXTRAS, LEXICAL_EXTRAS, ROSTER_ENTRIES, shortlistFor } from '../../src/hoard/ripple/packet.ts';
-import { isolateGitConfig, tempDir } from './git-support.ts';
+import { isolateGitConfig, tempDir } from './server/history/git-support.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '../..');

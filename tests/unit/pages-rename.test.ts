@@ -9,12 +9,12 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, s
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { GitLayer, resolveSettings } from '../../src/hoard/git/layer.ts';
+import { GitLayer, resolveSettings } from '../../server/history/layer.ts';
 import { MarkStore } from '../../src/hoard/marks/store.ts';
 import { PageRefused } from '../../src/hoard/pages/identity.ts';
 import { PageStore } from '../../src/hoard/pages/store.ts';
 import { validateHoardPageV1 } from '../../src/generated/validators.cjs';
-import { isolateGitConfig, log, tempDir, tempLibrary } from './git-support.ts';
+import { isolateGitConfig, log, tempDir, tempLibrary } from './server/history/git-support.ts';
 import { pagesLibrary } from './pages-support.ts';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
