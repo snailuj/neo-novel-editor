@@ -246,3 +246,26 @@ test('a rename another clone pushed is raised as the old path gone and the new o
   assert.equal((await l.sync.runOnce()).state, 'ok');
   assert.deepEqual(l.tree.changes(seq, 500).changes, [{ path: 'wiki/shared.html', version: null }, { path: 'places/shared.html', version }]);
 });
+
+test('the pull marker is in the state folder exactly while the server\'s own pull runs, whether the pull succeeds or its rebase is aborted', async (t) => {
+  const h = syncHoard(t);
+  const l = await openWithHistory(t, h, SYNC);
+  const marker = l.history.pullMarker;
+  assert.equal(path.dirname(marker), path.resolve(h.state));
+  const seen: boolean[] = [];
+  const run = l.history.git.run.bind(l.history.git);
+  l.history.git.run = (cwd, args, options) => {
+    if (args[0] === 'pull') seen.push(existsSync(marker));
+    return run(cwd, args, options);
+  };
+  pushFrom(h.other, { 'library/wiki/theirs.html': 'theirs' });
+  assert.equal((await l.sync.runOnce()).state, 'ok');
+  assert.equal(existsSync(marker), false, 'removed after a clean pull');
+
+  const shared = await l.tree.read('wiki/shared.html');
+  await l.tree.put('wiki/shared.html', Buffer.from('shared, server edit'), { ifMatch: shared.version, device: 'tablet' });
+  pushFrom(h.other, { 'library/wiki/shared.html': 'shared, other edit' });
+  assert.equal((await l.sync.runOnce()).state, 'conflict');
+  assert.equal(existsSync(marker), false, 'removed after an aborted rebase');
+  assert.deepEqual(seen, [true, true], 'present while each pull ran');
+});

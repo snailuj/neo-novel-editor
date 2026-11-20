@@ -4,7 +4,7 @@
 // holds in a `Neo-Device` trailer. Commits run inside the tree's exclusive hold, so no
 // write lands between staging and committing and the trailers are exact.
 import { existsSync } from 'node:fs';
-import { mkdir, realpath } from 'node:fs/promises';
+import { mkdir, realpath, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { Checkpoints, systemClock, type Clock } from './history/checkpoints.ts';
 import { commitAll, type Identity, type Reason } from './history/commit.ts';
@@ -36,6 +36,8 @@ export interface HistoryOptions {
 
 export interface History {
   readonly repo: LibraryRepo;
+  /** The sync writes this file just before `pull --rebase` and removes it once the pull ends. */
+  readonly pullMarker: string;
   readonly git: Git;
   readonly author: Identity | null;
   /** The tree accepted a change from `device`: restarts the idle timer. */
@@ -52,6 +54,13 @@ export interface History {
   /** Stops the timer and makes one last commit, waiting at most closeTimeoutMs. */
   close(): Promise<void>;
 }
+
+/**
+ * In the state folder while the server's own `pull --rebase` runs. A rebase found at open
+ * with it is one the server started and may abort; without it, the rebase is somebody's
+ * hand work and is left alone.
+ */
+export const PULL_MARKER = 'pull-in-progress';
 
 /** The longest wait between retries of a failed commit. */
 export const RETRY_MAX_MS = 10 * 60_000;
@@ -108,9 +117,13 @@ export async function openHistory(options: HistoryOptions): Promise<History> {
   const gitLog = (level: 'error' | 'warn' | 'info' | 'debug', message: string, data?: unknown) => log(level, message, asData(data));
   const git = createGit({ hooksPath: hooks, log: gitLog });
   const repo = await locate(options.repo, options.library);
+  const pullMarker = path.join(options.state, PULL_MARKER);
   // A crash mid-pull leaves the rebase stopped with markers in the library; the tree must
-  // never read them, so the rebase is undone before it opens.
+  // never read them, so the rebase is undone before it opens. Only the server's own: a
+  // rebase begun by hand holds work that an abort would throw away.
+  const ours = existsSync(pullMarker);
   if (await rebaseInProgress(git, repo.top)) {
+    if (!ours) throw new Error(`a rebase is in progress in ${options.repo} that the server did not start; finish or abort the rebase, then start the server again`);
     try {
       await git.run(repo.top, ['rebase', '--abort']);
     } catch (err) {
@@ -118,6 +131,7 @@ export async function openHistory(options: HistoryOptions): Promise<History> {
     }
     log('warn', 'history.rebase_aborted: a rebase left in progress was aborted, so the library is as it was before it', { top: repo.top });
   }
+  if (ours) await rm(pullMarker, { force: true });
   // A missing identity must stop the server here, not at the first commit an hour later.
   const identity = options.author ?? await configuredAuthor(git, repo.top);
   const gate = new Gate({ library: () => repo.library, log: gitLog });
@@ -196,7 +210,7 @@ export async function openHistory(options: HistoryOptions): Promise<History> {
   log('info', 'history.open', { top: repo.top, prefix: repo.prefix, author: identity.email, idleMs: options.idleMs, head: last });
 
   return {
-    repo, git, author: options.author,
+    repo, git, author: options.author, pullMarker,
     wrote(device) {
       pending.add(deviceName(device));
       checkpoints.wrote();

@@ -3,6 +3,7 @@
 // write or read meets a library that is half way through a pull. What the pull changed is
 // re-hashed through the tree, which raises the seq, so clients see the remote's changes
 // like any other. A rebase that conflicts is aborted before its markers can be read.
+import { rm, writeFile } from 'node:fs/promises';
 import type { Clock } from './history/checkpoints.ts';
 import { systemClock } from './history/checkpoints.ts';
 import { libraryNames, wholeSpec } from './history/pathspec.ts';
@@ -115,16 +116,21 @@ export async function openSync(options: SyncOptions): Promise<Sync> {
         throw new Error(`files the server does not commit have uncommitted changes, so it cannot pull until they are committed or reverted by hand: ${named}`);
       }
       let pulled = true;
+      // A rebase found at the next start with the marker is this pull's, and is aborted there.
+      await writeFile(history.pullMarker, '');
       try {
         await run(['pull', '--rebase', 'origin', branch]);
+        await rm(history.pullMarker, { force: true });
       } catch (err) {
         if (!(err instanceof GitError)) throw err;
         if (await rebaseInProgress()) {
           // Aborting puts the library back as it was before the pull, so no client reads conflict markers.
           const files = (await run(['diff', '--name-only', '--diff-filter=U']).catch(() => ({ stdout: '' }))).stdout.split('\n').filter(Boolean);
           await run(['rebase', '--abort']);
+          await rm(history.pullMarker, { force: true });
           throw new Conflict(`the remote and the server both changed ${files.length ? files.join(', ') : 'the same lines'}; the server's version stays until the remote's is merged by hand`);
         }
+        await rm(history.pullMarker, { force: true });
         // A remote with no such branch yet has nothing to pull; the push below creates it.
         if (!/couldn't find remote ref/i.test(err.stderr)) throw err;
         pulled = false;
