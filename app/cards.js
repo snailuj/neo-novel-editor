@@ -1120,6 +1120,7 @@ async function cardMenu(cell, x, y) {
 // A section card's Delete: its writing leaves the manuscript for Darlings
 // (saved there before the chapter is), its note goes, and ⌘Z puts it back
 async function deleteSectionToDarlings(chId, segIdx, quiet = false) {
+  if (refuseNotLoaded([chId])) return;
   const body = chapterBodyEl(chId);
   const seg = chapterSegments(chId)[segIdx];
   if (!body || !seg) return;
@@ -1211,6 +1212,7 @@ function repointStickies(ps, chId) {
 
 // to = { ch, before }: before is a section's index in that chapter, or null for the end
 function moveSection(fromCh, segIdx, to) {
+  if (refuseNotLoaded([fromCh, to.ch])) return;
   const fromBody = chapterBodyEl(fromCh);
   const toBody = chapterBodyEl(to.ch);
   if (!fromBody || !toBody) return;
@@ -1263,6 +1265,7 @@ function moveChapterCard(chId, index) {
 // a section on its own becomes the next chapter: its writing, and its note
 // as the chapter's
 function sectionToChapter(chId, segIdx) {
+  if (refuseNotLoaded([chId])) return;
   const body = chapterBodyEl(chId);
   const seg = chapterSegments(chId)[segIdx];
   if (!body || !seg) return;
@@ -1324,6 +1327,7 @@ function sectionToLoose(chId, segIdx, virtualSec) {
 }
 
 async function writtenSectionToLoose(chId, seg) {
+  if (refuseNotLoaded([chId])) return;
   if (seg.flag) { toast(t('That section has a placeholder in it. Drag it to another chapter instead.')); return; }
   const body = chapterBodyEl(chId);
   if (!body) return;
@@ -1357,6 +1361,7 @@ async function writtenSectionToLoose(chId, seg) {
 }
 
 function looseToSection(looseId, to) {
+  if (refuseNotLoaded([to.ch])) return;
   const card = (book.looseCards || []).find((c) => c.id === looseId);
   const body = chapterBodyEl(to.ch);
   if (!card || !body) return;
@@ -1402,6 +1407,7 @@ function looseToSection(looseId, to) {
 // Resolves to the new section's id, or null when it can't be done.
 async function joinChapter(chId, intoCh) {
   if (!book || !intoCh || chId === intoCh) return null;
+  if (refuseNotLoaded([chId, intoCh])) return null;
   if (!isStory(chId) || !isStory(intoCh)) { toast(t('Only chapters can become sections')); return null; }
   const from = chapterBodyEl(chId);
   const into = chapterBodyEl(intoCh);
@@ -2231,6 +2237,7 @@ async function saveHeldCard(card) {
 }
 
 async function chapterToLoose(chId) {
+  if (refuseNotLoaded([chId])) return;
   if (!canSetChapterAside(chId)) return;
   const body = chapterBodyEl(chId);
   if (body && body.querySelector('.ph-mark')) { toast(t('That chapter has a placeholder in it. Move the placeholder first.')); return; }
@@ -2284,6 +2291,7 @@ async function sceneToLoose(cell) {
   const nodes = sceneNodes(sc.s);
   const body = spBodyOf(sc.s.p);
   const chId = body.closest('.chapter').dataset.id;
+  if (refuseNotLoaded([chId])) return;
   snapshotStructure('card to loose');
   const holder = document.createElement('div');
   for (const n of nodes) holder.appendChild(n.cloneNode(true));
@@ -2320,6 +2328,7 @@ function heldSceneBack(card, before) {
   const target = scenes[before] && scenes[before].s.p.isConnected ? scenes[before].s.p : null;
   const dest = target ? spBodyOf(target) : spBodies()[spBodies().length - 1];
   if (!dest) return;
+  if (refuseNotLoaded([dest.closest('.chapter') && dest.closest('.chapter').dataset.id])) return;
   snapshotStructure('loose card placed');
   const holder = document.createElement('div');
   holder.innerHTML = card.html;
@@ -2663,7 +2672,10 @@ const auxQueue = {};
 function auxRead(bookId, kind) {
   const key = bookId + '/' + kind;
   const seq = auxSeq[key] || 0;
-  return window.neo.readAux(bookId, kind).then((html) => {
+  return window.neo.readAux(bookId, kind).then((got) => {
+    // null: no page yet. It is an empty one whose base is '', so a page that
+    // arrives from another device before the first save is kept, not replaced
+    const html = got ?? '';
     if ((auxSeq[key] || 0) === seq) auxBase[key] = html;
     return html;
   });
@@ -2707,7 +2719,7 @@ async function refreshOpenAux() {
   const key = bookId + '/' + kind;
   if (auxDirty || auxPending[key] || auxBase[key] === undefined) return;
   const seq = auxSeq[key] || 0;
-  const html = await window.neo.readAux(bookId, kind);
+  const html = (await window.neo.readAux(bookId, kind)) ?? '';
   if (ed.dataset.book !== bookId || ed.dataset.kind !== kind || auxDirty || auxPending[key]) return;
   if ((auxSeq[key] || 0) !== seq || html === auxBase[key]) return;
   auxBase[key] = html;

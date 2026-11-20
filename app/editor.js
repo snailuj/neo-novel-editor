@@ -16,9 +16,16 @@ async function openBook(bookId) {
   const meta = await window.neo.readBookMeta(bookId);
   if (!meta || gen !== openGeneration) return;
   const html = {};
+  const unread = [];
   for (const chId of meta.chapterOrder) {
-    html[chId] = await window.neo.readChapter(bookId, chId);
+    // a chapter whose file has not synced here yet opens empty, with a base of
+    // '' (so a file that arrives later is kept, not replaced); one whose read
+    // failed any other way opens not loaded (see loadChapter), so the rest of
+    // the book opens and that chapter is never taken as empty and saved over
+    const got = await loadChapter('open', bookId, chId);
     if (gen !== openGeneration) return;
+    html[chId] = got === null ? '' : got;
+    if (got === null) unread.push(chId);
   }
   const sideStickies = await window.neo.readJSON(bookId, 'stickies', []);
   const sideDarlings = await window.neo.readJSON(bookId, 'darlings', []);
@@ -35,7 +42,7 @@ async function openBook(bookId) {
   undoStack = []; redoStack = [];
   chapterHTML = html;
   savedHTML = { ...html };
-  for (const chId of Object.keys(html)) knowDisk(bookId, chId, html[chId]);
+  for (const chId of Object.keys(html)) if (!unread.includes(chId)) knowDisk(bookId, chId, html[chId]);
   diskStamps = {};
   savedMetaSig = metaSig(book); // what disk holds; NEO's own defaults don't count as edits
   knownChapters = new Set(book.chapterOrder);
@@ -65,6 +72,7 @@ async function openBook(bookId) {
   migrateDarlingAnchors(); // sweep legacy invisible markers out of the prose
   reconcileMarks();        // re-adopt any note marks orphaned by cut/paste
   updateCounters();
+  if (unread.length) toastChaptersNotRead(unread);
 
   // Plotters land in the outline for a brand-new book
   const isNew = book.chapterOrder.length === 0;
@@ -179,6 +187,14 @@ function renderChapters() {
       sec.appendChild(list);
       return;
     }
+    if (chapterUnloaded(book.id, chId)) {
+      // its file could not be read here (see loadChapter): nothing to type
+      // into, so nothing is saved over it, until a look at the disk loads it
+      sec.classList.add('unloaded');
+      body.contentEditable = 'false';
+      body.dataset.ph = t('Not read on this device yet');
+      return;
+    }
     body.contentEditable = 'true';
     // screen readers name each chapter by its heading (a lone chapter by the book)
     body.setAttribute('role', 'textbox');
@@ -252,6 +268,8 @@ function renderChapters() {
 }
 
 async function deleteChapterToDarlings(chId, quiet = false) {
+  // one not loaded here is refused before anything goes to Darlings (deleteChapterQuiet says so)
+  if (chapterUnloaded(book.id, chId)) return deleteChapterQuiet(chId);
   if (!quiet) snapshotStructure('chapter delete');
   const kind = chapterKind(chId);
   const name = chapterName(chId);
@@ -331,6 +349,7 @@ async function chapterMenu(chId, x = 0, y = 0, from = null) {
     if (currentTab === 'outline') renderOutline();
     return choice;
   }
+  if (refuseNotLoaded([chId])) return null;
   snapshotStructure('chapter kind');
   setChapterKind(chId, choice);
   // a part or a page leaves the story's count, and a chapter coming back

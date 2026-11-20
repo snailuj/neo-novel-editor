@@ -178,9 +178,11 @@ NEO Library/
 
 App settings and the cover-art API key live in Electron `userData` (`settings.json`, `secrets.json`), not in the library. The key is encrypted with `safeStorage` when the OS allows it. Do not write secrets into the library.
 
-Every book id, chapter id, and sidecar name passes through `libName()` in `main.js`. It allows one path segment and rejects `.`, `..`, slashes, and null bytes. Keep new files inside that helper.
+Every book id, chapter id, and sidecar name passes through `libName()` in `src/store/names.ts`. It allows one path segment and rejects `.`, `..`, slashes, and null bytes. Keep new files inside that helper.
 
-Every library write goes through `writeFileDurable`: `file.tmp`, fsync, then rename into place, so a power cut can't leave an empty file. `writeJSON` also keeps the last version that read whole as `file.bak`, and `readJSON` falls back on `.tmp`, then `.bak`. A `book.json` lost with no copy is rebuilt from the chapter files (`rebuildBookMeta`). There is no append and no partial chapter update.
+Every library write goes through `writeFileDurable` (`src/store/durable.ts`): `file.tmp`, fsync, then rename into place, so a power cut can't leave an empty file. `writeJSON` also keeps the last version that read whole as `file.bak`, and `readJSON` falls back on `.tmp`, then `.bak`. A `book.json` lost with no copy is rebuilt from the chapter files (`rebuildBookMeta` in `src/store/fs-store.ts`). There is no append and no partial chapter update.
+
+The store (`src/store/`) is the only code that opens a library file for the library channels in `main.js`: each handler is one call into it, and `tests/unit/store/no-library-fs.test.ts` fails if `main.js` opens a library file itself, through any fs module, while loading or in any channel. A chapter or notes page that cannot be read is a `StoreError` whose message starts `[store:<code>]` (`storeErrorCode` reads it back), never `''`.
 
 `json:write` and `aux:write` will create any single-segment `<name>.json` or `<name>.html` in the book folder. Prefer the existing names unless a new sidecar is actually required.
 
@@ -199,7 +201,7 @@ The window holds the open book in memory (`chapterHTML`, `book`, `stickies`, `da
 
 Structural undo (`snapshotStructure`, `structuralUndo`, banner STRUCTURAL UNDO) holds `UNDO_DEPTH` (50) actions. An undo puts back only what its action changed: writing made since stays, or, in a chapter the action also touched, goes to Darlings with a toast that says so. What an undo took back goes on `redoStack` (⇧⌘Z, Ctrl+Z's pair; Ctrl+Y off the Mac); any `input` event anywhere, or a new action, empties it. A redo is an undo of the undo, so it keeps the same protections.
 
-On a Mac, iCloud ("Optimize Mac Storage") can turn library files into placeholders: the size is there, the words aren't, and a read waits on iCloud, forever if iCloud is stuck. A synchronous read of one froze the main process at launch, with no window. So `cloudOnlyAmong` spots them (no blocks on disk, then the `dataless` flag), `requestDownload` asks `brctl` for them, and the read handlers wait for them with `afterLocal` without blocking, answering at once when nothing is in iCloud. `readJSON` throws `ECLOUD` for one rather than falling back on `.bak`, and no write goes over a placeholder. The daily backup runs in its own process (`backup-worker.js`), two minutes after launch: it leaves placeholders out and names them, gives each other file 20 seconds, and is ended after 15 minutes. 1.5.1 read every file in the main process at launch, and one stuck file kept NEO from opening, and from updating, which needs NEO open. `scripts/icloud.test.js` plays iCloud with sparse files, and a stuck file with a named pipe. Don't add a direct `readFileSync` of a library file, and never walk the whole library in the main process.
+On a Mac, iCloud ("Optimize Mac Storage") can turn library files into placeholders: the size is there, the words aren't, and a read waits on iCloud, forever if iCloud is stuck. A synchronous read of one froze the main process at launch, with no window. So `cloudOnlyAmong` spots them (no blocks on disk, then the `dataless` flag), `requestDownload` asks `brctl` for them, and the read handlers wait for them with `afterLocal` without blocking, answering at once when nothing is in iCloud. `readJSON` throws a `cloud_only` store error for one rather than falling back on `.bak`, and no write goes over a placeholder. The daily backup runs in its own process (`backup-worker.js`), two minutes after launch: it leaves placeholders out and names them, gives each other file 20 seconds, and is ended after 15 minutes. 1.5.1 read every file in the main process at launch, and one stuck file kept NEO from opening, and from updating, which needs NEO open. `tests/unit/store/icloud.test.ts` plays iCloud with a fake detector and with sparse files, and `tests/unit/store/backup.test.ts` plays a stuck file with a named pipe. Don't add a direct `readFileSync` of a library file, and never walk the whole library in the main process.
 
 Do not replace this with last-write-wins. The comments in `persistChapter` and `refreshFromDisk` explain cases that look redundant and are not.
 
@@ -214,7 +216,7 @@ node scripts/i18n.js template
 node scripts/i18n.js check fr
 ```
 
-`scripts/i18n.js` only scans `app/`, `main.js`, `covers.js`, `index.html`, and Pocket's own `pocket/www/index.html` and `pocket/www/pocket-bridge.js`. A new string in another file will not enter the template until that list includes it. Pocket's page marks its words with the same `data-i18n*` attributes as the desktop's, and its ⋯ sheet and bridge use `t()`.
+`scripts/i18n.js` only scans `app/`, `main.js`, `covers.js`, `src/store/`, `index.html`, and Pocket's own `pocket/www/index.html` and `pocket/www/pocket-bridge.js`. A new string in another file will not enter the template until that list includes it. Pocket's page marks its words with the same `data-i18n*` attributes as the desktop's, and its ⋯ sheet and bridge use `t()`.
 
 Details, plural forms, and regional fallback (`fr-CA` → `fr` → English) are in [TRANSLATING.md](TRANSLATING.md). Quotation marks follow the spellcheck language (`QUOTE_STYLES` in `app/`). Import chapter detection is `CHAPTER_WORDS` in `main.js`. Cover small-words are `CONNECTORS` in `covers.js`.
 

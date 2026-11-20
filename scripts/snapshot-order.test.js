@@ -17,7 +17,7 @@ function library() {
     async snapshotRemove(id, name) { delete files[name]; },
     logError() {}
   };
-  const ctx = vm.createContext({ window: { neo }, snapsCan: () => true, renderSnapList() {}, logSnap(e) { throw e; },
+  const ctx = vm.createContext({ window: { neo }, snapsCan: () => true, chapterUnloaded: () => false, renderSnapList() {}, logSnap(e) { throw e; },
     htmlWords: (html) => html.split(/\s+/).filter(Boolean).length });
   vm.runInContext(between('const SNAP_KEPT', '// (the rules above are plain functions: scripts/snapshots.test.js)') +
     between('let snapCache = null;', '// The first change of a writing day') +

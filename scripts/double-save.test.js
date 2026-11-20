@@ -37,6 +37,7 @@ function bookInMemory(chapters) {
     $: () => ({ scrollTop: 0 }),
     captureCaret: () => null,
     saveMeta: async () => {},
+    chapterUnloaded: () => false, // core.js: every chapter here was read
     maybeDailySnapshot: none,
     flushAux: none, flushStickiesSave: none, flushSidecars: none
   });

@@ -6,10 +6,10 @@
 // step by hand, and tests/unit/main-loader-drift.test.ts fails when they differ.
 //
 // loadMain() returns
-//   call(name, ...args)  runs the ipcMain.handle handler `name` as the window would
-//   pointAt(dir)         moves LIBRARY_DIR and LIBRARY_FILE to `dir`
-//   context              the vm global, so a test can replace a main.js function
-//                        (writeFileDurable, say) that its handlers look up by name
+//   call(name, ...args)  runs the ipcMain.handle handler `name` as the window would; every
+//                        library channel answers with a promise
+//   pointAt(dir)         moves LIBRARY_DIR to `dir` (the store follows)
+//   context              the vm global, so a test can reach a main.js global by name
 //   warnings             the messages main.js put in dialog.showMessageBox
 
 const fs = require('node:fs');
@@ -55,7 +55,7 @@ function loadMain() {
     call: (name, ...args) => handlers.get(name)(null, ...args),
     pointAt(dir) {
       context.libraryRoot = dir;
-      vm.runInContext('LIBRARY_DIR = libraryRoot; LIBRARY_FILE = require("path").join(libraryRoot, "library.json");', context);
+      vm.runInContext('LIBRARY_DIR = libraryRoot;', context);
     }
   };
 }

@@ -229,7 +229,9 @@ async function structuralUndo(fromRedo) {
   darlings = mergeSidecar(after.darlings, snap.darlings, darlings, true);
   stickies = mergeSidecar(after.stickies, snap.stickies, stickies, false);
   // resurrect any chapter files the action may have deleted
+  // (one not loaded here was never deleted, and has no body to write)
   for (const chId of book.chapterOrder) {
+    if (chapterUnloaded(book.id, chId)) continue;
     await persistChapter(chId, chapterHTML[chId] || '<p><br></p>');
   }
   // (a list that can't be written now stays queued, and is tried again)

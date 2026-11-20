@@ -2,10 +2,9 @@
 // none of their folders, library, settings, programs or network.
 //
 // Call isolate() before requiring NEO's main.js. main.js reads os.homedir() when it loads, to
-// start LIBRARY_DIR and LIBRARY_FILE at ~/Documents/NEO Library, and an error logged before it
-// has found the library (an exception or a rejection at launch) makes that folder, seeds
-// library.json in it and appends to neo-errors.log. With the home folder inside the run's temp
-// folder, that library is the run's own.
+// start LIBRARY_DIR at ~/Documents/NEO Library. With the home folder inside the run's temp
+// folder, that library is the run's own. (An error logged before the library is open goes to
+// the app's own folder and makes no library.)
 //
 // scripts/plugins.e2e.js, scripts/plugin-edits.e2e.js and the Playwright harness
 // (tests/support/electron-main.cjs) all use this, so they are isolated in the same way.

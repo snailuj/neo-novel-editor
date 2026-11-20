@@ -49,7 +49,7 @@ function menuOn(platform, { script = false, more = true, view = null } = {}) {
   });
   vm.runInContext(source, context, { filename: path.join(root, 'main.js') });
   context.library = library;
-  vm.runInContext('LIBRARY_DIR = library; LIBRARY_FILE = require("path").join(library, "library.json");', context);
+  vm.runInContext('LIBRARY_DIR = library;', context);
   try {
     listeners.get('features:state')(null, more ? { formatting: true, pages: true, poetry: true, focus: true, exports: true, covers: true, penNames: true } : {});
     if (view) listeners.get('view:state')({ sender: null }, view);

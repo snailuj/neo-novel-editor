@@ -1785,6 +1785,8 @@ async function exportFromShelf(bookId, format) {
 
 async function doExport(format, chId = null) {
   if (!book) { toast(t('Open a book first')); return; }
+  // a chapter not loaded here would leave empty (a shelf export reads its own, and refuses)
+  if (!shelfExport && refuseNotLoaded(chId ? [chId] : book.chapterOrder)) return;
   if (format === 'paperback') { await printPaperback(); return; }
   if (format === 'manuscript') { await exportManuscript(); return; }
   // a script leaves as a PDF set the way scripts print, or as Fountain
@@ -1865,6 +1867,7 @@ async function manuscriptHash() {
 
 async function doEmailDraft() {
   if (!book) { toast(t('Open a book first')); return; }
+  if (refuseNotLoaded(book.chapterOrder)) return;
   flushAllSaves();
   if (!library.emailAddress || !library.emailMethod) {
     const ok = await emailSettings();

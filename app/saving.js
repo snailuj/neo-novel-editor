@@ -263,6 +263,9 @@ const knowDisk = (bookId, chId, html) => { diskKnown[bookId + '/' + chId] = html
 const chapterChain = {};
 function persistChapter(chId, html) {
   if (!book) return Promise.resolve(false);
+  // a chapter not loaded here has no body to save (see loadChapter): the save
+  // throws, so a caller that saves and then deletes or moves stops there
+  if (chapterUnloaded(book.id, chId)) return Promise.reject(new Error('[not_loaded] chapter not loaded here: ' + book.id + '/' + chId));
   if (html === undefined) html = chapterHTML[chId] || '';
   const bookId = book.id;
   const key = bookId + '/' + chId;
@@ -363,6 +366,7 @@ function scheduleChapterSave(chId) {
     // a flush (a blur, the 20 s tick) wrote these words while this save
     // waited; a write still on its way may yet fail, so this one queues behind it
     if (!writing[chId] && chapterHTML[chId] === savedHTML[chId]) return;
+    if (chapterUnloaded(bookId, chId)) return; // no body to save (see loadChapter)
     persistChapter(chId);
   }, 800);
 }
@@ -452,7 +456,7 @@ function flushAllSaves(e) {
     if (!writing) book.lastPosition.tabScroll = tabScroll;
   }
   for (const chId of book.chapterOrder) {
-    if (chapterHTML[chId] !== undefined && chapterHTML[chId] !== savedHTML[chId]) {
+    if (chapterHTML[chId] !== undefined && chapterHTML[chId] !== savedHTML[chId] && !chapterUnloaded(book.id, chId)) {
       persistChapter(chId);
     }
   }
@@ -657,6 +661,14 @@ function takeSnapshot(kind, htmlOf = (c) => chapterHTML[c] || '', { ifNoneToday 
 }
 async function takeSnapshotNow(kind, htmlOf, { ifNoneToday }) {
   if (!book || !snapsCan()) return null;
+  // a chapter not loaded here would be kept as empty, and a restore of that
+  // snapshot would empty it or delete its file: no snapshot while one is (the
+  // day's own, taken at the first change of the day, goes without a toast)
+  if (book.chapterOrder.some((c) => chapterUnloaded(book.id, c))) {
+    if (kind !== 'd') refuseNotLoaded(book.chapterOrder);
+    else console.error('snapshot: the day\'s snapshot waits, a chapter is not loaded');
+    return null;
+  }
   const bookId = book.id;
   const order = [...book.chapterOrder];
   const titles = { ...(book.chapterTitles || {}) };
@@ -1040,6 +1052,9 @@ function wordRanges(p, at) {
 async function restoreSnapshot(chId) {
   const shown = snapShown;
   if (!book || !shown) return;
+  // the snapshot of the book as it is now, taken first, could not hold a
+  // chapter not loaded here, so nothing is restored while one is
+  if (refuseNotLoaded(book.chapterOrder)) return;
   try {
     await takeSnapshot('r');
   } catch (err) {
@@ -1075,7 +1090,12 @@ async function restoreSnapshot(chId) {
   for (const c of chId ? [chId] : book.chapterOrder) await persistChapter(c);
   await saveMeta();
   // chapters added since: out of the book, their words in the snapshot just taken
-  for (const c of gone) { delete chapterHTML[c]; await window.neo.deleteChapter(book.id, c); }
+  for (const c of gone) {
+    // (refused above already; and a chapter not loaded here is never deleted)
+    if (chapterUnloaded(book.id, c)) { window.neo.logError('restore: kept a chapter not loaded ' + book.id + '/' + c); continue; }
+    delete chapterHTML[c];
+    await window.neo.deleteChapter(book.id, c);
+  }
   showDarlingsAgain();
   switchTab('manuscript');
   renderChapters();
@@ -1177,8 +1197,11 @@ async function refreshFromDisk() {
     if (theirs) {
       for (const chId of meta.chapterOrder) {
         if (chapterHTML[chId] !== undefined) continue;
-        incoming[chId] = await window.neo.readChapter(bookId, chId);
+        // one that cannot be read comes in not loaded (see loadChapter): the
+        // rest of the look goes on, and the chapter stays in the book
+        const got = await loadChapter('refresh', bookId, chId);
         if (!book || book.id !== bookId) return;
+        incoming[chId] = got === null ? '' : got;
       }
     }
     // file times first, so only chapters that changed on disk are re-read
@@ -1191,9 +1214,18 @@ async function refreshFromDisk() {
     for (const chId of [...book.chapterOrder]) {
       if (writing[chId]) continue; // a save of ours is on its way: the file is ours, not news
       const st = stamps ? stamps[chId] : undefined;
-      if (st !== undefined && st === diskStamps[chId]) continue;
+      if (st !== undefined && st === diskStamps[chId] && !chapterUnloaded(bookId, chId)) continue;
       const before = savedHTML[chId];
-      const disk = await window.neo.readChapter(bookId, chId);
+      let disk;
+      try { disk = await window.neo.readChapter(bookId, chId); } catch (err) {
+        if (!book || book.id !== bookId) return;
+        // No file yet is a chapter another device has not synced: nothing to
+        // take in. Any other failure leaves the chapter as it is, never read
+        // as empty, and is logged once for each chapter and reason, not at
+        // every look.
+        if (storeErrorCode(err) !== 'not_found') logChapterNotRead('refresh', bookId, chId, err);
+        continue;
+      }
       if (!book || book.id !== bookId) return;
       fresh.push({ chId, st, before, disk });
     }
@@ -1231,7 +1263,7 @@ async function refreshFromDisk() {
       other.forEach((chId, i) => {
         if (order.includes(chId)) return;
         if (mine) {
-          if (!hasWords(incoming[chId])) return;
+          if (!hasWords(incoming[chId]) && !chapterUnloaded(bookId, chId)) return;
         } else if (chapterHTML[chId] === savedHTML[chId]) {
           // Saved here, and not in their list. They took it out (they say
           // so, or its file is gone from the disk): it goes. Otherwise their
@@ -1249,7 +1281,7 @@ async function refreshFromDisk() {
           if (!(chId in incoming)) continue;
           chapterHTML[chId] = incoming[chId];
           savedHTML[chId] = incoming[chId];
-          knowDisk(bookId, chId, incoming[chId]);
+          if (!chapterUnloaded(bookId, chId)) knowDisk(bookId, chId, incoming[chId]);
         }
         if (mine) {
           book.chapterOrder = order;
@@ -1313,6 +1345,17 @@ async function refreshFromDisk() {
       // next save made that stick. Look again next time.
       if (writing[chId] || savedHTML[chId] !== before) continue;
       if (typeof disk !== 'string') continue;
+      if (chapterUnloaded(bookId, chId)) {
+        // read at last: it loads, whatever the file holds (the page had nothing of its own)
+        unloadedChapters.delete(bookId + '/' + chId);
+        if (stamps) diskStamps[chId] = st;
+        chapterHTML[chId] = disk;
+        savedHTML[chId] = disk;
+        knowDisk(bookId, chId, disk);
+        wordCache[chId] = null;
+        adopted++;
+        continue;
+      }
       if (disk === '' && savedHTML[chId]) continue; // unreadable or still downloading: not a change
       if (stamps) diskStamps[chId] = st; // seen; a file not read stays on the list
       if (disk === savedHTML[chId]) continue;

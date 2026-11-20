@@ -18,10 +18,10 @@ test('the daily backup keeps .neo with the books, and leaves out what is not NEO
   const main = loadMain();
   const dir = tempDir(t, 'neo-backup-');
   main.pointAt(dir);
-  const lib = main.call('library:read');
-  const book = main.call('book:create', { title: 'Synthetic' });
-  main.call('chapter:write', book.id, 'ch-aaa', '<p>Words.</p>');
-  main.call('library:write', lib);
+  const lib = await main.call('library:read');
+  const book = await main.call('book:create', { title: 'Synthetic' });
+  await main.call('chapter:write', book.id, 'ch-aaa', '<p>Words.</p>');
+  await main.call('library:write', lib);
   const sidecar = path.join(dir, '.neo', book.id, 'chapters', 'ch-aaa.json');
   mkdirSync(path.dirname(sidecar), { recursive: true });
   writeFileSync(sidecar, '{"version":1,"marks":[]}\n');

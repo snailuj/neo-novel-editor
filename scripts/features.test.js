@@ -43,7 +43,7 @@ function menuBar(platform, more, { script = false, features = null } = {}) {
   vm.runInContext(source, context, { filename: path.join(root, 'main.js') });
   const library = fs.mkdtempSync(path.join(os.tmpdir(), 'neo-simple-'));
   context.library = library;
-  vm.runInContext('LIBRARY_DIR = library; LIBRARY_FILE = require("path").join(library, "library.json");', context);
+  vm.runInContext('LIBRARY_DIR = library;', context);
   try {
     vm.runInContext('buildMenu()', context);
     listeners.get('features:state')(null, features || Object.fromEntries(KEYS.map((k) => [k, more])));

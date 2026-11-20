@@ -4,6 +4,7 @@
     "translators": []
   },
   "“{name}” · one book": "",
+  "“{name}” could not be read on this device yet. It is left as it is on disk, and opens for writing once it can be read.": "",
   "“{name}” is bound into one book": "",
   "“{title}”": "",
   "“{title}” is back on the shelf": "",
@@ -510,6 +511,7 @@
   "None open.": "",
   "noon": "",
   "Not Now": "",
+  "Not read on this device yet": "",
   "Not saved": "",
   "not written yet": "",
   "Notes": "",
