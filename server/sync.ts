@@ -114,8 +114,16 @@ export async function openSync(options: SyncOptions): Promise<Sync> {
       // After the commit above, whatever is still changed is a file the server leaves alone.
       const stuck = await blockers();
       if (stuck.length) {
-        const named = stuck.slice(0, LISTED).join(', ') + (stuck.length > LISTED ? ` and ${stuck.length - LISTED} more` : '');
-        throw new Error(`files the server does not commit have uncommitted changes, so it cannot pull until they are committed or reverted by hand: ${named}`);
+        const list = (names: string[], show = (p: string) => p) => names.slice(0, LISTED).map(show).join(', ') + (names.length > LISTED ? ` and ${names.length - LISTED} more` : '');
+        // Inside the library, only a file the history ignores is left changed; committing it
+        // by hand would only block the next change, so the cure is to stop tracking it.
+        const inLibrary = (p: string) => repo.prefix !== '' && p.startsWith(repo.prefix);
+        const ignored = stuck.filter(inLibrary);
+        const outside = stuck.filter((p) => !inLibrary(p));
+        const why: string[] = [];
+        if (outside.length) why.push(`files the server does not commit have uncommitted changes, so it cannot pull until they are committed or reverted by hand: ${list(outside)}`);
+        if (ignored.length) why.push(`library files the history ignores are tracked and changed, so it cannot pull until each is untracked with \`git rm --cached <path>\` and committed: ${list(ignored, (p) => `git rm --cached ${p}`)}`);
+        throw new Error(why.join('; '));
       }
       let pulled = true;
       // A rebase found at the next start with the marker is this pull's, and is aborted there.

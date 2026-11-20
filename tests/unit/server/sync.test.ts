@@ -296,3 +296,25 @@ test('a rebase whose abort fails holds every library read with 503 rebase_in_pro
   assert.equal(existsSync(l.history.pullMarker), false);
   assert.equal((await l.tree.read('wiki/shared.html')).bytes.toString(), 'shared, server edit');
 });
+
+test('a tracked library file the history ignores stops the pull with its own error that says to untrack it, and the sync goes on once it is', async (t) => {
+  const h = syncHoard(t);
+  pushFrom(h.other, { 'library/wiki/old.bak': 'v1' });
+  const l = await openWithHistory(t, h, SYNC);
+  assert.equal((await l.sync.runOnce()).state, 'ok');
+  assert.equal(readFileSync(lib(h, 'wiki/old.bak'), 'utf8'), 'v1', 'the baseline: the ignored file is tracked and pulled');
+  writeFileSync(lib(h, 'wiki/old.bak'), 'v2');
+  writeFileSync(path.join(h.repo, 'README.md'), 'edited by hand');
+
+  const blocked = await l.sync.runOnce();
+  assert.equal(blocked.state, 'error');
+  assert.match(blocked.message, /git rm --cached library\/wiki\/old\.bak/);
+  assert.doesNotMatch(blocked.message, /git rm --cached README\.md/, 'a file outside the library keeps the commit-or-revert advice');
+  assert.match(blocked.message, /README\.md/);
+
+  git(h.repo, 'checkout', '--', 'README.md');
+  git(h.repo, 'rm', '-q', '--cached', 'library/wiki/old.bak');
+  git(h.repo, 'commit', '-q', '-m', 'untrack the backup');
+  assert.equal((await l.sync.runOnce()).state, 'ok');
+  assert.equal(readFileSync(lib(h, 'wiki/old.bak'), 'utf8'), 'v2', 'the file itself is left alone');
+});
